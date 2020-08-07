@@ -1,8 +1,8 @@
-from ...hierarchy.products import Product, AggregatedProduct, Derived
+from ...base.products import Product, Derived
 
 
 class Spectra(Product):
-	pass
+	name = 'spectra'
 
 
 class HomogeneousSpectra(Spectra):

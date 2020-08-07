@@ -1,3 +1,4 @@
+from ...base.address import Address as BaseAddress
 
 LEVEL = ['raw', 'l1', 'l2']
 RESOLUTION = ['L', 'H']
@@ -5,7 +6,7 @@ ARM = ['R', 'B']
 MODE = ['MOS', 'LIFU', 'mLIFU']
 
 
-class Address:
+class Address(BaseAddress):
     coordinates = ['level', 'obid', 'obname', 'cname', 'runid', 'surveyname', 'semester', 'arm', 'resolution', 'binning', 'mode']
 
     def __init__(self, level=None, obid=None, obname=None, cname=None, runid=None,
@@ -22,4 +23,3 @@ class Address:
         self.binning = self.check(binning, int)
         self.mode = self.check(mode, str, choices=MODE)
         super().__init__()
-    
