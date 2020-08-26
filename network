@@ -1,0 +1,176 @@
+
+boxes are uniquely defined by their inputs
+* A box is determined by all inputs together
+	(one instance)
+	- OBSpec is determined by knowing progtemp, obstemp, title
+	- L1 supertarget is determined by mode, target, and an arm config
+* A box is determined by knowing all the instances of a single type of output 
+	- Exposure is determined by knowing Run or L2 single (one instance)
+	- List(arm config) is determined by L2 stack/superstack (multiple instances)
+
+aliases:
+	bluearm = (HR, blue) | (HR, green) | (LR, blue)
+	redarm = (LR, red) | (HR, red)
+	l1 = L1single/stack/superstack
+	l2 = L2single/stack/superstack
+
+each box has access to all beneath it using box.<other> when completely determined:
+	* run.raw
+	* run.single
+	* run.mode
+	* run.targetset
+each box can access a list of boxes when that type is not completely determined in the plural:
+	* green.superstacks, 
+		- [Not superstacks.green]
+	* exposure.runs
+	* date.OBrealisations
+each box can access the parent boxes in the singular:
+	OBrealisation.obspec
+each box can access list of parent boxes in the plural:
+	progtemp.arm_configs
+
+
+Take the shortest known path
+e.g.
+	(l2superstack/stack file).l1superstacks
+		{mode, List(arm config), targetset} are immediately known
+		VPH is known from each arm config
+		l1 superstack still needs obspecs
+		make combinations of arm config 
+			Address(mode=mode, targetset=targetset) & (Address(arm_config1) | Address(arm_config2) | Address(arm config3))
+		Progtemp is now known
+		list of obspecs informed by targetset and progtemp known
+		l1superstack narrowed down
+	(l2supertarget file).l1supertargets
+		{target, mode, list(arm config)}
+		instantly get l1supertarget list
+	(l2single file).l1singles
+		{list(exposure)}
+		{list(run)}
+		{list(l1single)}
+	(exposure).vphs
+		ob realisation->obspec->Progtemp->list(arm_config)->list(VPH)
+		or
+		list(runs) -> list(vphs)
+	all this is just filtering on the address
+	all of this returns only unique objects
+	factors are gathered from hierarchies
+	all of this can be skipped by using PROVENANCE
+	knowing the id (runid, obid) is a shortcut
+
+
+Node types: 
+	factor: 	A key which, in conjunction with other factors/Hierarchies defines a hierarchy (in address)
+	id: 	 	A key which defines a hierarchy by itself (e.g. runid), cannot be used in an address
+	Hierarchy:  An abstraction that contains factors, hierarchies, and files
+	File: 	 	A physical file that is defined by hierarchies
+
+
+DescendentHomogeneousStore:
+	- from a hierarchy (e.g. ob.runs)
+	- plurality of attribute is computed using the graph + address
+	- Incompatible address are rejected (e.g. ob.runs[Address(obid=...)])
+	.<other> - OBs.OBspec
+		- returns Hierarchy/factor/id/file
+	.<other>s
+		- return DescendentHomogeneousStore (e.g. ob.l1singles)
+	[Address()]
+		- return Hierarchy if address describes a unique object
+		- return HomogeneousStore if address contains some missing factors
+		- return EclecticHomogeneousStore  if not 
+		- raise IndexError if address is incompatible
+	[key] - OBs[obid]
+		- if indexable by key, return Hierarchy
+
+EclecticHomogeneousStore:
+	- from a HeterogeneousStore (e.g. data[Address()].runs)
+	- plurality of attribute is computed using the graph + address
+	- Incompatible address are dealt with
+	.<other> - OBs.OBspec
+		- raise IndexError
+	.<other>s
+		- returns EclecticHomogeneousStore
+	[Address()]
+		- return Hierarchy if address contains all missing factors
+		- return EclecticHomogeneousStore if address contains some missing factors
+	[key] - OBs[obid]
+		- if indexable by an id, return Hierarchy
+
+
+HeterogeneousStore:
+	- plurality of attribute is computed using the graph + address
+	.<other> - data[Address(vph='green')].vph
+		- if <other> is in the address, returns other 
+		- else raise IndexError 
+	.<other>s - data.OBs
+		- returns HomogeneousStore 
+	[Address()] - data[Address(vph='green')]
+		- Returns HeterogeneousStore filtered by the combined address
+	[key]
+		- Not implemented
+
+Hierarchy:
+	- is always identified by the set of required ids (data.runs[runid])
+	- plurality of attribute is computed using the graph
+	.<other> - OB.OBSpec/OB.Progtemp
+		- returns Hierarchy
+	.<other>s - OB.exposures
+		- returns HomogeneousStore
+	[Address()]
+		- Not implemented
+	[key]
+		- Not implemented
+
+Each ./[] just adds to the address but encapsulated by a specific Hierarchy object
+
+Location = Address + ids + Hierarchy/Product/File
+Hierarchies are either:
+
+	
+
+
+The address/Hierarchy is executed when factor(s)/product(s) are requested
+	r = data[Address(vph=green, mode='MOS', repeat=1)]  # nothing requested
+	r.spectra  # execute
+
+	File Execution
+	1. For stated file types, get fnames
+	2. Filter fnames by address (shallow filter), removing those factors from the address
+	3. 
+		a. If the address is empty (all info used), return those files
+		b. If the address is not empty, 
+
+	E.g
+		Without ids
+		* FileList(data[Address(vph=green, mode='MOS')].l1singles).spectra
+		* file type identified as l1single
+		* l1single file type needs run
+		* run needs runid (conditioned on vph=green, mode='MOS')
+		* filter filenames by address (shallow filter) [some stacks would be ruled out by min_runid]
+		* read all l1single file headers
+		* store sets of {vph: {green: set(fnames)}, mode: {'MOS': set(fnames)}}
+		
+
+
+
+
+
+		With ids
+		* data[Address(vph=green)].obs[obid].l1singles.spectra
+
+
+
+
+
+Address(a=['a', 'A']) == Address(a='a') | Address(a='A')
+Address(a=['a'], b=['A']) == Address(a='a') | Address(b='A')
+Address(a=['a', 'A', 'aa', 'AA']) == Address(a=['a', 'A']) | Address(a=['aa', 'AA'])  # or any split
+Address(a=['a', 'A', 'aa'], b=['b'])  == Address(a=['a', 'A', 'aa']) | Address(b=['b'])  # or any split
+
+Address(a='a') & Address(a='A')
+Address(a='a', b='b') == Address(a='a') & Address(b='b')
+Address(a=['a', 'A'], b='b') == Address(a=['a', 'A']) & Address(b='b')
+Address(a=['a', 'A']) & Address(b=['b', 'B'])
+maybe just stick with | and & and singular addresses
+
+

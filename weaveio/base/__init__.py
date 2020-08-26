@@ -3,7 +3,7 @@ from collections import defaultdict
 from .address import Address
 from .hierarchies import Hierarchy, HeterogeneousHierarchy, HomogeneousHierarchy
 from .files import File
-from .products import Product, Derived, AggregatedProduct
+from .products import Product, Derived
 
 
 class DataStore(HeterogeneousHierarchy):

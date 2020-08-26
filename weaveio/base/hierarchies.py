@@ -63,6 +63,19 @@ class IndexableHierarchy(BaseHierarchy):
 
 
 class HeterogeneousHierarchy(IndexableHierarchy):
+    """
+    actions:
+        .<hierarchy_type> -> Not permitted
+        .<hierarchy_type>s -> HomogeneousHierarchy
+        __iter__ -> generator -> Not permitted
+        [<str>] -> Not permitted
+        [Address] -> HomogeneousHierarchy/HeterogeneousHierarchy/Hierarchy
+        .<singular product> -> If possible, return Product
+        .<plural product> -> grouped Product self-organised
+        .files -> dict of FileLists indexed by type name
+        .<file>s -> FileList
+    """
+
     def __getitem__(self, address):
         # still in lazy mode because no actual data has been requested
         if not isinstance(address, Address):
@@ -90,6 +103,19 @@ class HeterogeneousHierarchy(IndexableHierarchy):
 
 
 class HomogeneousHierarchy(IndexableHierarchy):
+    """
+    actions:
+        .<hierarchy_type> -> Return parent hierarchy if it exists
+        .<hierarchy_type>s -> Return HomogeneousHierarchy of children if it exists
+        __iter__ -> generator -> yields the Singular Hierarchies
+        [<str>] -> return matched Hierarchy from the key string
+        [Address] -> HomogeneousHierarchy/Hierarchy
+        .<singular product> -> If possible, return Product
+        .<plural product> -> grouped Product self-organised
+        .<file>s -> FileList
+        .files -> dict of FileLists indexed by type name
+    """
+
     def __init__(self, base, address, hierarchy_type):
         super().__init__(base, address)
         self.hierarchy_type = hierarchy_type
@@ -117,6 +143,19 @@ class HomogeneousHierarchy(IndexableHierarchy):
 
 
 class Hierarchy(BaseHierarchy):
+    """
+    actions:
+        .<hierarchy_type> -> Return parent hierarchy if it exists
+        .<hierarchy_type>s -> Return HomogeneousHierarchy of children if it exists
+        __iter__ -> generator -> Not permitted
+        [<str>] -> return matched Hierarchy from the key string
+        [Address] -> HomogeneousHierarchy/Hierarchy
+        .<plural product> -> grouped Product self-organised
+        .<singular product> -> If possible, return Product
+        .<file>s -> FileList
+        .files -> dict of FileLists indexed by type name
+    """
+
     requires = []
     produces = []
     identifiers = []

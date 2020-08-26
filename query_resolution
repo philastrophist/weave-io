@@ -1,0 +1,55 @@
+
+a. data.runs[Address(vph=green, date_obs=####)].spectra
+b. data.obs[obid].runs[Address(vph=green, date_obs=####)].spectra
+
+Chaining expressions:
+	a. 
+		* data.runs -> EclecticHomogeneousStore(Runs)
+		* data.runs[Address(vph=green, date_obs=####)] -> EclecticHomogeneousStore(Runs, Address(vph=green, date_obs=####))
+		* data.runs[Address(vph=green, date_obs=####)].spectrum -> Spectra
+	b.
+		* data.obs -> HomogeneousStore(OBs)
+		* data.obs[obid] -> OB
+		* data.obs[obid].runs -> HomogeneousStore(Runs, parents=[OB])
+		* data.obs[obid].runs[Address(vph=green, date_obs=####)] -> HomogeneousStore(Runs, parents=[OB], Address(vph=green, date_obs=####))
+		* data.obs[obid].runs[Address(vph=green, date_obs=####)].spectra -> Spectra
+	At the end of chaining expressions, you have: 
+		DataDirectory + [parent_ids(hierarchies)] + [address(factors)] + ProductType + [FileType] + Plural/Singular
+specifying a `target` will filter to those which use this target
+specifying a list of `target` will filter to those which use those targets
+
+
+def resolve(directory, parents, factors, ProductType, FileType, plural):
+	for node in factors + parents:
+		if not relation_graph.undirected().has_path(node, FileType):
+			raise KeyError
+	if not uniquely_describes(factors, parents, FileType) and single:
+		raise KeyError
+	if FileType is None:
+		possible_product_types = [p for p in product_types if p.name = ProductType]
+		FileType = nearest_file_type(relation_graph, factors+parents, possible_product_types)
+	assert ProductType is not None
+	product_node <- identify correct ProductType node in relation graph from FileType
+	# Query is to find the path that:
+	#   starts at the factor InstanceNodes
+	#	goes through the parent ids InstanceNodes
+	#	ends at the ProductType TypeNode
+	instance_graph.populate_schema(schema_files)
+	instance_graph.populate_file_names(os.listdir(directory))  # only with links from fnames
+	required = parent_id_types + factor_types
+	for r in required:
+		filetype = instance_graph.nearest_quickest_filetype(r)
+		instance_graph.add_file_info(filetype.read_info_from_files(r))
+	accepted = []
+	for file_instance in FileType.instances:
+		instance_graph.add_file_info(file_instance, factors, parents)  # updates relevant relations from inside the file (and irrelevant ones if they come freely)
+		for node in parents + factors:
+			if not instance_graph.undirected().has_path(node, file_instance):
+				break  # not accepted
+		else:
+			accepted.append(file_instance)
+	products = []
+	for file_instance in accepted:
+		product = file_instance.read(ProductType)  # read into the file_instance, return reference
+		products.append(product)
+	return UnifiedProduct(products)
