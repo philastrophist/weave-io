@@ -5,6 +5,7 @@ from astropy.io import fits
 from astropy.table import Table
 
 from hierarchy_network import graph2pdf
+from config_tables import progtemp_config
 
 
 lightblue = '#69A3C3'
@@ -31,42 +32,84 @@ class Multiple:
         self.maxnumber = maxnumber
         self.name = node.__name__.lower()+'s'
 
+    def __repr__(self):
+        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
+
+
+class Factor:
+    type_graph_attrs = factor_attrs
+
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+    def __repr__(self):
+        return f"<Factor({self.name}={self.value})>"
+
+    @property
+    def graph_name(self):
+        return f"{self.name}({self.value})"
+
 
 class Hierarchy:
     idname = None
     parents = []
     factors = []
-    predecessors = {}
     type_graph_attrs = hierarchy_attrs
 
+    @property
+    def graph_name(self):
+        if self.idname is not None:
+            return f"{self.__class__.__name__}({self.idname}={self.identifier})"
+        else:
+            d = {}
+            for thing, _ in self.traverse_edges():
+                if isinstance(thing, Factor):
+                    d[thing.name] = thing.value
+                elif thing.idname is not None:
+                    d[thing.name+thing.idname] = thing.identifier
+            return f'{self.__class__.__name__}('+'-'.join([f'{k}_{v}' for k,v in d.items()]) + ')'
+
+    def __repr__(self):
+        try:
+            s = f'({self.idname}={self.identifier})'
+        except AttributeError:
+            s = ''
+        return f"<{self.__class__.__name__}{s}>"
+
     def traverse_edges(self):
-        for name, thing in self.predecessors.items():
-            if not isinstance(thing, Hierarchy):
-                yield (thing, self)
-            else:
-                for edge in thing.traverse_edges():
-                    yield edge
-                yield (thing, self)
+        for name, thing_list in self.predecessors.items():
+            for thing in thing_list:
+                if isinstance(thing, Factor):
+                    yield (thing, self)
+                else:
+                    for edge in thing.traverse_edges():
+                        yield edge
+                    yield (thing, self)
 
     def __init__(self, **kwargs):
+        self.predecessors = {}
         self.name = self.__class__.__name__
         parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
-        inputs = parents.copy()
-        inputs.update(factors)
+        specification = parents.copy()
+        specification.update(factors)
         if self.idname is not None:
             self.identifier = kwargs.pop(self.idname.lower())
             setattr(self, self.idname, self.identifier)
-        for k, v in inputs.items():
-            if isinstance(v, Multiple):
-                if not isinstance(kwargs[k], list):
-                    raise TypeError(f"{k} expects multiple elements")
-            try:
-                value = kwargs.pop(k)
-                setattr(self, k, value)
-                self.predecessors[k] = value
-            except KeyError:
-                pass
+        for name, nodetype in specification.items():
+            value = kwargs.pop(name)
+            setattr(self, name, value)
+            if isinstance(nodetype, Multiple):
+                if not isinstance(value, (tuple, list)):
+                    raise TypeError(f"{name} expects multiple elements")
+                if name in factors:
+                    value = [Factor(name, val) for val in value]
+            elif name in factors:
+                value = [Factor(name, value)]
+            else:
+                value = [value]
+            self.predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
 
@@ -77,24 +120,37 @@ class File(Hierarchy):
     type_graph_attrs = l1file_attrs
 
     def __init__(self, fname: Union[Path, str]):
+        self.name = self.__class__.__name__
+        self.predecessors = {}
         self.fname = Path(fname)
+
+    @property
+    def graph_name(self):
+        return f"File({self.fname})"
 
     def read(self):
         raise NotImplementedError
 
     def read_hierarchy(self):
-        things = self.read()
-        for thing in things:
-            if isinstance(thing, dict):
-                for k, v in thing.items():
-                    self.predecessors[k] = v
-            else:
-                self.predecessors[thing.name] = thing
+        hierarchies = self.read()
+        for hierarchy in hierarchies:
+            assert isinstance(hierarchy, Hierarchy)
+            self.predecessors[hierarchy.name] = [hierarchy]
         return self
 
 
 class ArmConfig(Hierarchy):
-    factors = ['VPH', 'Camera']
+    factors = ['Resolution', 'VPH', 'Camera']
+
+
+    @classmethod
+    def from_progtemp_code(cls, progtemp_code):
+        config = progtemp_config.loc[progtemp_code[0]]
+        red = cls(resolution=config.resolution, vph=config.red_vph, camera='red')
+        blue = cls(resolution=config.resolution, vph=config.blue_vph, camera='blue')
+        return red, blue
+
+
 
 
 class ObsTemp(Hierarchy):
@@ -126,7 +182,15 @@ class TargetSet(Hierarchy):
 
 class ProgTemp(Hierarchy):
     factors = ['Mode', 'Binning']
-    parents = [Multiple(ArmConfig, 1, 2)]
+    parents = [Multiple(ArmConfig, 2, 2)]
+
+    @classmethod
+    def from_progtemp_code(cls, progtemp_code):
+        progtemp_code = list(map(int, progtemp_code))
+        configs = ArmConfig.from_progtemp_code(progtemp_code)
+        mode = progtemp_config.loc[progtemp_code[0]]['mode']
+        binning = progtemp_code[3]
+        return cls(mode=mode, binning=binning, armconfigs=configs)
 
 
 class OBSpec(Hierarchy):
@@ -156,22 +220,25 @@ class Raw(File):
 
     def read(self):
         header = fits.open(self.fname)[0].header
-        fibinfo = Table(fits.open(self.fname)[3].data)
         runid = header['RUN']
-        vph = header['VPH']
-        camera = header['CAMERA']
-        armconfig = ArmConfig(vph=vph, camera=camera)
+        camera = header['CAMERA'].lower()[len('WEAVE'):]
         expmjd = header['MJD-OBS']
-        vph = header['VPH']
+        res = header['VPH']
         obstart = header['OBSTART']
         obtitle = header['OBTITLE']
-        obstemp = ObsTemp.from_header(header)
         obid = header['OBID']
+
+        fibinfo = Table(fits.open(self.fname)[3].data)
+        progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
+        vph = progtemp_config[(progtemp_config['mode'] == progtemp.mode)
+                              & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0]
+        armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)
+        obstemp = ObsTemp.from_header(header)
         targetset = TargetSet.from_fibinfo(fibinfo)
-        obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp)
+        obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
         obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
-        run = Run(runid=runid, vph=vph)
+        run = Run(runid=runid, vph=vph, exposure=exposure)
         return armconfig, exposure, run
 
 
@@ -215,30 +282,22 @@ class L2SuperTarget(File):
     constructed_from = [Multiple(L1SuperTarget, 2, 3)]
 
 
+def add_hierarchies(graph, hierarchies: Hierarchy):
+    for from_thing, to_thing in hierarchies.traverse_edges():
+        graph.add_node(to_thing.__class__.__name__, **to_thing.type_graph_attrs)
+        graph.add_node(from_thing.graph_name, **from_thing.type_graph_attrs)
+        graph.add_node(to_thing.graph_name, **to_thing.type_graph_attrs)
+        graph.add_node(from_thing.__class__.__name__, **from_thing.type_graph_attrs)
+        graph.add_edge(from_thing.__class__.__name__, from_thing.graph_name, color=graph.nodes[from_thing.graph_name]['edgecolor'])
+        graph.add_edge(to_thing.__class__.__name__, to_thing.graph_name, color=graph.nodes[to_thing.graph_name]['edgecolor'])
+        graph.add_edge(from_thing.graph_name, to_thing.graph_name, color=graph.nodes[to_thing.graph_name]['edgecolor'])
+
 if __name__ == '__main__':
     import networkx as nx
     instance_graph = nx.DiGraph()
-
-    def add_hierarchies(graph, hierarchies: Hierarchy):
-        for from_thing, to_thing in hierarchies.traverse_edges():
-            if not isinstance(from_thing, Hierarchy):
-                from_thing_graph_attrs = factor_attrs
-                from_thing_name = from_thing.__name__.lower()
-            else:
-                from_thing_graph_attrs = from_thing.type_graph_attrs
-                from_thing_name = from_thing.name.lower()
-            if not isinstance(to_thing, Hierarchy):
-                to_thing_name = to_thing.__name__.lower()
-            else:
-                to_thing_name = to_thing.name.lower()
-            graph.add_node(from_thing.__class__.__name__, **from_thing_graph_attrs)
-            graph.add_node(to_thing.__class__.__name__, **to_thing.type_graph_attrs)
-            graph.add_node(from_thing.name, **from_thing_graph_attrs)
-            graph.add_node(to_thing.name, **to_thing.type_graph_attrs)
-            graph.add_edge(from_thing.__class__.__name__, from_thing, color=graph.nodes[from_thing]['edgecolor'])
-            graph.add_edge(to_thing.__class__.__name__, to_thing, color=graph.nodes[to_thing]['edgecolor'])
-            graph.add_edge(from_thing, to_thing, color=graph.nodes[to_thing]['edgecolor'])
-
     raw = Raw('r1002813.fit').read_hierarchy()
-    add_hierarchies(instance_graph, raw)
-    graph2pdf(instance_graph, 'instance_graph')
+    add_hierarchies(instance_graph, raw.predecessors['ArmConfig'][0])
+    add_hierarchies(instance_graph, raw.predecessors['Exposure'][0])
+    invisible = ['Target'] + [f.lower() for f in Target.factors]
+    view = nx.subgraph_view(instance_graph, lambda n: not any(i in n for i in invisible))
+    graph2pdf(view, 'instance_graph')
