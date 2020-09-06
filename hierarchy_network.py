@@ -1,3 +1,5 @@
+import itertools
+
 import networkx as nx
 import numpy as np
 from graphviz import Source
@@ -22,13 +24,12 @@ pink = '#d50af5'
 
 
 hierarchy = {'type': 'hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
-abstract_hierarchy = {'type': 'abstract_hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
+abstract_hierarchy = {'type': 'hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
 factor = {'type': 'factor', 'style': 'filled', 'fillcolor': orange, 'shape': 'box', 'edgecolor': orange}
-identity = {'type': 'factor', 'style': 'filled', 'fillcolor': purple, 'shape': 'box', 'edgecolor': purple}
+identity = {'type': 'id', 'style': 'filled', 'fillcolor': purple, 'shape': 'box', 'edgecolor': purple}
 product = {'type': 'factor', 'style': 'filled', 'fillcolor': pink, 'shape': 'box', 'edgecolor': pink}
-l1file = {'type': 'l1file', 'style': 'filled', 'fillcolor': lightblue, 'shape': 'box', 'edgecolor': lightblue}
-l2file = {'type': 'l2file', 'style': 'filled', 'fillcolor': lightgreen, 'shape': 'box', 'edgecolor': lightgreen}
-choice = {'type': 'choice', 'style': 'filled', 'fillcolor': red, 'shape': 'diamond', 'edgecolor': red}
+l1file = {'type': 'file', 'style': 'filled', 'fillcolor': lightblue, 'shape': 'box', 'edgecolor': lightblue}
+l2file = {'type': 'file', 'style': 'filled', 'fillcolor': lightgreen, 'shape': 'box', 'edgecolor': lightgreen}
 rawfile = l1file
 
 
@@ -49,50 +50,117 @@ class MultiEdge(Edge):
 
 
 
-RELATIONS = {
-    'OBSpec': (hierarchy, ['ObsTemp', 'ProgTemp', 'TargetSet', 'Title', 'OBID']),
-    'OB realisation': (abstract_hierarchy, ['OBSpec', 'Repeat']),
-    'Exposure': (abstract_hierarchy, ['OB realisation', 'Order']),
-    'Run': (hierarchy, ['Exposure', 'VPH', 'RunID']),
-    'Raw': (rawfile, ['Run']),
 
+RELATIONS = {
+    'OBSpec': (hierarchy, ['ObsTemp', 'ProgTemp', 'TargetSet', 'OBTitle']),
+    'OBRealisation': (abstract_hierarchy, ['OBSpec', 'OBRepeat', 'OBID']),
+    'Exposure': (abstract_hierarchy, ['OBRealisation', 'ExpMJD']),
+    'Run': (hierarchy, ['Exposure', 'VPH', 'RunID']),
+
+    'Raw': (rawfile, ['Run']),
     'L1 single': (l1file, ['Run']),
-    'L1 stack': (l1file, ['OB realisation', 'VPH']),
+    'L1 stack': (l1file, ['OBRealisation', 'VPH']),
     'L1 superstack': (l1file, ['VPH', 'OBSpec']),
     'L1 supertarget': (l1file, ['Mode', 'Arm config', 'Target', 'Binning']),
+
 
     'L2 single': (l2file, ['Exposure']),  # join the two runs together
     'L2 stack/superstack': (l2file, ['TargetSet', 'Mode', MultiEdge('Arm config', 3), 'Binning']),
     'L2 supertarget': (l2file, ['Mode', MultiEdge('Arm config', 3), 'Target', 'Binning']),
 
-    'ObsTemp': (factor, []),
+    'ObsTemp': (hierarchy, ['MaxSeeing', 'MinTrans', 'MinElev', 'MinMoon', 'MaxSky']),
     'ProgTemp': (hierarchy, ['Mode', MultiEdge('Arm config', 2, 1), 'Binning']),
     'Mode': (factor, []),
 
-    'Target': (abstract_hierarchy, ['Target_name']),
+    'Target': (abstract_hierarchy, ['TargetName']),
     'TargetSet': (hierarchy, [MultiEdge('Target')]),
-
-    # 'Red arm config': (abstract_hierarchy, ['Red arm', 'Resolution', 'Binning']),
-    # 'Blue arm config': (abstract_hierarchy, ['Blue arm', 'Blue VPH', 'Resolution', 'Binning']),
     'Arm config': (abstract_hierarchy, ['VPH', 'Resolution']),
-
-    # 'Red arm': (hierarchy, []),
-    # 'Blue arm': (hierarchy, []),
-
-    # 'Arm config': (choice, ['Red arm config', 'Blue arm config']),
-    # 'Arm': (choice, ['Red arm', 'Blue arm']),
-
     'Resolution': (factor, []),
-    'Title': (factor, []),
-    'Repeat': (factor, []),
-    'Order': (factor, []),
+    'OBTitle': (factor, []),
+    'OBRepeat': (factor, []),
+    'ExpMJD': (factor, []),
     'Binning': (factor, []),
     'VPH': (factor, []), # green,blue,red. Can have ['B', 'G'] to do an "or"
 
+    'MaxSeeing': (factor, []),
+    'MinTrans': (factor, []),
+    'MinElev': (factor, []),
+    'MinMoon': (factor, []),
+    'MaxSky': (factor, []),
+
     'OBID': (identity, []),
     'RunID': (identity, []),
-    'Target_name': (identity, []),
+    'TargetName': (identity, []),
 }
+
+DATA = {
+    'single_r0001.fits': ['L1 single', {
+        'RunID': 'r0001',
+        'VPH': 'red',
+        'ExpMJD': 0,
+        'OBRepeat': 0,
+        'MaxSeeing': 'S', 'MinTrans': 'T', 'MinElev': 'A', 'MinMoon': 'M', 'MaxSky': 'B',
+        'OBTitle': 'MyOB0',
+        'OBID': 0,
+        'TargetName': ['target1', 'target2', 'target3', 'target4'],
+        'Mode': 'MOS',
+        'Resolution': 'L',
+        'Binning': 2
+    }],
+    'single_r0002.fits': ['L1 single', {
+        'RunID': 'r0002',
+        'VPH': 'blue',
+        'ExpMJD': 0,
+        'OBRepeat': 0,
+        'MaxSeeing': 'S', 'MinTrans': 'T', 'MinElev': 'A', 'MinMoon': 'M', 'MaxSky': 'B',
+        'OBTitle': 'MyOB0',
+        'OBID': 0,
+        'Target': ['target1', 'target2', 'target3', 'target4'],
+        'Mode': 'MOS',
+        'Resolution': 'L',
+        'Binning': 2,
+    }],
+    'single_r0003.fits': ['L1 single', {
+        'RunID': 'r0003',
+        'VPH': 'green',
+        'ExpMJD': 0,
+        'OBRepeat': 0,
+        'MaxSeeing': 'S', 'MinTrans': 'T', 'MinElev': 'A', 'MinMoon': 'M', 'MaxSky': 'B',
+        'OBTitle': 'MyOB1',
+        'OBID': 1,
+        'Target': ['target5', 'target6', 'target7', 'target8'],
+        'Mode': 'MOS',
+        'Resolution': 'H',
+        'Binning': 2,
+    }],
+    'single_r0004.fits': ['L1 single', {
+        'RunID': 'r0004',
+        'VPH': 'green',
+        'ExpMJD': 0,
+        'OBRepeat': 0,
+        'OBID': 2,
+        'MaxSeeing': 'S', 'MinTrans': 'T', 'MinElev': 'A', 'MinMoon': 'M', 'MaxSky': 'B',
+        'OBTitle': 'MyOB2',
+        'Target': ['target5', 'target6', 'target7', 'target8'],
+        'Mode': 'MOS',
+        'Resolution': 'H',
+        'Binning': 2
+    }],
+    'l1supertarget_8.fits': ['L1 supertarget', {
+        'RunID': 'r0003',
+        'VPH': 'red',
+        'ExpMJD': 0,
+        'OBRepeat': 0,
+        'MaxSeeing': 'S', 'MinTrans': 'T', 'MinElev': 'A', 'MinMoon': 'M', 'MaxSky': 'B',
+        'OBTitle': 'MyOB3',
+        'OBID': 3,
+        'Target': 'target8',
+        'Mode': 'MOS',
+        'Resolution': 'H',
+        'Binning': 2
+    }],
+}
+
 
 
 def find_highest_common_descendant(graph, a, b):
@@ -124,18 +192,63 @@ def find_highest_common_descendant(graph, a, b):
     return [common_descendants[ii] for ii in minima]
 
 
+def traverse_backwards(graph: nx.DiGraph, start_node):
+    nodes = [start_node]
+    for node in nodes:
+        graph.predecessors(node)
+
 
 if __name__ == '__main__':
-    graph = nx.DiGraph()
+    relation_graph = nx.DiGraph()
     for to_node, (attr, from_nodes) in RELATIONS.items():
-        graph.add_node(to_node, **attr)
+        relation_graph.add_node(to_node, **attr)
     for to_node, (attr, from_nodes) in RELATIONS.items():
         for from_node in from_nodes:
             label = '1' if isinstance(from_node, str) else  from_node.label
             minnumber = 1 if isinstance(from_node, str) else from_node.minnumber
             maxnumber = 1 if isinstance(from_node, str) else from_node.maxnumber
             from_node = from_node if isinstance(from_node, str) else from_node.name
-            graph.add_edge(from_node, to_node, color=graph.nodes[to_node]['edgecolor'],
-                           headlabel=label)#, labeldistance=0)
-    graph2pdf(graph, 'graph')
+            relation_graph.add_edge(from_node, to_node, color=relation_graph.nodes[to_node]['edgecolor'],
+                                    headlabel=label)
+    # G = nx.subgraph_view(relation_graph, lambda n: relation_graph.nodes[n]['type'] in ['hierarchy', 'file'])
+    G = relation_graph
+    graph2pdf(G, 'relation_graph')
+
+    # # instance_graph = nx.DiGraph()
+    # for fname, (ftype_name, factors_ids) in DATA.items():
+    #     factors_ids = {k: vs if isinstance(vs , list) else [vs] for k, vs in factors_ids.items()}
+    #     factors = {k: vs for k, vs in factors_ids.items() if relation_graph.nodes[k]['type'] == 'factor'}
+    #     ids = {k: vs for k, vs in factors_ids.items() if relation_graph.nodes[k]['type'] == 'id'}
+    #
+    #     ancestors = list(nx.ancestors(relation_graph, ftype_name))
+    #     subgraph = nx.subgraph(relation_graph, ancestors)  # type: nx.DiGraph
+    #     instance_graph = nx.create_empty_copy(subgraph) # type: nx.DiGraph
+    #     for factor_name, factor_values in factors.items():
+    #         for factor_value in factor_values:
+    #             n = f"{factor_name}-{factor_value}"
+    #             instance_graph.add_node(n, **subgraph.nodes[factor_name])
+    #             instance_graph.add_edge(factor_name, n)
+    #     for id_name, id_values in ids.items():
+    #         hierarchy = list(subgraph.successors(id_name))[0]
+    #         for id_value in id_values:
+    #             n = f"{hierarchy}-{id_value}"
+    #             instance_graph.add_node(n, **subgraph.nodes[hierarchy])
+    #     while True:
+    #         for node, attrs in subgraph.nodes(data=True):
+    #             if attrs['type'] == 'hierarchy':
+    #                 if all(subgraph.predecessors(node):
+    #
+    #
+    #
+    #
+    #
+    #
+    #
+    #     break
+
+
+
+    # graph2pdf(subgraph, 'instance_graph')
+
+
 
