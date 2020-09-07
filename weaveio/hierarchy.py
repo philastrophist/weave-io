@@ -159,6 +159,10 @@ class File(Graphable):
         self.predecessors = self.read()
         super(File, self).__init__(reversed=True, **self.predecessors)
 
+    def match(self, directory: Path):
+        raise NotImplementedError
+
+
     @property
     def graph_name(self):
         return f"File({self.fname})"
@@ -241,8 +245,8 @@ class Run(Hierarchy):
     indexers = ['Camera']
 
 
-class Raw(File):
-    parents = [Run]
+class HeaderFibinfoFile(File):
+    fibinfo_i = -1
 
     def read(self):
         header = fits.open(self.fname)[0].header
@@ -254,11 +258,11 @@ class Raw(File):
         obtitle = header['OBTITLE']
         obid = header['OBID']
 
-        fibinfo = Table(fits.open(self.fname)[3].data)
+        fibinfo = Table(fits.open(self.fname)[self.fibinfo_i].data)
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
         vph = progtemp_config[(progtemp_config['mode'] == progtemp.mode)
                               & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0]
-        armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)
+        armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
         targetset = TargetSet.from_fibinfo(fibinfo)
         obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
@@ -268,15 +272,32 @@ class Raw(File):
         return {'run': [run]}
 
 
-class L1Single(File):
+class Raw(HeaderFibinfoFile):
+    parents = [Run]
+    fibinfo_i = 3
+
+    @classmethod
+    def match(cls, directory: Path):
+        return directory.glob('r*.fit')
+
+
+class L1Single(HeaderFibinfoFile):
     parents = [Run]
     constructed_from = [Raw]
 
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('single_*.fit')
 
-class L1Stack(File):
+
+class L1Stack(HeaderFibinfoFile):
     parents = [OBRealisation]
     factors = ['VPH']
     constructed_from = [L1Single]
+
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('stacked_*.fit')
 
 
 class L1SuperStack(File):
@@ -284,16 +305,28 @@ class L1SuperStack(File):
     factors = ['VPH']
     constructed_from = [L1Single]
 
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('superstacked_*.fit')
+
 
 class L1SuperTarget(File):
     parents = [ArmConfig, Target]
     factors = ['Binning', 'Mode']
     constructed_from = [L1Single]
 
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('[Lm]?WVE_*.fit')
+
 
 class L2Single(File):
     parents = [Exposure]
     constructed_from = [Multiple(L1Single, 2, 2)]
+
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('single_*_aps.fit')
 
 
 class L2Stack(File):
@@ -301,8 +334,16 @@ class L2Stack(File):
     factors = ['Binning', 'Mode']
     constructed_from = [Multiple(L1Stack, 0, 3), Multiple(L1SuperStack, 0, 3)]
 
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('(super)?stacked_*_aps.fit')
+
 
 class L2SuperTarget(File):
     parents = [Multiple(ArmConfig, 1, 3), Target]
     factors = ['Mode', 'Binning']
     constructed_from = [Multiple(L1SuperTarget, 2, 3)]
+
+    @classmethod
+    def match(cls, directory):
+        return directory.glob('[Lm]?WVE_*_aps.fit')
