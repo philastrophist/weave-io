@@ -1,11 +1,25 @@
 from pathlib import Path
-from typing import Union
+from typing import Union, Any
 
+import networkx as nx
 from astropy.io import fits
 from astropy.table import Table
+from graphviz import Source
 
-from hierarchy_network import graph2pdf
-from config_tables import progtemp_config
+from .config_tables import progtemp_config
+from .graph import Graph
+
+
+def graph2pdf(graph, ftitle):
+    dot = nx.nx_pydot.to_pydot(graph)
+    dot.set_strict(False)
+    # dot.obj_dict['attributes']['splines'] = 'ortho'
+    dot.obj_dict['attributes']['nodesep'] = '0.5'
+    dot.obj_dict['attributes']['ranksep'] = '0.75'
+    dot.obj_dict['attributes']['overlap'] = False
+    dot.obj_dict['attributes']['penwidth'] = 18
+    dot.obj_dict['attributes']['concentrate'] = False
+    Source(dot).render(ftitle, cleanup=True, format='pdf')
 
 
 lightblue = '#69A3C3'
@@ -36,60 +50,66 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
-class Factor:
+class Graphable:
+    idname = None
+    name = None
+    identifier = None
+    indexers = []
+    type_graph_attrs = {}
+
+    def __init__(self, reversed=False, **nodes):
+        graph = Graph.get_context()  # type: Graph
+        graph.add_node(self.__class__.__name__, peripheries=2, **self.type_graph_attrs)
+        idname = self.idname
+        if self.idname is not None:
+            idname = self.idname.lower()
+        graph.add_node(self.name, idname=idname, identifier=self.identifier, **self.type_graph_attrs)
+        color = graph.nodes[self.name]['edgecolor']
+        # if reversed:
+        graph.add_edge(self.name, self.__class__.__name__, color=color, type='is_a', label='is_a')
+        # else:
+        #     graph.add_edge(self.__class__.__name__, self.name, color=color)
+        for k, node_list in nodes.items():
+            for node in node_list:
+                if k in [i.lower() for i in self.indexers]:
+                    type = 'indexes'
+                    label = type
+                else:
+                    type = 'is_required_by'
+                    label = ''
+                graph.add_edge(node.name, self.name, type=type, label=label,
+                               color=graph.nodes[self.name]['edgecolor'])
+
+
+
+class Factor(Graphable):
     type_graph_attrs = factor_attrs
 
     def __init__(self, name, value):
-        self.name = name
-        self.value = value
+        self.idname = name
+        self.identifier = value
+        self.name = f"{self.idname}({self.identifier})"
+        super(Factor, self).__init__()
+        graph = Graph.get_context()  # type: Graph
+        graph.add_node(self.idname, peripheries=2, **self.type_graph_attrs)
+        graph.add_edge(self.idname, self.name)
+
 
     def __repr__(self):
-        return f"<Factor({self.name}={self.value})>"
-
-    @property
-    def graph_name(self):
-        return f"{self.name}({self.value})"
+        return f"<Factor({self.idname}={self.identifier})>"
 
 
-class Hierarchy:
+class Hierarchy(Graphable):
     idname = None
     parents = []
     factors = []
+    indexers = []
     type_graph_attrs = hierarchy_attrs
 
-    @property
-    def graph_name(self):
-        if self.idname is not None:
-            return f"{self.__class__.__name__}({self.idname}={self.identifier})"
-        else:
-            d = {}
-            for thing, _ in self.traverse_edges():
-                if isinstance(thing, Factor):
-                    d[thing.name] = thing.value
-                elif thing.idname is not None:
-                    d[thing.name+thing.idname] = thing.identifier
-            return f'{self.__class__.__name__}('+'-'.join([f'{k}_{v}' for k,v in d.items()]) + ')'
-
     def __repr__(self):
-        try:
-            s = f'({self.idname}={self.identifier})'
-        except AttributeError:
-            s = ''
-        return f"<{self.__class__.__name__}{s}>"
-
-    def traverse_edges(self):
-        for name, thing_list in self.predecessors.items():
-            for thing in thing_list:
-                if isinstance(thing, Factor):
-                    yield (thing, self)
-                else:
-                    for edge in thing.traverse_edges():
-                        yield edge
-                    yield (thing, self)
+        return self.name
 
     def __init__(self, **kwargs):
-        self.predecessors = {}
-        self.name = self.__class__.__name__
         parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
@@ -97,6 +117,8 @@ class Hierarchy:
         if self.idname is not None:
             self.identifier = kwargs.pop(self.idname.lower())
             setattr(self, self.idname, self.identifier)
+
+        predecessors = {}
         for name, nodetype in specification.items():
             value = kwargs.pop(name)
             setattr(self, name, value)
@@ -109,20 +131,33 @@ class Hierarchy:
                 value = [Factor(name, value)]
             else:
                 value = [value]
-            self.predecessors[name] = value
+            predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
+        if self.idname is not None:
+            self.name = f"{self.__class__.__name__}({self.idname.lower()}={self.identifier})"
+        else:
+            name = ''
+            for predecessor_list in predecessors.values():
+                for predecessor in predecessor_list:
+                    name += predecessor.name
+            name = '#' + str(hash(name))  # TODO: urgently needs replacing with a reliable hash
+            self.identifier = name
+            self.name = f"{self.__class__.__name__}({name})"
+        super(Hierarchy, self).__init__(**predecessors)
 
 
-class File(Hierarchy):
+class File(Graphable):
     idname = 'fname'
     constructed_from = []
     type_graph_attrs = l1file_attrs
 
     def __init__(self, fname: Union[Path, str]):
-        self.name = self.__class__.__name__
-        self.predecessors = {}
         self.fname = Path(fname)
+        self.identifier = str(self.fname)
+        self.name = f'{self.__class__.__name__}({self.fname})'
+        self.predecessors = self.read()
+        super(File, self).__init__(reversed=True, **self.predecessors)
 
     @property
     def graph_name(self):
@@ -131,17 +166,9 @@ class File(Hierarchy):
     def read(self):
         raise NotImplementedError
 
-    def read_hierarchy(self):
-        hierarchies = self.read()
-        for hierarchy in hierarchies:
-            assert isinstance(hierarchy, Hierarchy)
-            self.predecessors[hierarchy.name] = [hierarchy]
-        return self
-
 
 class ArmConfig(Hierarchy):
     factors = ['Resolution', 'VPH', 'Camera']
-
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -149,8 +176,6 @@ class ArmConfig(Hierarchy):
         red = cls(resolution=config.resolution, vph=config.red_vph, camera='red')
         blue = cls(resolution=config.resolution, vph=config.blue_vph, camera='blue')
         return red, blue
-
-
 
 
 class ObsTemp(Hierarchy):
@@ -212,7 +237,8 @@ class Exposure(Hierarchy):
 class Run(Hierarchy):
     idname = 'RunID'
     parents = [Exposure]
-    factors = ['VPH']
+    factors = ['Camera']
+    indexers = ['Camera']
 
 
 class Raw(File):
@@ -238,8 +264,8 @@ class Raw(File):
         obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
         obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
-        run = Run(runid=runid, vph=vph, exposure=exposure)
-        return armconfig, exposure, run
+        run = Run(runid=runid, camera=camera, exposure=exposure)
+        return {'run': [run]}
 
 
 class L1Single(File):
@@ -280,24 +306,3 @@ class L2SuperTarget(File):
     parents = [Multiple(ArmConfig, 1, 3), Target]
     factors = ['Mode', 'Binning']
     constructed_from = [Multiple(L1SuperTarget, 2, 3)]
-
-
-def add_hierarchies(graph, hierarchies: Hierarchy):
-    for from_thing, to_thing in hierarchies.traverse_edges():
-        graph.add_node(to_thing.__class__.__name__, **to_thing.type_graph_attrs)
-        graph.add_node(from_thing.graph_name, **from_thing.type_graph_attrs)
-        graph.add_node(to_thing.graph_name, **to_thing.type_graph_attrs)
-        graph.add_node(from_thing.__class__.__name__, **from_thing.type_graph_attrs)
-        graph.add_edge(from_thing.__class__.__name__, from_thing.graph_name, color=graph.nodes[from_thing.graph_name]['edgecolor'])
-        graph.add_edge(to_thing.__class__.__name__, to_thing.graph_name, color=graph.nodes[to_thing.graph_name]['edgecolor'])
-        graph.add_edge(from_thing.graph_name, to_thing.graph_name, color=graph.nodes[to_thing.graph_name]['edgecolor'])
-
-if __name__ == '__main__':
-    import networkx as nx
-    instance_graph = nx.DiGraph()
-    raw = Raw('r1002813.fit').read_hierarchy()
-    add_hierarchies(instance_graph, raw.predecessors['ArmConfig'][0])
-    add_hierarchies(instance_graph, raw.predecessors['Exposure'][0])
-    invisible = ['Target'] + [f.lower() for f in Target.factors]
-    view = nx.subgraph_view(instance_graph, lambda n: not any(i in n for i in invisible))
-    graph2pdf(view, 'instance_graph')
