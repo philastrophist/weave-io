@@ -45,6 +45,14 @@ class Multiple:
         self.minnumber = minnumber
         self.maxnumber = maxnumber
         self.name = node.__name__.lower()+'s'
+        try:
+            self.factors =  self.node.factors
+        except AttributeError:
+            self.factors = []
+        try:
+            self.parents = self.node.parents
+        except AttributeError:
+            self.parents = []
 
     def __repr__(self):
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
@@ -57,7 +65,7 @@ class Graphable:
     indexers = []
     type_graph_attrs = {}
 
-    def __init__(self, reversed=False, **nodes):
+    def __init__(self, **nodes):
         graph = Graph.get_context()  # type: Graph
         graph.add_node(self.__class__.__name__, peripheries=2, **self.type_graph_attrs)
         idname = self.idname
@@ -65,10 +73,7 @@ class Graphable:
             idname = self.idname.lower()
         graph.add_node(self.name, idname=idname, identifier=self.identifier, **self.type_graph_attrs)
         color = graph.nodes[self.name]['edgecolor']
-        # if reversed:
         graph.add_edge(self.name, self.__class__.__name__, color=color, type='is_a', label='is_a')
-        # else:
-        #     graph.add_edge(self.__class__.__name__, self.name, color=color)
         for k, node_list in nodes.items():
             for node in node_list:
                 if k in [i.lower() for i in self.indexers]:
@@ -79,7 +84,6 @@ class Graphable:
                     label = ''
                 graph.add_edge(node.name, self.name, type=type, label=label,
                                color=graph.nodes[self.name]['edgecolor'])
-
 
 
 class Factor(Graphable):
@@ -157,7 +161,7 @@ class File(Graphable):
         self.identifier = str(self.fname)
         self.name = f'{self.__class__.__name__}({self.fname})'
         self.predecessors = self.read()
-        super(File, self).__init__(reversed=True, **self.predecessors)
+        super(File, self).__init__(**self.predecessors)
 
     def match(self, directory: Path):
         raise NotImplementedError

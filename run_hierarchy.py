@@ -3,8 +3,7 @@
 from weaveio.hierarchy import Run, Raw, Target, graph2pdf, L1Single, L1Stack
 # from weaveio.graph import Graph
 import networkx as nx
-from weaveio.data import OurData
-
+from weaveio.data import OurData, Address
 
 # with Graph() as instance_graph:
 #     r1 = Raw('r1002813.fit')
@@ -44,11 +43,13 @@ from weaveio.data import OurData
 #     """
 #     return reduce(lambda a, b: a & b, [match_files(graph, k, v, filetype) for k, v in factors.items()])
 
-query = ['L1Stack', dict(camera='blue')]
 data = OurData('.')
-
-fs = data._query_files(*query)
+query = ['L1Single', dict(camera='red', vph=1)]
+fs = data._query_nodes(*query)
 print(fs)
+
+# data[Address(camera='red')].l1stacks.fnames
+# obj = data[Address(camera='red')]
 # view = nx.subgraph_view(view, lambda n: nx.has_path(instance_graph, n, 'L1Stack'))
 view = data.graph_view(exclude=['Target', 'ra', 'dec'])
 graph2pdf(view, 'instance_graph')
