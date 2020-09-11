@@ -1,3 +1,5 @@
+# Copied the Context structure from Pymc3
+
 import threading
 from sys import modules
 from typing import Optional, Type, TypeVar, List, Union
