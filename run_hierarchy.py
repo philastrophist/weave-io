@@ -50,21 +50,25 @@ from weaveio.data import OurData, Address
 
 from weaveio.data import BasicQuery, Address
 # data[camera=red].runs[runid].OBspec.runs[vph=1]()
-q = BasicQuery().index_by_address(Address(camera='red', mode='MOS')).index_by_hierarchy_name('Run').\
-    index_by_id('1002793').index_by_hierarchy_name('OBSpec', 'above').\
-    index_by_hierarchy_name('Run', 'below').index_by_address(Address(vph=1))
-cypher = q.make(branch=False)
-print(cypher)
-from py2neo import Graph
-graph = Graph(host='host.docker.internal')
-print(q.current_label, graph.run(cypher).to_ndarray().T[0])
+# q = BasicQuery().index_by_address(Address(camera='red', mode='MOS')).index_by_hierarchy_name('Run').\
+#     index_by_id('1002793').index_by_hierarchy_name('OBSpec', 'above').\
+#     index_by_hierarchy_name('Run', 'below').index_by_address(Address(vph=1))
+# cypher = q.make(branch=False)
+# print(cypher)
+# from py2neo import Graph
+# graph = Graph(host='host.docker.internal')
+# print(q.current_label, graph.run(cypher).to_ndarray().T[0])
+#
+# cypher = q.make(branch=True)
+# print(cypher)
+# from py2neo import Graph
+# graph = Graph(host='host.docker.internal')
+# data = graph.run(cypher).data()
+# print(data)
 
-cypher = q.make(branch=True)
-print(cypher)
-from py2neo import Graph
-graph = Graph(host='host.docker.internal')
-data = graph.run(cypher).data()
-print(data)
+data = OurData('.')
+print(data[Address(camera='red')].runs['1002793'].obspec.runs[Address(vph=1)].query.make())
+
 
 # query = ['L1Single', dict(camera='red', vph=1)]
 # fs = data._query_nodes(*query)

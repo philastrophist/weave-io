@@ -1,0 +1,105 @@
+
+types of query:
+	filtering:  [Address()]
+		if the first:
+			add on (:factor_name {value: factor_value})-[*]->(n) referencing final node `n`
+		else:
+			add on (:factor_name {value: factor_value})-[*]->(n) referencing the previous node `n`
+	id:         [runid]
+		add on "{id: value}" on to the last node
+	one below:  run.single, target.supertarget
+		Identify direction from relation graph
+		add on "-[*]->(exposure: Exposure)"
+	many below: ob.singles
+		Identify direction from relation graph
+		add on "-[*]->(exposure: Exposure)"
+	one above:  run.exposure, run.vph
+		Identify direction from relation graph
+		add on "<-[*]-(exposure: Exposure)"
+	many above: run.targets, run.armconfigs
+		Identify direction from relation graph
+			add on "<-[*]-(exposure: Exposure)"
+
+__call__: ()
+	return the branch
+
+data[camera=red].runs[runid].OBspec.runs[vph=1]()
+	match (:camera {value: 'red'})-[*]->(first)
+	match (first:Run {id: '1002793'})<-[*]-(o:OBSpec)
+	match (o)-[*]->(r:Run)
+	match (:vph {value: 1})-[*]->(r)
+
+	match p1=(r)<-[*]-(n:Factor)
+	match p2=(r)-[*]->(m)
+	WITH collect(p2) as p2s, collect(p1) as p1s
+	CALL apoc.convert.toTree(p1s+p2s) yield value
+	RETURN value
+
+data.singles[camera=red].stack()
+	match (f:L1Single)
+	match (:camera {value: 'red'})-[*]->(f)
+	match (f)<-[*]-(h: Hierarchy)-[]->(l1single: L1Single)
+	
+	match p1=(l1single)<-[*]-(n:Factor)
+	match p2=(l1single)-[*]->(m)
+	WITH collect(p2) as p2s, collect(p1) as p1s
+	CALL apoc.convert.toTree(p1s+p2s) yield value
+	RETURN value
+
+
+
+
+data[address].hierarchy(s)[id].file(s).product(s)[index]
+
+data[address][address].runs[runid].OBRealisation()
+	data[address] -> HeterogeneousQuery (not executable)
+	data[address][address].runs -> HomogeneousQuery (executable) make paths from each factor to the hierarchy (Run)
+	data[address][address].runs[runid] -> HierarchyQuery (executable) add "where hierarchy.id == runid"
+	data[address][address].runs[runid].OBRealisation -> add path to OBRealisation in any direction
+
+	match (:camera {value: 'red'})-[*]->(h),
+	(:vph {value: 1})-[*]->(h)
+	where h:Run and h.runid = '1002813'
+	match (o: OBRealisation)-[*]->(h)
+	where h:Run and h.runid = '1002813'
+	return o
+
+
+Build query:
+	From left to right
+	Addresses add `match (:factor {value: 'factor_value'})-[*]->(h)`
+		now we need h to be filled
+	`.<hierarchies>` adds `where h:<HierarchyType>`
+	`.<hierarchies>[<hid>]` adds `where hidname=hid`
+	`.<filetype>` adds `(h)-[]->(f:FileType)`
+	`<hierarchy>` adds another `match (h2: <HierarchyType>)-[*]->(h)`
+		this requires knowing the right direction from the relation schema
+	``
+
+
+data[Address(res=highres)].runs.exposures
+
+
+File from factors:
+	match p1=(:camera {value: 'red'})-[*]->(h:Hierarchy),
+	p2=(:vph {value: 1})-[*]->(h:Hierarchy),
+	p3=(h)-[]->(f:File)
+	return f, h
+
+File from id:
+	match (r: Run {runid: '1002813'})-[]->(f:File) return f
+
+Down-Hierarchy from factors:
+	match (:camera {value: 'red'})-[*]->(h:Hierarchy),
+	(:vph {value: 1})-[*]->(h:Hierarchy)
+	return h
+Up-Hierarchy:
+	match (r: Run {runid: '1002813'})<-[*]-(o: OBRealisation) return o
+
+
+Get branch from node:
+	match p1=(r: Run {runid: '1002813'})<-[*]-(n1) match p2=(r: Run {runid: '1002813'})-[*]->(n2) return p1, p2
+
+
+
+

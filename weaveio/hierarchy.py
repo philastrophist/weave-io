@@ -49,6 +49,8 @@ class Multiple:
         self.minnumber = minnumber
         self.maxnumber = maxnumber
         self.name = node.__name__.lower()+'s'
+        self.singular_name = node.singular_name
+        self.plural_name = node.plural_name
         try:
             self.factors =  self.node.factors
         except AttributeError:
@@ -62,12 +64,24 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
-class Graphable:
+class PluralityMeta(type):
+    def __new__(meta, name, bases, dct):
+        if dct.get('plural_name', None) is None:
+            dct['plural_name'] = name.lower() + 's'
+        dct['singular_name'] = name.lower()
+        r = super(PluralityMeta, meta).__new__(meta, name, bases, dct)
+        return r
+
+
+
+class Graphable(metaclass=PluralityMeta):
     idname = None
     name = None
     identifier = None
     indexers = []
     type_graph_attrs = {}
+    plural_name = None
+    singular_name = None
 
     @property
     def neotypes(self):
@@ -83,7 +97,6 @@ class Graphable:
             return d
         else:
             return {'dummy': 1}   # just to stop py2neo complaining, shouldnt actually be encountered
-
 
     def __init__(self, **nodes):
         tx = Graph.get_context().tx
@@ -114,7 +127,7 @@ class Factor(Graphable):
     def neoproperties(self):
         return {'value': self.identifier, 'id': self.identifier}
 
-    def __init__(self, name, value):
+    def __init__(self, name, value, plural_name=None):
         self.idname = name
         self.identifier = value
         self.name = f"{self.idname}({self.identifier})"
