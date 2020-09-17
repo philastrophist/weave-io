@@ -1,13 +1,17 @@
+import inspect
 from pathlib import Path
 from typing import Union, Any
 
 import networkx as nx
+import py2neo
+import xxhash
 from astropy.io import fits
 from astropy.table import Table
 from graphviz import Source
+from tqdm import tqdm
 
 from .config_tables import progtemp_config
-from .graph import Graph
+from .graph import Graph, Node, Relationship
 
 
 def graph2pdf(graph, ftitle):
@@ -65,39 +69,56 @@ class Graphable:
     indexers = []
     type_graph_attrs = {}
 
-    def __init__(self, **nodes):
-        graph = Graph.get_context()  # type: Graph
-        graph.add_node(self.__class__.__name__, peripheries=2, **self.type_graph_attrs)
-        idname = self.idname
+    @property
+    def neotypes(self):
+        clses = [i.__name__ for i in inspect.getmro(self.__class__)]
+        clses = clses[:clses.index('Graphable')]
+        return clses + [self.__class__.__name__]
+
+    @property
+    def neoproperties(self):
         if self.idname is not None:
-            idname = self.idname.lower()
-        graph.add_node(self.name, idname=idname, identifier=self.identifier, **self.type_graph_attrs)
-        color = graph.nodes[self.name]['edgecolor']
-        graph.add_edge(self.name, self.__class__.__name__, color=color, type='is_a', label='is_a')
+            d = {self.idname: self.identifier}
+            d['id'] = self.identifier
+            return d
+        else:
+            return {'dummy': 1}   # just to stop py2neo complaining, shouldnt actually be encountered
+
+
+    def __init__(self, **nodes):
+        tx = Graph.get_context().tx
+        self.node = Node(*self.neotypes, **self.neoproperties)
+        try:
+            key = list(self.neoproperties.keys())[0]
+        except IndexError:
+            key = None
+        primary = {'primary_label': self.neotypes[-1], 'primary_key': key}
+        tx.merge(self.node, **primary)
         for k, node_list in nodes.items():
             for node in node_list:
                 if k in [i.lower() for i in self.indexers]:
                     type = 'indexes'
-                    label = type
                 else:
                     type = 'is_required_by'
-                    label = ''
-                graph.add_edge(node.name, self.name, type=type, label=label,
-                               color=graph.nodes[self.name]['edgecolor'])
+                tx.merge(Relationship(node.node, type, self.node))
 
 
 class Factor(Graphable):
     type_graph_attrs = factor_attrs
+
+    @property
+    def neotypes(self):
+        return super().neotypes + [self.idname]
+
+    @property
+    def neoproperties(self):
+        return {'value': self.identifier, 'id': self.identifier}
 
     def __init__(self, name, value):
         self.idname = name
         self.identifier = value
         self.name = f"{self.idname}({self.identifier})"
         super(Factor, self).__init__()
-        graph = Graph.get_context()  # type: Graph
-        graph.add_node(self.idname, peripheries=2, **self.type_graph_attrs)
-        graph.add_edge(self.idname, self.name)
-
 
     def __repr__(self):
         return f"<Factor({self.idname}={self.identifier})>"
@@ -113,13 +134,18 @@ class Hierarchy(Graphable):
     def __repr__(self):
         return self.name
 
+    def neo_query(self, varname):
+        return [], [f'{varname}:{self.__class__.__name__}'], None
+
     def __init__(self, **kwargs):
+        if self.idname not in kwargs and self.idname is not None:
+            kwargs[self.idname] = ''.join(str(kwargs[f.lower()]) for f in self.factors)
         parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
         if self.idname is not None:
-            self.identifier = kwargs.pop(self.idname.lower())
+            self.identifier = kwargs.pop(self.idname)
             setattr(self, self.idname, self.identifier)
 
         predecessors = {}
@@ -139,13 +165,14 @@ class Hierarchy(Graphable):
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         if self.idname is not None:
-            self.name = f"{self.__class__.__name__}({self.idname.lower()}={self.identifier})"
+            self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         else:
-            name = ''
+            name = xxhash.xxh32()
             for predecessor_list in predecessors.values():
                 for predecessor in predecessor_list:
-                    name += predecessor.name
-            name = '#' + str(hash(name))  # TODO: urgently needs replacing with a reliable hash
+                    name.update(predecessor.name)
+            name = '#' + name.hexdigest()
+            self.idname = 'id'
             self.identifier = name
             self.name = f"{self.__class__.__name__}({name})"
         super(Hierarchy, self).__init__(**predecessors)
@@ -155,6 +182,9 @@ class File(Graphable):
     idname = 'fname'
     constructed_from = []
     type_graph_attrs = l1file_attrs
+
+    def neo_query(self, varname):
+        return [f'(h)-[]->(f:{self.__class__.__name__})'], [f'{varname}:Hierarchy'], 'f'
 
     def __init__(self, fname: Union[Path, str]):
         self.fname = Path(fname)
@@ -177,17 +207,19 @@ class File(Graphable):
 
 class ArmConfig(Hierarchy):
     factors = ['Resolution', 'VPH', 'Camera']
+    idname = 'armcode'
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
         config = progtemp_config.loc[progtemp_code[0]]
-        red = cls(resolution=config.resolution, vph=config.red_vph, camera='red')
-        blue = cls(resolution=config.resolution, vph=config.blue_vph, camera='blue')
+        red = cls(resolution=str(config.resolution), vph=int(config.red_vph), camera='red')
+        blue = cls(resolution=str(config.resolution), vph=int(config.blue_vph), camera='blue')
         return red, blue
 
 
 class ObsTemp(Hierarchy):
     factors = ['MaxSeeing', 'MinTrans', 'MinElev', 'MinMoon', 'MaxSky']
+    idname = 'obstemp'
 
     @classmethod
     def from_header(cls, header):
@@ -196,20 +228,23 @@ class ObsTemp(Hierarchy):
 
 
 class Target(Hierarchy):
-    idname = 'CNAME'
-    factors = ['RA', 'DEC']
+    idname = 'cname'
 
     @classmethod
     def from_fibinfo_row(cls, row):
-        return Target(cname=row['CNAME'], ra=row['FIBRERA'], dec=row['FIBREDEC'])
+        return Target(cname=row['CNAME'])
 
 
 class TargetSet(Hierarchy):
     parents = [Multiple(Target)]
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+
     @classmethod
     def from_fibinfo(cls, fibinfo):
-        targets = [Target.from_fibinfo_row(row) for row in fibinfo]
+        targets = [Target.from_fibinfo_row(row) for row in tqdm(fibinfo[:10])]
         return cls(targets=targets)
 
 
@@ -219,6 +254,7 @@ class ProgTemp(Hierarchy):
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
+        progtemp_code = progtemp_code.split('.')[0]
         progtemp_code = list(map(int, progtemp_code))
         configs = ArmConfig.from_progtemp_code(progtemp_code)
         mode = progtemp_config.loc[progtemp_code[0]]['mode']
@@ -232,7 +268,7 @@ class OBSpec(Hierarchy):
 
 
 class OBRealisation(Hierarchy):
-    idname = 'OBID'
+    idname = 'obid'
     factors = ['OBStartMJD']
     parents = [OBSpec]
 
@@ -243,7 +279,7 @@ class Exposure(Hierarchy):
 
 
 class Run(Hierarchy):
-    idname = 'RunID'
+    idname = 'runid'
     parents = [Exposure]
     factors = ['Camera']
     indexers = ['Camera']
@@ -254,18 +290,18 @@ class HeaderFibinfoFile(File):
 
     def read(self):
         header = fits.open(self.fname)[0].header
-        runid = header['RUN']
-        camera = header['CAMERA'].lower()[len('WEAVE'):]
-        expmjd = header['MJD-OBS']
-        res = header['VPH']
-        obstart = header['OBSTART']
-        obtitle = header['OBTITLE']
-        obid = header['OBID']
+        runid = str(header['RUN'])
+        camera = str(header['CAMERA'].lower()[len('WEAVE'):])
+        expmjd = str(header['MJD-OBS'])
+        res = str(header['VPH']).rstrip('123')
+        obstart = str(header['OBSTART'])
+        obtitle = str(header['OBTITLE'])
+        obid = str(header['OBID'])
 
         fibinfo = Table(fits.open(self.fname)[self.fibinfo_i].data)
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
-        vph = progtemp_config[(progtemp_config['mode'] == progtemp.mode)
-                              & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0]
+        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.mode)
+                              & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
         armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
         targetset = TargetSet.from_fibinfo(fibinfo)

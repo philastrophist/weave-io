@@ -4,7 +4,7 @@ import threading
 from sys import modules
 from typing import Optional, Type, TypeVar, List, Union
 
-import networkx as nx
+from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
 
 T = TypeVar("T", bound="ContextMeta")
 
@@ -122,25 +122,42 @@ class ContextMeta(type):
 
 def graphcontext(graph: Optional["Graph"]) -> "Graph":
     """
-    Return the given model or, if none was supplied, try to find one in
+    Return the given graph or, if none was supplied, try to find one in
     the context stack.
     """
     if graph is None:
-        model = Graph.get_context(error_if_none=False)
-        if model is None:
-            raise TypeError("No model on context stack.")
+        graph = Graph.get_context(error_if_none=False)
+        if graph is None:
+            raise TypeError("No graph on context stack.")
     return graph
 
 
-class Graph(nx.DiGraph, metaclass=ContextMeta):
+class TransactionWrapper:
+    def __init__(self, tx: Transaction):
+        self.tx = tx
+
+    def __enter__(self):
+        return self.tx
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.tx.commit()
+
+
+class Graph(metaclass=ContextMeta):
     def __new__(cls, *args, **kwargs):
         # resolves the parent instance
         instance = super().__new__(cls)
-        if kwargs.get("model") is not None:
-            instance._parent = kwargs.get("model")
+        if kwargs.get("graph") is not None:
+            instance._parent = kwargs.get("graph")
         else:
             instance._parent = cls.get_context(error_if_none=False)
         return instance
 
+    def __init__(self, profile=None, name=None, **settings):
+        self.neograph = NeoGraph(profile, name, **settings)
+
+    def begin(self):
+        self.tx = self.neograph.begin(False)
+        return self.tx
 
 Graph._context_class = Graph

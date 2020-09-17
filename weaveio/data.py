@@ -1,3 +1,4 @@
+from collections import defaultdict
 from functools import reduce
 from pathlib import Path
 from typing import Union, Any, Dict, Set, List
@@ -12,12 +13,20 @@ class Address(dict):
     pass
 
 
+def quote(x):
+    """
+    Return a quoted string if x is a string otherwise return x
+    """
+    if isinstance(x, str):
+        return f"'{x}'"
+    return x
+
+
 class Data:
     filetypes = []
 
-    def __init__(self, rootdir: Union[Path, str]):
-        super(Data, self).__init__()
-        self.graph = Graph()
+    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal'):
+        self.graph = Graph(host=host)
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.read_in_directory()
@@ -27,12 +36,13 @@ class Data:
 
     def read_in_directory(self):
         for filetype in self.filetypes:
-            self.filelists[filetype] = filetype.match(self.rootdir)
+            self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
             for filetype, files in self.filelists.items():
                 for file in files:
-                    filetype(file).read()
-            self.graph.remove_node('Factor')
+                    tx = self.graph.begin()
+                    filetype(file)
+                    tx.commit()
         self.hierarchies = {h.__class__.__name__: h for ft in self.filetypes for h in ft.parents}
         self.factors = [f for ft in self.filetypes for h in ft.parents for f in h.factors]
 
@@ -96,16 +106,90 @@ class Data:
         return HeterogeneousHierarchy(self, Address()).__getattr__(item)
 
 
+class BasicQuery:
+    def __init__(self, matches: List = None, wheres: List = None, current_varname: str = None):
+        self.matches = []
+        self.wheres = []
+        self.matches += [] if matches is None else matches
+        self.wheres += [] if wheres is None else wheres
+        self.current_varname = None
+        self.current_label = None
+        self.counter = defaultdict(int)
+
+    def make(self, branch=False):
+        if self.matches:
+            match = 'MATCH {}'.format('\nMATCH '.join(self.matches))
+        else:
+            match = ""
+        if self.wheres:
+            where = 'WHERE {}'.format('\nAND'.join(self.wheres))
+        else:
+            where = ""
+        if branch:
+            returns = '\n'.join([f"MATCH p1=({self.current_varname})<-[*]-(n1)",
+                                 f"MATCH p2=({self.current_varname})-[*]->(n2)",
+                                 f"WITH collect(p2) as p2s, collect(p1) as p1s",
+                                 f"CALL apoc.convert.toTree(p1s+p2s) yield value",
+                                 f"RETURN value"])
+            returns = r'//Add Hierarchy Branch'+'\n' + returns
+        else:
+            returns = f"RETURN DISTINCT {self.current_varname}.id as id"
+        return f"{match}\n{where}\n{returns}"
+
+    def index_by_address(self, address):
+        if self.current_varname is None:
+            name = 'first'
+        else:
+            name = self.current_varname
+        self.matches += [f"(:{k} {{value: {quote(v)}}})-[*]->({name})" for k, v in address.items()]
+        return self
+
+    def index_by_hierarchy_name(self, hierarchy_name, direction=None):
+        name = '{}{}'.format(hierarchy_name.lower(), self.counter[hierarchy_name])
+        if self.current_varname is None:
+            first_encountered = False
+            for i, m in enumerate(self.matches):
+                if '(first)' in m and not first_encountered:
+                    self.matches[i] = m.replace('(first)', f'({name}:{hierarchy_name})')
+                    first_encountered = True
+                else:
+                    self.matches[i] = m.replace('(first)', f'({name})')
+            self.current_varname = name
+        else:
+            arrows = '<-[*]-' if direction == 'above' else '-[*]->'
+            self.matches += [f"({self.current_varname}){arrows}({name}:{hierarchy_name})"]
+            self.current_varname = name
+        self.current_label = hierarchy_name
+        self.counter[hierarchy_name] += 1
+        return self
+
+    def index_by_id(self, id_value):
+        self.wheres += [f"{self.current_varname}.id = {quote(id_value)}"]
+        return self
+
+
 class Indexable:
-    def __init__(self, data: Data, address: Address):
-        self.data = data
+    def __init__(self, query, address: Address):
+        self.query = query
         self.address = address
 
-    def index_by_hierarchy_name(self, hierarchy_name):
+    def __call__(self):
+        raise NotImplementedError
+
+    def index_by_single_hierarchy_name(self, hierarchy_name):
         raise NotImplementedError
 
     def index_by_address(self, address):
-        return HeterogeneousHierarchy(self.data, self.address & address)
+        matches = [f"(:{k} {{value: {quote(v)}}})-[*]->(h)" for k, v in self.address.items()]
+        query = HierarchyQuery(self.query, matches)
+        return HeterogeneousHierarchy(query, self.address & address)
+
+    def index_by_plural_hierarchy_name(self, hierarchy_name):
+        raise NotImplementedError
+
+    def index_by_key(self, key):
+        raise NotImplementedError
+
 
     def plural_name(self, singular_name):
         if singular_name in self.data.factors:
@@ -153,6 +237,11 @@ class HeterogeneousHierarchy(Indexable):
 	[key]
 		- Not implemented
     """
+
+    def __init__(self, data: Data, address: Address):
+        super().__init__(data, address)
+        self.matches += [f"(:{k} {{value: {quote(v)}}})-[*]->(h)" for k, v in self.address.items()]
+
     def __getitem__(self, address):
         if isinstance(address, Address):
             return self.index_by_address(address)
@@ -188,9 +277,13 @@ class HomogeneousHierarchy(Indexable):
 	[key] - OBs[obid]
 		- if indexable by key, return Hierarchy
     """
-    def __init__(self, data: Data, address: Address, nodetype: str):
+    def __init__(self, data: Data, address: Address, nodetype: type):
         super().__init__(data, address)
         self.nodetype = nodetype
+        matches, wheres, self.neo_varname = nodetype.neo_query('h')
+        self.matches += matches
+        self.wheres += wheres
+
 
     def node_expected_plural(self, name):
         return self.data.node_implies_plurality_of(self.nodetype, name)
