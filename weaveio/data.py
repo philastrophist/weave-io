@@ -6,7 +6,7 @@ from typing import Union, Any, Dict, Set, List, Type, TypeVar
 import networkx as nx
 
 from weaveio.graph import Graph
-from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy, Multiple
+from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy, Multiple, Graphable
 
 
 class Address(dict):
@@ -71,7 +71,7 @@ class Data:
                     tx.commit()
 
     def node_implies_plurality_of(self, start_node, implication_node):
-        if implication_node in self.relation_graph.successors(start_node):
+        if nx.has_path(self.relation_graph, start_node, implication_node):
             return True, 'below'
         else:
             edges = nx.shortest_path(self.relation_graph, implication_node, start_node)
@@ -79,7 +79,7 @@ class Data:
                        for n1, n2 in zip(edges[:-1], edges[1:])), 'above'
 
     def __getitem__(self, address):
-        return HeterogeneousHierarchy(self, BasicQuery())
+        return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
 
     def __getattr__(self, item):
         return HeterogeneousHierarchy(self, BasicQuery()).__getattr__(item)
@@ -125,7 +125,7 @@ class BasicQuery:
         matches = self.matches + [f"(:{k} {{value: {quote(v)}}})-[*]->({name})" for k, v in address.items()]
         return self.spawn(matches, self.wheres, self.current_varname, self.current_label)
 
-    def index_by_hierarchy_name(self, hierarchy_name, direction=None):
+    def index_by_hierarchy_name(self, hierarchy_name, direction):
         name = '{}{}'.format(hierarchy_name.lower(), self.counter[hierarchy_name])
         if self.current_varname is None:
             first_encountered = False
@@ -138,7 +138,12 @@ class BasicQuery:
                     matches[i] = m.replace('(first)', f'({name})')
             current_varname = name
         else:
-            arrows = '<-[*]-' if direction == 'above' else '-[*]->'
+            if direction == 'above':
+                arrows = '<-[*]-'
+            elif direction == 'below':
+                arrows = '-[*]->'
+            else:
+                raise ValueError(f"Direction must be above or below")
             matches = self.matches + [f"({self.current_varname}){arrows}({name}:{hierarchy_name})"]
             current_varname = name
         self.counter[hierarchy_name] += 1
@@ -157,16 +162,19 @@ class Indexable:
     def __call__(self):
         raise NotImplementedError
 
-    def index_by_single_hierarchy(self, hierarchy):
-        query = self.query.index_by_hierarchy_name(hierarchy)
-        return SingleHierarchy(self.data, query, self.data.singular_hierarchies[hierarchy])
+    def index_by_single_hierarchy(self, hierarchy_name, direction):
+        hierarchy = self.data.singular_hierarchies[hierarchy_name]
+        name = hierarchy.__name__
+        query = self.query.index_by_hierarchy_name(name, direction)
+        return SingleHierarchy(self.data, query, hierarchy)
 
     def index_by_address(self, address):
         query = self.query.index_by_address(address)
         return HeterogeneousHierarchy(self.data, query)
 
-    def index_by_plural_hierarchy(self, hierarchy):
-        query = self.query.index_by_hierarchy_name(hierarchy)
+    def index_by_plural_hierarchy(self, hierarchy_name, direction):
+        hierarchy = self.data.singular_hierarchies[self.singular_name(hierarchy_name)]
+        query = self.query.index_by_hierarchy_name(hierarchy.__name__, direction)
         return HomogeneousHierarchy(self.data, query, hierarchy)
 
     def plural_name(self, singular_name):
@@ -218,13 +226,12 @@ class HeterogeneousHierarchy(Indexable):
             raise NotImplementedError("Cannot index by an id over multiple heterogeneous hierarchies")
 
     def implied_plurality_direction_of_node(self, name):
-        return True
+        return True, 'below'
 
     def index_by_hierarchy_name(self, hierarchy_name):
         if not self.is_plural_name(hierarchy_name):
             raise NotImplementedError(f"Can only index plural hierarchies in a heterogeneous address")
-        query = self.query.index_by_hierarchy_name(hierarchy_name)
-        return HomogeneousHierarchy(self.data, query, self.singular_name(hierarchy_name))
+        return self.index_by_plural_hierarchy(hierarchy_name, 'below')
 
     def __getattr__(self, item):
         return self.index_by_hierarchy_name(item)
@@ -232,6 +239,7 @@ class HeterogeneousHierarchy(Indexable):
 
 class SingleHierarchy(Indexable):
     def __init__(self, data, query, nodetype, idvalue=None):
+        assert issubclass(nodetype, Graphable)
         super().__init__(data, query)
         self.nodetype = nodetype
         self.idvalue = idvalue
@@ -241,17 +249,21 @@ class SingleHierarchy(Indexable):
 
     def index_by_hierarchy_name(self, hierarchy_name):
         if self.is_plural_name(hierarchy_name):
-            return self.index_by_plural_hierarchy(hierarchy_name)
+            multiplicity, direction = self.implied_plurality_direction_of_node(hierarchy_name)
+            return self.index_by_plural_hierarchy(hierarchy_name, direction)
         elif self.is_singular_name(hierarchy_name):
-            if self.implied_plurality_direction_of_node(hierarchy_name)[0]:
+            multiplicity, direction = self.implied_plurality_direction_of_node(hierarchy_name)
+            if multiplicity:
                 plural = self.plural_name(hierarchy_name)
                 raise KeyError(f"{self} has several possible {plural}. Please use `.{plural}` instead")
-            return self.index_by_single_hierarchy(hierarchy_name)
+            return self.index_by_single_hierarchy(hierarchy_name, direction)
         else:
             raise KeyError(f"{hierarchy_name} is an unknown factor/hierarchy")
 
     def implied_plurality_direction_of_node(self, name):
-        return self.data.node_implies_plurality_of(self.nodetype, name)
+        if self.is_plural_name(name):
+            name = self.singular_name(name)
+        return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
 
     def __getattr__(self, item):
         return self.index_by_hierarchy_name(item)
@@ -272,6 +284,7 @@ class HomogeneousHierarchy(Indexable):
 		- if indexable by key, return Hierarchy
     """
     def __init__(self, data: Data, query: BasicQuery, nodetype):
+        assert issubclass(nodetype, Graphable)
         super().__init__(data, query)
         self.nodetype = nodetype
 
@@ -286,7 +299,7 @@ class HomogeneousHierarchy(Indexable):
         return SingleHierarchy(self.data, query, self.nodetype, idvalue)
 
     def implied_plurality_direction_of_node(self, name):
-        return self.data.node_implies_plurality_of(self.nodetype, name)
+        return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
 
     def __getitem__(self, item):
         if isinstance(item, Address):
