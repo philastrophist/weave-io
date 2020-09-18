@@ -1,6 +1,8 @@
 from collections import defaultdict
+from copy import deepcopy
 from functools import reduce
 from pathlib import Path
+from textwrap import dedent
 from typing import Union, Any, Dict, Set, List, Type, TypeVar
 
 import networkx as nx
@@ -25,8 +27,8 @@ def quote(x):
 class Data:
     filetypes = []
 
-    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal'):
-        self.graph = Graph(host=host)
+    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002):
+        self.graph = Graph(host=host, port=port)
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.address = Address()
@@ -86,26 +88,21 @@ class Data:
 
 
 class BasicQuery:
-    def __init__(self, matches: List = None, wheres: List = None, current_varname: str = None,
+    def __init__(self, blocks: List = None, current_varname: str = None,
                  current_label: str = None, counter: defaultdict = None):
-        self.matches = [] if matches is None else matches.copy()
-        self.wheres = [] if wheres is None else wheres.copy()
+        self.blocks = [] if blocks is None else blocks
         self.current_varname = current_varname
         self.current_label = current_label
         self.counter = defaultdict(int) if counter is None else counter
 
-    def spawn(self, matches, wheres, current_varname, current_label) -> 'BasicQuery':
-        return BasicQuery(matches, wheres, current_varname, current_label, self.counter)
+    def spawn(self, blocks, current_varname, current_label) -> 'BasicQuery':
+        return BasicQuery(blocks, current_varname, current_label, self.counter)
 
     def make(self, branch=False):
-        if self.matches:
-            match = 'MATCH {}'.format('\nMATCH '.join(self.matches))
+        if self.blocks:
+            match = '\n\n'.join(['\n'.join(blocks) for blocks in self.blocks])
         else:
-            match = ""
-        if self.wheres:
-            where = 'WHERE {}'.format('\nAND'.join(self.wheres))
-        else:
-            where = ""
+            raise ValueError(f"Cannot build a query with no MATCH statements")
         if branch:
             returns = '\n'.join([f"MATCH p1=({self.current_varname})<-[*]-(n1)",
                                  f"MATCH p2=({self.current_varname})-[*]->(n2)",
@@ -114,28 +111,39 @@ class BasicQuery:
                                  f"RETURN value"])
             returns = r'//Add Hierarchy Branch'+'\n' + returns
         else:
-            returns = f"RETURN DISTINCT {self.current_varname}.id as id"
-        return f"{match}\n{where}\n{returns}"
+            returns = f"\nRETURN DISTINCT {self.current_varname}.id as {self.current_label}"
+        return f"{match}\n{returns}"
 
     def index_by_address(self, address):
         if self.current_varname is None:
-            name = 'first'
+            name = '<first>'
         else:
             name = self.current_varname
-        matches = self.matches + [f"(:{k} {{value: {quote(v)}}})-[*]->({name})" for k, v in address.items()]
-        return self.spawn(matches, self.wheres, self.current_varname, self.current_label)
+        blocks = []
+        for k, v in address.items():
+            k = k.lower()
+            count = self.counter[k]
+            path_match = f"MATCH ({k}{count}: {k} {{value: {quote(v)}}})-[*]->({name})"
+            possible_index_match = f"OPTIONAL MATCH ({name})<-[:indexes]-({k}{count+1}: {k})"
+            with_segment = f"WITH {k}{count}, {k}{count+1}, {name}"
+            where = f"WHERE {k}{count}={k}{count+1} OR {k}{count+1} IS NULL"
+            block = [path_match, possible_index_match, with_segment, where]
+            self.counter[k] += 2
+            blocks.append(block)
+        return self.spawn(self.blocks + blocks, self.current_varname, self.current_label)
 
     def index_by_hierarchy_name(self, hierarchy_name, direction):
         name = '{}{}'.format(hierarchy_name.lower(), self.counter[hierarchy_name])
         if self.current_varname is None:
             first_encountered = False
-            matches = self.matches.copy()
-            for i, m in enumerate(matches):
-                if '(first)' in m and not first_encountered:
-                    matches[i] = m.replace('(first)', f'({name}:{hierarchy_name})')
-                    first_encountered = True
-                else:
-                    matches[i] = m.replace('(first)', f'({name})')
+            blocks = deepcopy(self.blocks)
+            for i, block in enumerate(blocks):
+                for j, line in enumerate(block):
+                    if '<first>' in line and not first_encountered:
+                        blocks[i][j] = line.replace('<first>', f'{name}:{hierarchy_name}')
+                        first_encountered = True
+                    else:
+                        blocks[i][j] = line.replace('<first>', f'{name}')
             current_varname = name
         else:
             if direction == 'above':
@@ -144,23 +152,21 @@ class BasicQuery:
                 arrows = '-[*]->'
             else:
                 raise ValueError(f"Direction must be above or below")
-            matches = self.matches + [f"({self.current_varname}){arrows}({name}:{hierarchy_name})"]
+            blocks = self.blocks + [[f"MATCH ({self.current_varname}){arrows}({name}:{hierarchy_name})"]]
             current_varname = name
         self.counter[hierarchy_name] += 1
-        return self.spawn(matches, self.wheres, current_varname, hierarchy_name)
+        return self.spawn(blocks, current_varname, hierarchy_name)
 
     def index_by_id(self, id_value):
-        wheres = self.wheres + [f"{self.current_varname}.id = {quote(id_value)}"]
-        return self.spawn(self.matches, wheres, self.current_varname, self.current_label)
+        blocks = self.blocks + [[f"WITH {self.current_varname}",
+                                 f"WHERE {self.current_varname}.id = {quote(id_value)}"]]
+        return self.spawn(blocks, self.current_varname, self.current_label)
 
 
 class Indexable:
     def __init__(self, data, query: BasicQuery):
         self.data = data
         self.query = query
-
-    def __call__(self):
-        raise NotImplementedError
 
     def index_by_single_hierarchy(self, hierarchy_name, direction):
         hierarchy = self.data.singular_hierarchies[hierarchy_name]
@@ -237,11 +243,24 @@ class HeterogeneousHierarchy(Indexable):
         return self.index_by_hierarchy_name(item)
 
 
-class SingleHierarchy(Indexable):
-    def __init__(self, data, query, nodetype, idvalue=None):
+class ExecutableHierarchy(Indexable):
+    def __init__(self, data, query, nodetype):
         assert issubclass(nodetype, Graphable)
         super().__init__(data, query)
         self.nodetype = nodetype
+
+    def __call__(self):
+        id_list = self.data.graph.neograph.run(self.query.make(False)).to_ndarray().T[0]
+        return id_list
+        objects = neo4jjson2hierarchies(self.query.make(True))
+        d = {i.identifier: i for i in objects if isinstance(i, self.nodetype)}
+        return [d[i] for i in id_list]
+
+
+class SingleHierarchy(ExecutableHierarchy):
+    def __init__(self, data, query, nodetype, idvalue=None):
+        assert issubclass(nodetype, Graphable)
+        super().__init__(data, query, nodetype)
         self.idvalue = idvalue
 
     def index_by_address(self, address):
@@ -269,7 +288,7 @@ class SingleHierarchy(Indexable):
         return self.index_by_hierarchy_name(item)
 
 
-class HomogeneousHierarchy(Indexable):
+class HomogeneousHierarchy(ExecutableHierarchy):
     """
 	.<other> - OBs.OBspec
 		- returns Hierarchy/factor/id/file
@@ -283,23 +302,16 @@ class HomogeneousHierarchy(Indexable):
 	[key] - OBs[obid]
 		- if indexable by key, return Hierarchy
     """
-    def __init__(self, data: Data, query: BasicQuery, nodetype):
-        assert issubclass(nodetype, Graphable)
-        super().__init__(data, query)
-        self.nodetype = nodetype
-
-    def __call__(self):
-        id_list = self.query.make(False)
-        objects = neo4jjson2hierarchies(self.query.make(True))
-        d = {i.identifier: i for i in objects if isinstance(i, self.nodetype)}
-        return [d[i] for i in id_list]
-
     def index_by_id(self, idvalue):
         query = self.query.index_by_id(idvalue)
         return SingleHierarchy(self.data, query, self.nodetype, idvalue)
 
     def implied_plurality_direction_of_node(self, name):
         return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
+
+    def index_by_address(self, address):
+        query = self.query.index_by_address(address)
+        return HomogeneousHierarchy(self.data, query, self.nodetype)
 
     def __getitem__(self, item):
         if isinstance(item, Address):
