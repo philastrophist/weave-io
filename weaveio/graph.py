@@ -8,6 +8,11 @@ from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
 
 T = TypeVar("T", bound="ContextMeta")
 
+
+class ContextError(Exception):
+    pass
+
+
 class ContextMeta(type):
     """Functionality for objects that put themselves in a context using
     the `with` statement.
@@ -45,7 +50,7 @@ class ContextMeta(type):
     def get_context(cls, error_if_none=True) -> Optional[T]:
         """Return the most recently pushed context object of type ``cls``
         on the stack, or ``None``. If ``error_if_none`` is True (default),
-        raise a ``TypeError`` instead of returning ``None``."""
+        raise a ``ContextError`` instead of returning ``None``."""
         idx = -1
         while True:
             try:
@@ -54,7 +59,7 @@ class ContextMeta(type):
                 # Calling code expects to get a TypeError if the entity
                 # is unfound, and there's too much to fix.
                 if error_if_none:
-                    raise TypeError("No %s on context stack" % str(cls))
+                    raise ContextError("No %s on context stack" % str(cls))
                 return None
             return candidate
 
@@ -156,8 +161,8 @@ class Graph(metaclass=ContextMeta):
     def __init__(self, profile=None, name=None, **settings):
         self.neograph = NeoGraph(profile, name, **settings)
 
-    def begin(self):
-        self.tx = self.neograph.begin(False)
+    def begin(self, **kwargs):
+        self.tx = self.neograph.begin(**kwargs)
         return self.tx
 
 Graph._context_class = Graph

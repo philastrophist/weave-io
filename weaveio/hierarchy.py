@@ -11,7 +11,7 @@ from graphviz import Source
 from tqdm import tqdm
 
 from .config_tables import progtemp_config
-from .graph import Graph, Node, Relationship
+from .graph import Graph, Node, Relationship, ContextError
 
 
 def graph2pdf(graph, ftitle):
@@ -69,6 +69,8 @@ class PluralityMeta(type):
         if dct.get('plural_name', None) is None:
             dct['plural_name'] = name.lower() + 's'
         dct['singular_name'] = name.lower()
+        dct['plural_name'] = dct['plural_name'].lower()
+        dct['singular_name'] = dct['singular_name'].lower()
         r = super(PluralityMeta, meta).__new__(meta, name, bases, dct)
         return r
 
@@ -87,7 +89,7 @@ class Graphable(metaclass=PluralityMeta):
     def neotypes(self):
         clses = [i.__name__ for i in inspect.getmro(self.__class__)]
         clses = clses[:clses.index('Graphable')]
-        return clses + [self.__class__.__name__]
+        return clses
 
     @property
     def neoproperties(self):
@@ -99,21 +101,24 @@ class Graphable(metaclass=PluralityMeta):
             return {'dummy': 1}   # just to stop py2neo complaining, shouldnt actually be encountered
 
     def __init__(self, **nodes):
-        tx = Graph.get_context().tx
-        self.node = Node(*self.neotypes, **self.neoproperties)
         try:
-            key = list(self.neoproperties.keys())[0]
-        except IndexError:
-            key = None
-        primary = {'primary_label': self.neotypes[-1], 'primary_key': key}
-        tx.merge(self.node, **primary)
-        for k, node_list in nodes.items():
-            for node in node_list:
-                if k in [i.lower() for i in self.indexers]:
-                    type = 'indexes'
-                else:
-                    type = 'is_required_by'
-                tx.merge(Relationship(node.node, type, self.node))
+            tx = Graph.get_context().tx
+            self.node = Node(*self.neotypes, **self.neoproperties)
+            try:
+                key = list(self.neoproperties.keys())[0]
+            except IndexError:
+                key = None
+            primary = {'primary_label': self.neotypes[-1], 'primary_key': key}
+            tx.merge(self.node, **primary)
+            for k, node_list in nodes.items():
+                for node in node_list:
+                    if k in [i.lower() for i in self.indexers]:
+                        type = 'indexes'
+                    else:
+                        type = 'is_required_by'
+                    tx.merge(Relationship(node.node, type, self.node))
+        except ContextError:
+            pass
 
 
 class Factor(Graphable):
@@ -121,7 +126,7 @@ class Factor(Graphable):
 
     @property
     def neotypes(self):
-        return super().neotypes + [self.idname]
+        return ['Factor', self.idname]
 
     @property
     def neoproperties(self):
@@ -253,7 +258,6 @@ class TargetSet(Hierarchy):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-
 
     @classmethod
     def from_fibinfo(cls, fibinfo):

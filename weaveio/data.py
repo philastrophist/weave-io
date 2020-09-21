@@ -1,14 +1,19 @@
+import logging
+import time
+import inspect
 from collections import defaultdict
 from copy import deepcopy
 from functools import reduce
 from pathlib import Path
 from textwrap import dedent
-from typing import Union, Any, Dict, Set, List, Type, TypeVar
+from typing import Union, Any, Dict, Set, List, Type, TypeVar, Tuple
 
 import networkx as nx
+import py2neo
 
 from weaveio.graph import Graph
-from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy, Multiple, Graphable
+from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy, Multiple, Graphable, Factor
+from weaveio.neo4j import parse_apoc_tree
 
 
 class Address(dict):
@@ -32,11 +37,21 @@ class Data:
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.address = Address()
-        self.hierarchies = {h.node if isinstance(h, Multiple) else h for ft in self.filetypes for h in ft.parents}
+        self.hierarchies = set()
+        todo = set(self.filetypes.copy())
+        while len(todo):
+            thing = todo.pop()
+            self.hierarchies.add(thing)
+            for hier in thing.parents:
+                if isinstance(hier, Multiple):
+                    todo.add(hier.node)
+                else:
+                    todo.add(hier)
         self.hierarchies |= set(self.filetypes)
+        self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
-        self.factors = {f for ft in self.filetypes for h in ft.parents for f in h.factors}
+        self.factors = {f for h in self.hierarchies for f in getattr(h, 'factors', [])}
         self.plural_factors =  {f.lower() + 's': f for f in self.factors}
         self.singular_factors = {f.lower() : f for f in self.factors}
         self.make_relation_graph()
@@ -68,7 +83,7 @@ class Data:
         with self.graph:
             for filetype, files in self.filelists.items():
                 for file in files:
-                    tx = self.graph.begin()
+                    tx = self.graph.begin(autocommit=False)
                     filetype(file)
                     tx.commit()
 
@@ -98,21 +113,28 @@ class BasicQuery:
     def spawn(self, blocks, current_varname, current_label) -> 'BasicQuery':
         return BasicQuery(blocks, current_varname, current_label, self.counter)
 
-    def make(self, branch=False):
+    def make(self, branch=False) -> str:
+        """
+        Return Cypher query which will return json records with entries of HierarchyName and branch
+        `HierarchyName` - The nodes to be realised
+        branch - The complete branch for each `HierarchyName` node
+        """
         if self.blocks:
             match = '\n\n'.join(['\n'.join(blocks) for blocks in self.blocks])
         else:
             raise ValueError(f"Cannot build a query with no MATCH statements")
         if branch:
-            returns = '\n'.join([f"MATCH p1=({self.current_varname})<-[*]-(n1)",
+            returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
+                                 f"MATCH p1=({self.current_varname})<-[*]-(n1)",
                                  f"MATCH p2=({self.current_varname})-[*]->(n2)",
-                                 f"WITH collect(p2) as p2s, collect(p1) as p1s",
+                                 f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
                                  f"CALL apoc.convert.toTree(p1s+p2s) yield value",
-                                 f"RETURN value"])
+                                 f"RETURN {self.current_varname} as {self.current_label}, value as branch"])
             returns = r'//Add Hierarchy Branch'+'\n' + returns
         else:
-            returns = f"\nRETURN DISTINCT {self.current_varname}.id as {self.current_label}"
+            returns = f"\nRETURN DISTINCT {self.current_varname} as {self.current_label}, {{}}"
         return f"{match}\n{returns}"
+
 
     def index_by_address(self, address):
         if self.current_varname is None:
@@ -250,16 +272,19 @@ class ExecutableHierarchy(Indexable):
         self.nodetype = nodetype
 
     def __call__(self):
-        id_list = self.data.graph.neograph.run(self.query.make(False)).to_ndarray().T[0]
-        return id_list
-        objects = neo4jjson2hierarchies(self.query.make(True))
-        d = {i.identifier: i for i in objects if isinstance(i, self.nodetype)}
-        return [d[i] for i in id_list]
+        starts = time.perf_counter_ns(), time.process_time_ns()
+        result = self.data.graph.neograph.run(self.query.make(True)).to_table()  # type: py2neo.database.work.Table
+        durations = (time.perf_counter_ns() - starts[0]) * 1e-9, (time.process_time_ns() - starts[1]) * 1e-9
+        logging.info(f"Query completed in {durations[0]} secs ({durations[1]}) of which were process time")
+        results = []
+        for row in result:
+            h = parse_apoc_tree(self.nodetype, row[0]['id'], row[1], self.data.class_hierarchies)
+            results.append(h)
+        return results
 
 
 class SingleHierarchy(ExecutableHierarchy):
     def __init__(self, data, query, nodetype, idvalue=None):
-        assert issubclass(nodetype, Graphable)
         super().__init__(data, query, nodetype)
         self.idvalue = idvalue
 
