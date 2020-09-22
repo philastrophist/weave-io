@@ -130,8 +130,8 @@ class BasicQuery:
         else:
             if branch:
                 returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
-                                     f"MATCH p1=({self.current_varname})<-[*]-(n1)",
-                                     f"MATCH p2=({self.current_varname})-[*]->(n2)",
+                                     f"OPTIONAL MATCH p1=({self.current_varname})<-[*]-(n1)",
+                                     f"OPTIONAL MATCH p2=({self.current_varname})-[*]->(n2)",
                                      f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
                                      f"CALL apoc.convert.toTree(p1s+p2s) yield value",
                                      f"RETURN {self.current_varname} as {self.current_label}, value as branch",

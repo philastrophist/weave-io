@@ -207,11 +207,16 @@ class File(Graphable):
     constructed_from = []
     type_graph_attrs = l1file_attrs
 
-    def __init__(self, fname: Union[Path, str]):
+    def __init__(self, fname: Union[Path, str], **kwargs):
         self.fname = Path(fname)
         self.identifier = str(self.fname)
         self.name = f'{self.__class__.__name__}({self.fname})'
-        self.predecessors = self.read()
+        if len(kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+            self.predecessors = kwargs
+        else:
+            self.predecessors = self.read()
         super(File, self).__init__(**self.predecessors)
 
     def match(self, directory: Path):
