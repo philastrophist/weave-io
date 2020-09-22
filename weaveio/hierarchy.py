@@ -1,9 +1,8 @@
 import inspect
 from pathlib import Path
-from typing import Union, Any
+from typing import Union
 
 import networkx as nx
-import py2neo
 import xxhash
 from astropy.io import fits
 from astropy.table import Table
@@ -12,6 +11,7 @@ from tqdm import tqdm
 
 from .config_tables import progtemp_config
 from .graph import Graph, Node, Relationship, ContextError
+from .product import SpectraBlock
 
 
 def graph2pdf(graph, ftitle):

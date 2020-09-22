@@ -13,6 +13,7 @@ import py2neo
 
 from weaveio.graph import Graph
 from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy, Multiple, Graphable, Factor
+from weaveio.product import Product
 from weaveio.neo4j import parse_apoc_tree
 
 
@@ -396,6 +397,56 @@ class HomogeneousHierarchy(Executable):
             raise ValueError(f"{self} requires a plural {item}, try `.{self.plural_name(item)}`")
         _, direction = self.implied_plurality_direction_of_node(name)
         return self.index_by_plural_hierarchy(item, direction)
+
+
+class HomogeneousProduct(HomogeneousHierarchy):
+    """
+    Products are not present in the graph
+    query requests are mostly performed on the parent file object
+    """
+    def __init__(self, data, file_query: BasicQuery, file_type: Type[File],
+                 product_type: Type[Product]):
+        super().__init__(data, file_query, file_type)
+        self.file_type = file_type
+        self.product_type = product_type
+
+    def index_by_id(self, idvalue):
+        raise NotImplementedError(f"Products have no id to index with")
+
+    def index_by_address(self, address):
+        homogeneous_hierarchy = super().index_by_address(address)
+        return HomogeneousProduct(self.data, homogeneous_hierarchy.query, self.file_type, self.product_type)
+
+    def __getattr__(self, item):
+        try:
+            return super().__getattr__(item)  # attempt to search hierarchy above the file
+        except KeyError as e:
+            raise KeyError(f"Cannot find {item} in the hierarchy above {self}, you must execute the"
+                           f" query to access product attributes: `query()`") from e
+
+    def __call__(self):
+        files = super().__call__()
+        if files:
+            return files[0].from_files(files)
+        return []
+
+
+class SingleProduct(SingleHierarchy):
+    def __init__(self, data, file_query: BasicQuery, file_type: Type[File], file_idvalue: Any,
+                 product_name: str):
+        super().__init__(data, file_query, file_type, file_idvalue)
+        self.product_name = product_name
+
+    def __getattr__(self, item):
+        try:
+            return super().__getattr__(item)  # attempt to search hierarchy above the file
+        except KeyError as e:
+            raise KeyError(f"Cannot find {item} in the hierarchy above {self}, you must execute the"
+                           f" query to access product attributes: `query()`") from e
+
+    def __call__(self):
+        file = super().__call__()
+        return file.products[self.product_name]()
 
 
 class OurData(Data):
