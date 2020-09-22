@@ -51,9 +51,9 @@ class Data:
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
-        self.factors = {f for h in self.hierarchies for f in getattr(h, 'factors', [])}
-        self.plural_factors =  {f.lower() + 's': f for f in self.factors}
-        self.singular_factors = {f.lower() : f for f in self.factors}
+        self.factors = {f.lower() for h in self.hierarchies for f in getattr(h, 'factors', [])}
+        self.plural_factors =  {f.lower() + 's': f.lower() for f in self.factors}
+        self.singular_factors = {f.lower() : f.lower() for f in self.factors}
         self.make_relation_graph()
 
     def make_relation_graph(self):
@@ -113,7 +113,7 @@ class BasicQuery:
     def spawn(self, blocks, current_varname, current_label) -> 'BasicQuery':
         return BasicQuery(blocks, current_varname, current_label, self.counter)
 
-    def make(self, branch=False) -> str:
+    def make(self, branch=False, property=None) -> str:
         """
         Return Cypher query which will return json records with entries of HierarchyName and branch
         `HierarchyName` - The nodes to be realised
@@ -123,18 +123,23 @@ class BasicQuery:
             match = '\n\n'.join(['\n'.join(blocks) for blocks in self.blocks])
         else:
             raise ValueError(f"Cannot build a query with no MATCH statements")
-        if branch:
-            returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
-                                 f"MATCH p1=({self.current_varname})<-[*]-(n1)",
-                                 f"MATCH p2=({self.current_varname})-[*]->(n2)",
-                                 f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
-                                 f"CALL apoc.convert.toTree(p1s+p2s) yield value",
-                                 f"RETURN {self.current_varname} as {self.current_label}, value as branch"])
-            returns = r'//Add Hierarchy Branch'+'\n' + returns
+        if property is not None:
+            if branch:
+                raise ValueError(f"May not return branches if returning a property value")
+            returns = f"\nRETURN DISTINCT {self.current_varname}.{property}\nORDER BY {self.current_varname}.id, {{}}"
         else:
-            returns = f"\nRETURN DISTINCT {self.current_varname} as {self.current_label}, {{}}"
+            if branch:
+                returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
+                                     f"MATCH p1=({self.current_varname})<-[*]-(n1)",
+                                     f"MATCH p2=({self.current_varname})-[*]->(n2)",
+                                     f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
+                                     f"CALL apoc.convert.toTree(p1s+p2s) yield value",
+                                     f"RETURN {self.current_varname} as {self.current_label}, value as branch",
+                                     f"ORDER BY {self.current_varname}.id"])
+                returns = r'//Add Hierarchy Branch'+'\n' + returns
+            else:
+                returns = f"\nRETURN DISTINCT {self.current_varname}\nORDER BY {self.current_varname}.id, {{}}"
         return f"{match}\n{returns}"
-
 
     def index_by_address(self, address):
         if self.current_varname is None:
@@ -191,23 +196,39 @@ class Indexable:
         self.query = query
 
     def index_by_single_hierarchy(self, hierarchy_name, direction):
-        hierarchy = self.data.singular_hierarchies[hierarchy_name]
+        try:
+            hierarchy = self.data.singular_hierarchies[hierarchy_name]
+        except KeyError:
+            return self.index_by_single_factor(hierarchy_name, direction)
         name = hierarchy.__name__
         query = self.query.index_by_hierarchy_name(name, direction)
         return SingleHierarchy(self.data, query, hierarchy)
+
+    def index_by_plural_hierarchy(self, hierarchy_name, direction):
+        try:
+            hierarchy = self.data.plural_hierarchies[hierarchy_name]
+        except KeyError:
+            return self.index_by_plural_factor(hierarchy_name, direction)
+        query = self.query.index_by_hierarchy_name(hierarchy.__name__, direction)
+        return HomogeneousHierarchy(self.data, query, hierarchy)
+
+    def index_by_single_factor(self, factor_name, direction):
+        factor = self.data.singular_factors[factor_name]
+        query = self.query.index_by_hierarchy_name(factor, direction)
+        return SingleFactor(self.data, query, Factor)
+
+    def index_by_plural_factor(self, factor_name, direction):
+        factor = self.data.plural_factors[factor_name]
+        query = self.query.index_by_hierarchy_name(factor, direction)
+        return HomogeneousFactor(self.data, query, Factor)
 
     def index_by_address(self, address):
         query = self.query.index_by_address(address)
         return HeterogeneousHierarchy(self.data, query)
 
-    def index_by_plural_hierarchy(self, hierarchy_name, direction):
-        hierarchy = self.data.singular_hierarchies[self.singular_name(hierarchy_name)]
-        query = self.query.index_by_hierarchy_name(hierarchy.__name__, direction)
-        return HomogeneousHierarchy(self.data, query, hierarchy)
-
     def plural_name(self, singular_name):
         try:
-            return self.data.plural_factors[singular_name] + 's'
+            return self.data.singular_factors[singular_name] + 's'
         except KeyError:
             return self.data.singular_hierarchies[singular_name].plural_name
 
@@ -265,7 +286,9 @@ class HeterogeneousHierarchy(Indexable):
         return self.index_by_hierarchy_name(item)
 
 
-class ExecutableHierarchy(Indexable):
+class Executable(Indexable):
+    return_branch = True
+
     def __init__(self, data, query, nodetype):
         assert issubclass(nodetype, Graphable)
         super().__init__(data, query)
@@ -273,9 +296,12 @@ class ExecutableHierarchy(Indexable):
 
     def __call__(self):
         starts = time.perf_counter_ns(), time.process_time_ns()
-        result = self.data.graph.neograph.run(self.query.make(True)).to_table()  # type: py2neo.database.work.Table
+        result = self.data.graph.neograph.run(self.query.make(self.return_branch)).to_table()  # type: py2neo.database.work.Table
         durations = (time.perf_counter_ns() - starts[0]) * 1e-9, (time.process_time_ns() - starts[1]) * 1e-9
         logging.info(f"Query completed in {durations[0]} secs ({durations[1]}) of which were process time")
+        return self._process_result(result)
+
+    def _process_result(self, result):
         results = []
         for row in result:
             h = parse_apoc_tree(self.nodetype, row[0]['id'], row[1], self.data.class_hierarchies)
@@ -283,7 +309,21 @@ class ExecutableHierarchy(Indexable):
         return results
 
 
-class SingleHierarchy(ExecutableHierarchy):
+class SingleFactor(Executable):
+    return_branch = False
+
+    def _process_result(self, result):
+        return result[0][0]['value']
+
+
+class HomogeneousFactor(Executable):
+    return_branch = False
+
+    def _process_result(self, result):
+        return [r[0]['value'] for r in result]
+
+
+class SingleHierarchy(Executable):
     def __init__(self, data, query, nodetype, idvalue=None):
         super().__init__(data, query, nodetype)
         self.idvalue = idvalue
@@ -312,8 +352,13 @@ class SingleHierarchy(ExecutableHierarchy):
     def __getattr__(self, item):
         return self.index_by_hierarchy_name(item)
 
+    def __call__(self):
+        rs = super().__call__()
+        assert len(rs) == 1
+        return rs[0]
 
-class HomogeneousHierarchy(ExecutableHierarchy):
+
+class HomogeneousHierarchy(Executable):
     """
 	.<other> - OBs.OBspec
 		- returns Hierarchy/factor/id/file
@@ -343,6 +388,14 @@ class HomogeneousHierarchy(ExecutableHierarchy):
             return self.index_by_address(item)
         else:
             return self.index_by_id(item)
+
+    def __getattr__(self, item):
+        if self.is_plural_name(item):
+            name = self.singular_name(item)
+        else:
+            raise ValueError(f"{self} requires a plural {item}, try `.{self.plural_name(item)}`")
+        _, direction = self.implied_plurality_direction_of_node(name)
+        return self.index_by_plural_hierarchy(item, direction)
 
 
 class OurData(Data):

@@ -14,8 +14,7 @@ def parse_apoc_tree(root_hierarchy: Type[Hierarchy], root_id: Any, tree: Dict[st
             for entry in value:
                 if 'Factor' in entry['_type']:
                     name = entry['_type'].replace('Factor', '').strip(':').lower()
-                    factor = Factor(name, entry['value'])
-                    inputs[name] = factor
+                    inputs[name] =  entry['value']
                 else:
                     names = [n for n in entry['_type'].split(':') if n in hierarchies]
                     names.sort(key=lambda x: subclassed[x])

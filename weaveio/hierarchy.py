@@ -48,7 +48,7 @@ class Multiple:
         self.node = node
         self.minnumber = minnumber
         self.maxnumber = maxnumber
-        self.name = node.__name__.lower()+'s'
+        self.name = node.plural_name
         self.singular_name = node.singular_name
         self.plural_name = node.plural_name
         try:
@@ -73,7 +73,6 @@ class PluralityMeta(type):
         dct['singular_name'] = dct['singular_name'].lower()
         r = super(PluralityMeta, meta).__new__(meta, name, bases, dct)
         return r
-
 
 
 class Graphable(metaclass=PluralityMeta):
@@ -149,11 +148,17 @@ class Hierarchy(Graphable):
     indexers = []
     type_graph_attrs = hierarchy_attrs
 
+    def __getattr__(self, item):
+        for p in self._kwargs.values():
+            try:
+                return getattr(p, item)
+            except AttributeError:
+                continue
+        raise AttributeError(f"{item} cannot be found in {self} or its parent structure")
+
+
     def __repr__(self):
         return self.name
-
-    def neo_query(self, varname):
-        return [], [f'{varname}:{self.__class__.__name__}'], None
 
     def __init__(self, **kwargs):
         if self.idname not in kwargs and self.idname is not None:
@@ -165,6 +170,7 @@ class Hierarchy(Graphable):
         if self.idname is not None:
             self.identifier = kwargs.pop(self.idname)
             setattr(self, self.idname, self.identifier)
+        self._kwargs = kwargs.copy()
 
         predecessors = {}
         for name, nodetype in specification.items():
@@ -201,9 +207,6 @@ class File(Graphable):
     constructed_from = []
     type_graph_attrs = l1file_attrs
 
-    def neo_query(self, varname):
-        return [f'(h)-[]->(f:{self.__class__.__name__})'], [f'{varname}:Hierarchy'], 'f'
-
     def __init__(self, fname: Union[Path, str]):
         self.fname = Path(fname)
         self.identifier = str(self.fname)
@@ -213,7 +216,6 @@ class File(Graphable):
 
     def match(self, directory: Path):
         raise NotImplementedError
-
 
     @property
     def graph_name(self):
