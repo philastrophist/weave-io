@@ -15,7 +15,7 @@ print('=====')
 data = OurData('data/', port=11007)
 # data.directory_to_neo4j()
 
-query = data[Address(camera='red', mode='MOS')].runs['1002793'].obspec.l1singles[Address(vph=1)].runs
+query = data[Address(camera='red', mode='MOS')].runs['1002793'].obspec.l1singles[Address(vph=1)]
 print(query.query.make(True))
 result = query()
 print(result)

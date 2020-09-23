@@ -8,10 +8,10 @@ from astropy.io import fits
 from astropy.table import Table
 from graphviz import Source
 from tqdm import tqdm
+import pandas as pd
 
 from .config_tables import progtemp_config
 from .graph import Graph, Node, Relationship, ContextError
-from .product import SpectraBlock
 
 
 def graph2pdf(graph, ftitle):
@@ -205,6 +205,7 @@ class Hierarchy(Graphable):
 class File(Graphable):
     idname = 'fname'
     constructed_from = []
+    indexable_by = []
     type_graph_attrs = l1file_attrs
 
     def __init__(self, fname: Union[Path, str], **kwargs):
@@ -218,6 +219,7 @@ class File(Graphable):
         else:
             self.predecessors = self.read()
         super(File, self).__init__(**self.predecessors)
+        self.index = None
 
     def match(self, directory: Path):
         raise NotImplementedError
@@ -228,6 +230,17 @@ class File(Graphable):
 
     def read(self):
         raise NotImplementedError
+
+    def build_index(self) -> None:
+        self.index['rowid'] = range(len(self.index))
+        self.index['fname'] = self.fname
+
+    def match_index(self, index) -> pd.DataFrame:
+        self.build_index()
+        keys = [i for i in index.columns if i not in ['fname', 'rowid']]
+        filt = self.index[keys].isin(index[keys])
+        return self.index[filt]
+
 
 
 class ArmConfig(Hierarchy):
@@ -334,6 +347,11 @@ class HeaderFibinfoFile(File):
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
         run = Run(runid=runid, camera=camera, exposure=exposure)
         return {'run': [run]}
+
+    def build_index(self) -> None:
+        if self.index is None:
+            self.index = pd.DataFrame({'cname': [i.cname for i in self.targets]})
+        super(HeaderFibinfoFile, self).build_index()
 
 
 class Raw(HeaderFibinfoFile):
