@@ -11,6 +11,7 @@ def parse_apoc_tree(root_hierarchy: Type[Hierarchy], root_id: Any, tree: Dict[st
         if key.startswith('_') or key == 'id':
             continue
         elif isinstance(value, list):  # preceeding relationship
+            value.sort(key=lambda x: x.pop(f'{key}.order', 0))
             for entry in value:
                 if 'Factor' in entry['_type']:
                     name = entry['_type'].replace('Factor', '').strip(':').lower()

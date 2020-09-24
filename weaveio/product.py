@@ -1,19 +1,20 @@
-from typing import Union, List, Dict, Any, Type
+from typing import Union, List, Dict, Any, Type, Iterable
 from pathlib import Path
 
 from astropy.io import fits
 
-from weaveio.data import Address
+from weaveio.address import Address
 import pandas as pd
 import numpy as np
 from weaveio.hierarchy import File
 
 
 class MasterStore:
-    def __init__(self, index: pd.DataFrame):
+    def __init__(self, data: Iterable, index: pd.DataFrame):
+        self.data = data
         self.index = index
 
-    def contains_index(self, index: pd.DataFrame):
+    def contains_index(self, index: pd.DataFrame) -> np.ndarray:
         keys = ['fname', 'rowid']
         df = index[keys].isin(self.index[keys])
         return df.values
@@ -27,7 +28,7 @@ class MasterStore:
         self.index.sort_values(['fname', 'rowid'], inplace=True)
         self.data = self.data[self.index.index.values]
 
-    def append(self, data, index: pd.DataFrame):
+    def append(self, data: Iterable, index: pd.DataFrame, do_sort: bool = True):
         raise NotImplementedError
 
     def __getitem__(self, item):
@@ -35,7 +36,14 @@ class MasterStore:
 
 
 class MasterArray(MasterStore):
-    pass
+    def append(self, data: Iterable, index: pd.DataFrame, do_sort: bool = True):
+        self.data = np.append(self.data, data, axis=0)
+        self.index = self.index.append(index, ignore_index=True)
+        if do_sort:
+            self.sort()
+
+
+
 
 class MasterTable(MasterStore):
     pass
@@ -66,24 +74,22 @@ class Product:
             index[name] = value
         return index
 
-    def append(self, data, filename: str, irows: List[int], ):
-
 
 def _get_data_view(required_index: pd.DataFrame, files: List[File], data_name: str,
                    concatenation_constants, master_type):
     array = master_type(files[0].__class__, data_name, concatenation_constants)
     for ifile, file in enumerate(files):
-        index = file.match_index(required_index)  # rows which match
+        index = file.match_index(required_index)  # rows in the files which match
         missing = ~array.contains_index(index)  # bool array of which ones we already have in the master array
-        data = file.extract_data(data_name)  # all data
-        array.append(data[index[missing].irows], index[missing], do_sort=False)  # add new rows
+        data = file.extract_data(data_name, index[missing].irows)
+        array.append(data, index[missing], do_sort=False)  # add new rows
     array.sort()  # sort by file and irow such that files a,b,c are in order: a[0], a[1], b[0], b[2], c[1], c[100]
     return array.filter_by_index(required_index)  # boolean index array
 
 def _get_product_view(factors, ids, files, product_name):
     product_type = files[0].basic_product_types[product_name]  # type: Type[Product]
     required_index = product_type.index_from_query(factors, ids)
-    return get_data_view(required_index, files, product_name, product_type.concatenation_constants, product_type.master_type)
+    return _get_data_view(required_index, files, product_name, product_type.concatenation_constants, product_type.master_type)
 
 def get_product_view(factors: Address, ids: Dict[str, Any], files: List[File], product_name: str) -> Product:
     assert all(isinstance(f, files[0].__class__) for f in files)

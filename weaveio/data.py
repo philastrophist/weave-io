@@ -1,24 +1,18 @@
 import logging
 import time
-import inspect
 from collections import defaultdict
 from copy import deepcopy
-from functools import reduce
 from pathlib import Path
-from textwrap import dedent
-from typing import Union, Any, Dict, Set, List, Type, TypeVar, Tuple
+from typing import Union, Any, List, Type
 
 import networkx as nx
 import py2neo
 
+from weaveio.address import Address
 from weaveio.graph import Graph
-from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy, Multiple, Graphable, Factor
+from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Multiple, Graphable, Factor
 from weaveio.product import Product
 from weaveio.neo4j import parse_apoc_tree
-
-
-class Address(dict):
-    pass
 
 
 def quote(x):
@@ -62,15 +56,12 @@ class Data:
         d = list(self.singular_hierarchies.values())
         while len(d):
             h = d.pop()
-            if isinstance(h, Multiple):
-                multiplicity = True
-            else:
-                multiplicity = False
             self.relation_graph.add_node(h.singular_name)
-            for child in h.parents:
-                self.relation_graph.add_node(child.singular_name)
-                self.relation_graph.add_edge(child.singular_name, h.singular_name, multiplicity=multiplicity)
-                d.append(child)
+            for parent in h.parents:
+                multiplicity = isinstance(parent, Multiple)
+                self.relation_graph.add_node(parent.singular_name)
+                self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity)
+                d.append(parent)
             try:
                 for f in h.factors:
                     self.relation_graph.add_node(f.lower())
@@ -88,13 +79,48 @@ class Data:
                     filetype(file)
                     tx.commit()
 
+    def traversal_path(self, start, end):
+        if nx.has_path(self.relation_graph, end, start):
+            start, end = end, start
+            reverse = True
+        else:
+            reverse = False
+        edges = nx.shortest_path(self.relation_graph, start, end)
+        plurals = [self.relation_graph.edges[(n1, n2)]['multiplicity'] for n1, n2 in zip(edges[:-1], edges[1:])]
+        if reverse:
+            edges = edges[::-1]
+            plurals = plurals[::-1]
+        return [self.plural_name(other) if is_plural else other for other, is_plural in zip(edges[1:], plurals)]
+
     def node_implies_plurality_of(self, start_node, implication_node):
         if nx.has_path(self.relation_graph, start_node, implication_node):
             return True, 'below'
         else:
             edges = nx.shortest_path(self.relation_graph, implication_node, start_node)
-            return any(self.relation_graph.edges[(n1, n2)]['multiplicity'] > 1
+            return any(self.relation_graph.edges[(n1, n2)]['multiplicity']
                        for n1, n2 in zip(edges[:-1], edges[1:])), 'above'
+
+    def plural_name(self, singular_name):
+        try:
+            return self.singular_factors[singular_name] + 's'
+        except KeyError:
+            return self.singular_hierarchies[singular_name].plural_name
+
+    def singular_name(self, plural_name):
+        try:
+            return self.singular_factors[plural_name[:-1]]
+        except KeyError:
+            return self.plural_hierarchies[plural_name].singular_name
+
+    def is_plural_name(self, name):
+        """
+        Returns True if name is a plural name of a hierarchy
+        e.g. spectra is plural for Spectrum
+        """
+        return name in self.plural_hierarchies or name in self.plural_factors
+
+    def is_singular_name(self, name):
+        return name in self.singular_hierarchies or name in self.singular_factors
 
     def __getitem__(self, address):
         return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
@@ -227,28 +253,6 @@ class Indexable:
         query = self.query.index_by_address(address)
         return HeterogeneousHierarchy(self.data, query)
 
-    def plural_name(self, singular_name):
-        try:
-            return self.data.singular_factors[singular_name] + 's'
-        except KeyError:
-            return self.data.singular_hierarchies[singular_name].plural_name
-
-    def singular_name(self, plural_name):
-        try:
-            return self.data.singular_factors[plural_name[:-1]]
-        except KeyError:
-            return self.data.plural_hierarchies[plural_name].singular_name
-
-    def is_plural_name(self, name):
-        """
-        Returns True if name is a plural name of a hierarchy
-        e.g. spectra is plural for Spectrum
-        """
-        return name in self.data.plural_hierarchies or name in self.data.plural_factors
-
-    def is_singular_name(self, name):
-        return name in self.data.singular_hierarchies or name in self.data.singular_factors
-
     def implied_plurality_direction_of_node(self, name):
         """
         Returns True if the current hierarchy object expects name to be plural by looking at the
@@ -279,7 +283,7 @@ class HeterogeneousHierarchy(Indexable):
         return True, 'below'
 
     def index_by_hierarchy_name(self, hierarchy_name):
-        if not self.is_plural_name(hierarchy_name):
+        if not self.data.is_plural_name(hierarchy_name):
             raise NotImplementedError(f"Can only index plural hierarchies in a heterogeneous address")
         return self.index_by_plural_hierarchy(hierarchy_name, 'below')
 
@@ -306,6 +310,7 @@ class Executable(Indexable):
         results = []
         for row in result:
             h = parse_apoc_tree(self.nodetype, row[0]['id'], row[1], self.data.class_hierarchies)
+            h.add_parent_data(self.data)
             results.append(h)
         return results
 
@@ -333,21 +338,21 @@ class SingleHierarchy(Executable):
         raise NotImplementedError("Cannot index a single hierarchy by an address")
 
     def index_by_hierarchy_name(self, hierarchy_name):
-        if self.is_plural_name(hierarchy_name):
+        if self.data.is_plural_name(hierarchy_name):
             multiplicity, direction = self.implied_plurality_direction_of_node(hierarchy_name)
             return self.index_by_plural_hierarchy(hierarchy_name, direction)
-        elif self.is_singular_name(hierarchy_name):
+        elif self.data.is_singular_name(hierarchy_name):
             multiplicity, direction = self.implied_plurality_direction_of_node(hierarchy_name)
             if multiplicity:
-                plural = self.plural_name(hierarchy_name)
+                plural = self.data.plural_name(hierarchy_name)
                 raise KeyError(f"{self} has several possible {plural}. Please use `.{plural}` instead")
             return self.index_by_single_hierarchy(hierarchy_name, direction)
         else:
             raise KeyError(f"{hierarchy_name} is an unknown factor/hierarchy")
 
     def implied_plurality_direction_of_node(self, name):
-        if self.is_plural_name(name):
-            name = self.singular_name(name)
+        if self.data.is_plural_name(name):
+            name = self.data.singular_name(name)
         return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
 
     def __getattr__(self, item):
@@ -391,10 +396,10 @@ class HomogeneousHierarchy(Executable):
             return self.index_by_id(item)
 
     def __getattr__(self, item):
-        if self.is_plural_name(item):
-            name = self.singular_name(item)
+        if self.data.is_plural_name(item):
+            name = self.data.singular_name(item)
         else:
-            raise ValueError(f"{self} requires a plural {item}, try `.{self.plural_name(item)}`")
+            raise ValueError(f"{self} requires a plural {item}, try `.{self.data.plural_name(item)}`")
         _, direction = self.implied_plurality_direction_of_node(name)
         return self.index_by_plural_hierarchy(item, direction)
 

@@ -83,6 +83,36 @@ class Graphable(metaclass=PluralityMeta):
     type_graph_attrs = {}
     plural_name = None
     singular_name = None
+    parents = []
+
+    def add_parent_data(self, data):
+        self.data = data
+
+    def __getattr__(self, item):
+        if self.data is not None:
+            if self.data.is_plural_name(item):
+                is_plural = item
+                name = self.data.singular_name(item)
+            else:
+                is_plural = False
+                name = item
+            should_be_plural, _ = self.data.node_implies_plurality_of(self.singular_name, name)
+            plural_name = self.data.plural_name(name)
+            if should_be_plural and not is_plural:
+                raise AttributeError(f"{self} has no attribute '{item}' but it does have the plural '{plural_name}'")
+            elif not should_be_plural and is_plural:
+                raise AttributeError(f"{self} has no plural attribute '{item}' but it does have the singluar '{name}'")
+            path = self.data.traversal_path(self.singular_name, name)
+            current = self
+            try:
+                for attribute in path:
+                    if isinstance(current, (list, tuple)):
+                        current = [getattr(c, attribute) for c in current]
+                    else:
+                        current = getattr(current, attribute)
+                return current
+            except AttributeError as e:
+                raise AttributeError(f"{item} cannot be found in {self} or its parent structure.") from e
 
     @property
     def neotypes(self):
@@ -99,7 +129,8 @@ class Graphable(metaclass=PluralityMeta):
         else:
             return {'dummy': 1}   # just to stop py2neo complaining, shouldnt actually be encountered
 
-    def __init__(self, **nodes):
+    def __init__(self, **predecessors):
+        self.data = None
         try:
             tx = Graph.get_context().tx
             self.node = Node(*self.neotypes, **self.neoproperties)
@@ -109,15 +140,16 @@ class Graphable(metaclass=PluralityMeta):
                 key = None
             primary = {'primary_label': self.neotypes[-1], 'primary_key': key}
             tx.merge(self.node, **primary)
-            for k, node_list in nodes.items():
-                for node in node_list:
+            for k, node_list in predecessors.items():
+                for inode, node in enumerate(node_list):
                     if k in [i.lower() for i in self.indexers]:
                         type = 'indexes'
                     else:
                         type = 'is_required_by'
-                    tx.merge(Relationship(node.node, type, self.node))
+                    tx.merge(Relationship(node.node, type, self.node, order=inode))
         except ContextError:
             pass
+        self.predecessors = predecessors
 
 
 class Factor(Graphable):
@@ -147,15 +179,6 @@ class Hierarchy(Graphable):
     factors = []
     indexers = []
     type_graph_attrs = hierarchy_attrs
-
-    def __getattr__(self, item):
-        for p in self._kwargs.values():
-            try:
-                return getattr(p, item)
-            except AttributeError:
-                continue
-        raise AttributeError(f"{item} cannot be found in {self} or its parent structure")
-
 
     def __repr__(self):
         return self.name
@@ -242,7 +265,6 @@ class File(Graphable):
         return self.index[filt]
 
 
-
 class ArmConfig(Hierarchy):
     factors = ['Resolution', 'VPH', 'Camera']
     idname = 'armcode'
@@ -275,9 +297,6 @@ class Target(Hierarchy):
 
 class TargetSet(Hierarchy):
     parents = [Multiple(Target)]
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
 
     @classmethod
     def from_fibinfo(cls, fibinfo):

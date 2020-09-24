@@ -1,7 +1,8 @@
 import logging
 logging.basicConfig(level=logging.INFO)
 
-from weaveio.data import OurData, BasicQuery, Address
+from weaveio.data import OurData, BasicQuery
+from weaveio.address import Address
 
 # data[camera=red].runs[runid].OBspec.runs[vph=1]()
 q = BasicQuery().index_by_address(Address(camera='red', mode='MOS')).index_by_hierarchy_name('Run', 'below').\
@@ -18,4 +19,5 @@ data = OurData('data/', port=11007)
 query = data[Address(camera='red', mode='MOS')].runs['1002793'].obspec.l1singles[Address(vph=1)]
 print(query.query.make(True))
 result = query()
-print(result)
+print(result[0].run.exposure.obrealisation.obspec.targetset.targets)
+print(result[0].targets)
