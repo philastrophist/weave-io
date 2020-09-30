@@ -1,10 +1,12 @@
 from typing import Dict, Any, Union, List, Type
 
-from weaveio.hierarchy import Hierarchy, Factor, File
+from weaveio.hierarchy import Hierarchy, Factor
+from weaveio.file import File
 
 
 def parse_apoc_tree(root_hierarchy: Type[Hierarchy], root_id: Any, tree: Dict[str, Any],
-                    hierarchies: Dict[str, Type[Hierarchy]]) -> Union[Hierarchy, List[Hierarchy]]:
+                    data) -> Union[Hierarchy, List[Hierarchy]]:
+    hierarchies = data.class_hierarchies
     subclassed = {k.__name__: len(k.__subclasses__()) for k in hierarchies.values()}
     inputs = {}
     for key, value in tree.items():
@@ -20,7 +22,7 @@ def parse_apoc_tree(root_hierarchy: Type[Hierarchy], root_id: Any, tree: Dict[st
                     names = [n for n in entry['_type'].split(':') if n in hierarchies]
                     names.sort(key=lambda x: subclassed[x])
                     name = names[0]
-                    h = parse_apoc_tree(hierarchies[name], entry['id'], entry, hierarchies)
+                    h = parse_apoc_tree(hierarchies[name], entry['id'], entry, data)
                     if isinstance(h, File):
                         continue   # TODO: need to properly put files in the graph
                     if h.singular_name in inputs:
@@ -35,4 +37,5 @@ def parse_apoc_tree(root_hierarchy: Type[Hierarchy], root_id: Any, tree: Dict[st
             raise ValueError(f"Invalid json schema")
     h = root_hierarchy(**inputs)
     h.identifier = root_id
+    h.add_parent_data(data)
     return h

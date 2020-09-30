@@ -1,14 +1,9 @@
 import inspect
-from pathlib import Path
-from typing import Union
 
 import networkx as nx
 import xxhash
-from astropy.io import fits
-from astropy.table import Table
 from graphviz import Source
 from tqdm import tqdm
-import pandas as pd
 
 from .config_tables import progtemp_config
 from .graph import Graph, Node, Relationship, ContextError
@@ -90,19 +85,31 @@ class Graphable(metaclass=PluralityMeta):
 
     def __getattr__(self, item):
         if self.data is not None:
-            if self.data.is_plural_name(item):
-                is_plural = item
+            if self.data.is_plural_idname(item):
+                is_plural = True
+                name = self.data.singular_idnames[item[:-1]].singular_name
+                final = [item[:-1]]
+            elif self.data.is_singular_idname(item):
+                is_plural = False
+                name = self.data.singular_idnames[item].singular_name
+                final = [item]
+            elif self.data.is_plural_name(item):
+                is_plural = True
                 name = self.data.singular_name(item)
-            else:
+                final = []
+            elif self.data.is_singular_name(item):
                 is_plural = False
                 name = item
+                final = []
+            else:
+                raise AttributeError(f"{self} has no attribute {item}")
             should_be_plural, _ = self.data.node_implies_plurality_of(self.singular_name, name)
             plural_name = self.data.plural_name(name)
             if should_be_plural and not is_plural:
                 raise AttributeError(f"{self} has no attribute '{item}' but it does have the plural '{plural_name}'")
             elif not should_be_plural and is_plural:
-                raise AttributeError(f"{self} has no plural attribute '{item}' but it does have the singluar '{name}'")
-            path = self.data.traversal_path(self.singular_name, name)
+                raise AttributeError(f"{self} has no plural attribute '{item}' but it does have the singular '{name}'")
+            path = self.data.traversal_path(self.singular_name, name) + final
             current = self
             try:
                 for attribute in path:
@@ -113,6 +120,7 @@ class Graphable(metaclass=PluralityMeta):
                 return current
             except AttributeError as e:
                 raise AttributeError(f"{item} cannot be found in {self} or its parent structure.") from e
+        raise NotImplementedError("Data not added to hierarchy object")
 
     @property
     def neotypes(self):
@@ -225,46 +233,6 @@ class Hierarchy(Graphable):
         super(Hierarchy, self).__init__(**predecessors)
 
 
-class File(Graphable):
-    idname = 'fname'
-    constructed_from = []
-    indexable_by = []
-    type_graph_attrs = l1file_attrs
-
-    def __init__(self, fname: Union[Path, str], **kwargs):
-        self.fname = Path(fname)
-        self.identifier = str(self.fname)
-        self.name = f'{self.__class__.__name__}({self.fname})'
-        if len(kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-            self.predecessors = kwargs
-        else:
-            self.predecessors = self.read()
-        super(File, self).__init__(**self.predecessors)
-        self.index = None
-
-    def match(self, directory: Path):
-        raise NotImplementedError
-
-    @property
-    def graph_name(self):
-        return f"File({self.fname})"
-
-    def read(self):
-        raise NotImplementedError
-
-    def build_index(self) -> None:
-        self.index['rowid'] = range(len(self.index))
-        self.index['fname'] = self.fname
-
-    def match_index(self, index) -> pd.DataFrame:
-        self.build_index()
-        keys = [i for i in index.columns if i not in ['fname', 'rowid']]
-        filt = self.index[keys].isin(index[keys])
-        return self.index[filt]
-
-
 class ArmConfig(Hierarchy):
     factors = ['Resolution', 'VPH', 'Camera']
     idname = 'armcode'
@@ -295,12 +263,17 @@ class Target(Hierarchy):
         return Target(cname=row['CNAME'])
 
 
+def chunker(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
 class TargetSet(Hierarchy):
     parents = [Multiple(Target)]
 
     @classmethod
     def from_fibinfo(cls, fibinfo):
-        targets = [Target.from_fibinfo_row(row) for row in tqdm(fibinfo[:10])]
+        targets = [Target.from_fibinfo_row(row) for row in tqdm(fibinfo)]
         return cls(targets=targets)
 
 
@@ -339,112 +312,3 @@ class Run(Hierarchy):
     parents = [Exposure]
     factors = ['Camera']
     indexers = ['Camera']
-
-
-class HeaderFibinfoFile(File):
-    fibinfo_i = -1
-
-    def read(self):
-        header = fits.open(self.fname)[0].header
-        runid = str(header['RUN'])
-        camera = str(header['CAMERA'].lower()[len('WEAVE'):])
-        expmjd = str(header['MJD-OBS'])
-        res = str(header['VPH']).rstrip('123')
-        obstart = str(header['OBSTART'])
-        obtitle = str(header['OBTITLE'])
-        obid = str(header['OBID'])
-
-        fibinfo = Table(fits.open(self.fname)[self.fibinfo_i].data)
-        progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
-        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.mode)
-                              & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
-        armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
-        obstemp = ObsTemp.from_header(header)
-        targetset = TargetSet.from_fibinfo(fibinfo)
-        obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
-        obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
-        exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
-        run = Run(runid=runid, camera=camera, exposure=exposure)
-        return {'run': [run]}
-
-    def build_index(self) -> None:
-        if self.index is None:
-            self.index = pd.DataFrame({'cname': [i.cname for i in self.targets]})
-        super(HeaderFibinfoFile, self).build_index()
-
-
-class Raw(HeaderFibinfoFile):
-    parents = [Run]
-    fibinfo_i = 3
-
-    @classmethod
-    def match(cls, directory: Path):
-        return directory.glob('r*.fit')
-
-
-class L1Single(HeaderFibinfoFile):
-    parents = [Run]
-    constructed_from = [Raw]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('single_*.fit')
-
-
-class L1Stack(HeaderFibinfoFile):
-    parents = [OBRealisation]
-    factors = ['VPH']
-    constructed_from = [L1Single]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('stacked_*.fit')
-
-
-class L1SuperStack(File):
-    parents = [OBSpec]
-    factors = ['VPH']
-    constructed_from = [L1Single]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('superstacked_*.fit')
-
-
-class L1SuperTarget(File):
-    parents = [ArmConfig, Target]
-    factors = ['Binning', 'Mode']
-    constructed_from = [L1Single]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('[Lm]?WVE_*.fit')
-
-
-class L2Single(File):
-    parents = [Exposure]
-    constructed_from = [Multiple(L1Single, 2, 2)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('single_*_aps.fit')
-
-
-class L2Stack(File):
-    parents = [Multiple(ArmConfig, 1, 3), TargetSet]
-    factors = ['Binning', 'Mode']
-    constructed_from = [Multiple(L1Stack, 0, 3), Multiple(L1SuperStack, 0, 3)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('(super)?stacked_*_aps.fit')
-
-
-class L2SuperTarget(File):
-    parents = [Multiple(ArmConfig, 1, 3), Target]
-    factors = ['Mode', 'Binning']
-    constructed_from = [Multiple(L1SuperTarget, 2, 3)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('[Lm]?WVE_*_aps.fit')

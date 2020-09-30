@@ -1,101 +1,82 @@
+from functools import reduce
 from typing import Union, List, Dict, Any, Type, Iterable
 from pathlib import Path
 
 from astropy.io import fits
-
-from weaveio.address import Address
-import pandas as pd
 import numpy as np
-from weaveio.hierarchy import File
+import pandas as pd
+from astropy.table import vstack, Table as AstropyTable
 
 
-class MasterStore:
-    def __init__(self, data: Iterable, index: pd.DataFrame):
-        self.data = data
-        self.index = index
-
-    def contains_index(self, index: pd.DataFrame) -> np.ndarray:
-        keys = ['fname', 'rowid']
-        df = index[keys].isin(self.index[keys])
-        return df.values
-
-    def filter_by_index(self, index):
-        keys = [i for i in index.columns if i not in ['fname', 'rowid']]
-        filt = index[keys].isin(self.index[keys])
-        return self[filt]
-
-    def sort(self):
-        self.index.sort_values(['fname', 'rowid'], inplace=True)
-        self.data = self.data[self.index.index.values]
-
-    def append(self, data: Iterable, index: pd.DataFrame, do_sort: bool = True):
-        raise NotImplementedError
-
-    def __getitem__(self, item):
-        raise NotImplementedError
-
-
-class MasterArray(MasterStore):
-    def append(self, data: Iterable, index: pd.DataFrame, do_sort: bool = True):
-        self.data = np.append(self.data, data, axis=0)
-        self.index = self.index.append(index, ignore_index=True)
-        if do_sort:
-            self.sort()
-
-
-
-
-class MasterTable(MasterStore):
-    pass
-
-class MasterColumn(MasterStore):
-    pass
+def header2table(header):
+    keys = set(header.keys())
+    data = AstropyTable([[header[k]] for k in keys], names=list(keys), meta=header.comments)
+    data.comments = data.meta
+    return data
 
 
 class Product:
+    def __init__(self, data, index):
+        self.data = data
+        self.index = index
+
     @classmethod
-    def index_from_query(cls, address: Address, ids: Dict[str, Any]) -> pd.DataFrame:
-        d = {}
-        for i in cls.indexable_by:
-            try:
-                value = address[i]
-            except KeyError:
-                try:
-                    value = ids[i]
-                except KeyError:
-                    continue
-            d[i] = value
-        vectors = {k: v for k, v in d.items() if isinstance(v, (tuple, list))}
-        scalars = {k: v for k, v in d.items() if not isinstance(v, (tuple, list))}
-        l = max(map(len, vectors))
-        assert all(len(v) == l for v in vectors.values())
-        index = pd.DataFrame(vectors)
-        for name, value in scalars.items():
-            index[name] = value
-        return index
+    def concatenate(cls, *products):
+        return cls(cls.concatenate_data(*products), cls.concatenate_index(*products))
+
+    @classmethod
+    def concatenate_index(cls, *products):
+        return  pd.concat([p.index for p in products])
+
+    @classmethod
+    def concatenate_data(cls, *products):
+        raise NotImplementedError
+
+    def sort(self):
+        raise NotImplementedError
+
+    def __getitem__(self, item: pd.Series) -> 'Product':
+        if isinstance(item, pd.Series):
+            item = item.values
+        return self.__class__(self.data[item], self.index[item])
 
 
-def _get_data_view(required_index: pd.DataFrame, files: List[File], data_name: str,
-                   concatenation_constants, master_type):
-    array = master_type(files[0].__class__, data_name, concatenation_constants)
-    for ifile, file in enumerate(files):
-        index = file.match_index(required_index)  # rows in the files which match
-        missing = ~array.contains_index(index)  # bool array of which ones we already have in the master array
-        data = file.extract_data(data_name, index[missing].irows)
-        array.append(data, index[missing], do_sort=False)  # add new rows
-    array.sort()  # sort by file and irow such that files a,b,c are in order: a[0], a[1], b[0], b[2], c[1], c[100]
-    return array.filter_by_index(required_index)  # boolean index array
+class Array(Product):
+    def __init__(self, data, index):
+        super().__init__(np.asarray(data), index)
 
-def _get_product_view(factors, ids, files, product_name):
-    product_type = files[0].basic_product_types[product_name]  # type: Type[Product]
-    required_index = product_type.index_from_query(factors, ids)
-    return _get_data_view(required_index, files, product_name, product_type.concatenation_constants, product_type.master_type)
+    @classmethod
+    def concatenate_data(cls, *products):
+        return np.stack([p.data for p in products])
 
-def get_product_view(factors: Address, ids: Dict[str, Any], files: List[File], product_name: str) -> Product:
-    assert all(isinstance(f, files[0].__class__) for f in files)
-    try:
-        return _get_product_view(factors, ids, files, product_name)  # if you want the basic product
-    except KeyError:
-        product_type = files[0].composite_product_types[product_name]
-        required = {name: _get_product_view(factors, ids, files, name) for name in product_type.required_product_names}
-        return product_type(**required)
+
+class Table(Product):
+    def __init__(self, data, index):
+        super().__init__(AstropyTable(data), index)
+
+    @classmethod
+    def concatenate_data(cls, *products):
+        return vstack([p.data for p in products])
+
+
+class Header(Product):
+    @classmethod
+    def concatenate(cls, *products):
+        return Table.concatenate([Table(header2table(p), p.index) for p in products])
+
+
+def get_product(files: List['File'], product_name: str, product_index: pd.DataFrame) -> Product:
+    product_type = files[0].products[product_name]
+    for f in files:
+        if f.products[product_name] is not product_type:
+            raise TypeError(f"Stacking the {product_name} product from this query is not supported since {product_name} implies different types of products")
+        if not f.is_concatenatable_with(files[0], product_name):
+            raise TypeError(f"Stacking the {product_name} product from this query is not supported since they are unequal in concatenation_constants")
+    products = []
+    for f in files:
+        product = f.read_product(product_name)
+        if product_index is not None:
+            filt = f.match_index(product_index)
+            product = product[filt]
+        products.append(product)
+    return product_type.concatenate(*products).data
