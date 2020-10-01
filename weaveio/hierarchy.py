@@ -144,7 +144,11 @@ class Graphable(metaclass=PluralityMeta):
     def __init__(self, **predecessors):
         self.data = None
         try:
-            tx = Graph.get_context().tx
+            graph = Graph.get_context()
+            graph.statement
+            graph.tx.evaluate(self.statement, rows=params)
+
+
             self.node = Node(*self.neotypes, **self.neoproperties)
             try:
                 key = list(self.neoproperties.keys())[0]

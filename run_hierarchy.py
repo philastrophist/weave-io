@@ -19,23 +19,40 @@ df = Table(fits.open('data/single_1002081.fit')[-1].data).to_pandas()
 
 
 statement = """
-          MERGE (c:TargetSet {name: "targetset"})
-          WITH c
           UNWIND $rows as row
-          MERGE (a:Label1 {cname:row.CNAME})
-          MERGE (a)-[r:R_TYPE]->(b:Label2 {fibreid:row.FIBREID})
-          MERGE (c)-[:LINKS]->(a)
-          
-"""
-tx = graph.auto()
-params = []
-for index, row in df.iterrows():
-    params.append(row[['FIBREID', 'CNAME']].to_dict())
-    if index % 50 == 0:
-        tx.evaluate(statement, rows=params)
-        tx = graph.auto()
-        params = []
-tx.evaluate(statement, rows=params)
+          MERGE (c:TargetSet {name: "targetset"})
+          MERGE (t:Target {cname:row.CNAME, ra:row.TARGRA, dec:row.TARGDEC})
+          MERGE (f:Fibre {fibid:row.FIBREID})
+          MERGE (p:Position {nspec: row.Nspec, fibra:row.FIBRERA, fibdec:row.FIBREDEC, status:row.STATUS, plate: "plate"})
+          MERGE (: OtherThing)
+
+          MERGE (t)-[:IS_REQUIRED_BY]->(p)
+          MERGE (f)-[:IS_REQUIRED_BY]->(p)
+          MERGE (p)-[:IS_REQUIRED_BY]->(c)
+          """
+
+# tx = graph.auto()
+# params = []
+# for index, row in df.iterrows():
+#     params.append(row.to_dict())
+#     if index % 10000 == 0:
+#         tx.evaluate(statement, rows=params)
+#         tx = graph.auto()
+#         params = []
+# tx.evaluate(statement, rows=params)
+G = data.graph
+G.begin()
+targetset = G.add_node('TargetSet', name='targetset')
+table = G.add_table_as_name(df, 'fibrow')
+t = G.add_node('Target', tables=table[['CNAME', 'TARGRA', 'TARGDEC']].rename(targra='ra', targdec='dec'))
+f = G.add_node('Fibre', tables=table[['FIBREID']])
+p = G.add_node('Position', tables=table[['Nspec', 'FIBRERA', 'FIBREDEC', 'STATUS']], plate='plate')
+o = G.add_node('OtherThing')
+G.add_relationship(t, p, 'IS_REQUIRED_BY')
+G.add_relationship(f, p, 'IS_REQUIRED_BY')
+G.add_relationship(p, targetset, 'IS_REQUIRED_BY')
+print(G.make_statement())
+G.commit()
 
 # # data.directory_to_neo4j()
 #

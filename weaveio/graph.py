@@ -1,10 +1,15 @@
 # Copied the Context structure from Pymc3
 
 import threading
+from collections import defaultdict
 from sys import modules
-from typing import Optional, Type, TypeVar, List, Union
+from typing import Optional, Type, TypeVar, List, Union, Any, Dict
 
 from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
+
+from weaveio.utilities import quote, Varname
+import pandas as pd
+import numpy as np
 
 T = TypeVar("T", bound="ContextMeta")
 
@@ -148,6 +153,31 @@ class TransactionWrapper:
         self.tx.commit()
 
 
+class Unwind:
+    def __init__(self, data, name, columns=None, _renames=None):
+        self.data = data
+        self.name = name
+        self.columns = self.data.columns if columns is None else columns
+        self._renames = {} if _renames is None else _renames
+
+    def rename(self, **names):
+        renames = self._renames.copy()
+        renames.update(names)
+        return Unwind(self.data, self.name, self.columns, renames)
+
+    def to_dict(self):
+        columns = {c.lower(): c for c in self.columns}
+        for a, b in self._renames.items():
+            columns[b.lower()] = columns[a.lower()]
+            del columns[a.lower()]
+        return {varname: Varname(f'{self.name}.{colname}') for varname, colname in columns.items()}
+
+    def __getitem__(self, item):
+        if not isinstance(item, (list, tuple, np.ndarray)):
+            item = [item]
+        return Unwind(self.data[item], self.name, item)
+
+
 class Graph(metaclass=ContextMeta):
     def __new__(cls, *args, **kwargs):
         # resolves the parent instance
@@ -163,6 +193,54 @@ class Graph(metaclass=ContextMeta):
 
     def begin(self, **kwargs):
         self.tx = self.neograph.begin(**kwargs)
+        self.simples = []
+        self.unwinds = []
+        self.data = {}
+        self.counter = defaultdict(int)
         return self.tx
+
+    def string_properties(self, properties):
+        return ', '.join(f'{k}: {quote(v)}' for k, v in properties.items())
+
+    def string_labels(self, labels):
+        return ':'.join(labels)
+
+    def add_node(self, *labels, **properties):
+        table_properties_list = properties.pop('tables', [])
+        if not isinstance(table_properties_list, (tuple, list)):
+            table_properties_list = [table_properties_list]
+        table_properties = {k: v for p in table_properties_list for k, v in p.to_dict().items()}
+        properties.update(table_properties)
+        n = self.counter[labels[-1]]
+        key = f"{labels[-1]}{n}".lower()
+        data = self.string_properties(properties)
+        labels = self.string_labels(labels)
+        self.simples.append(f'MERGE ({key}:{labels} {{{data}}})')
+        return key
+
+    def add_relationship(self, a, b, *labels, **properties):
+        data = self.string_properties(properties)
+        labels = self.string_labels([l.upper() for l in labels])
+        self.simples.append(f'MERGE ({a})-[:{labels} {{{data}}}]->({b})')
+
+    def add_table_as_name(self, table: pd.DataFrame, name: str):
+        assert name not in self.counter, "name for the table must not have been used"
+        self.unwinds.append(f"UNWIND ${name}s as {name}")
+        self.data[name+'s'] = list(table.T.to_dict().values())
+        return Unwind(table, name)
+
+    def make_statement(self):
+        unwinds = '\n'.join(self.unwinds)
+        simples = '\n'.join(self.simples)
+        return f'{unwinds}\n{simples}'
+
+    def evaluate_statement(self):
+        statement = self.make_statement()
+        self.tx.evaluate(statement, **self.data)
+
+    def commit(self):
+        if len(self.simples) or len(self.data):
+            self.evaluate_statement()
+        return self.tx.commit()
 
 Graph._context_class = Graph

@@ -4,7 +4,7 @@ import time
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
-from typing import Union, Any, List, Type
+from typing import Union, List
 import pandas as pd
 
 import networkx as nx
@@ -16,15 +16,7 @@ from weaveio.hierarchy import Multiple, Graphable, Factor
 from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
 from weaveio.neo4j import parse_apoc_tree
 from weaveio.product import get_product
-
-
-def quote(x):
-    """
-    Return a quoted string if x is a string otherwise return x
-    """
-    if isinstance(x, str):
-        return f"'{x}'"
-    return x
+from weaveio.utilities import quote
 
 
 class Data:
