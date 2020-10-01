@@ -1,9 +1,11 @@
+import numpy as np
 import logging
 import time
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import Union, Any, List, Type
+import pandas as pd
 
 import networkx as nx
 import py2neo
@@ -13,6 +15,7 @@ from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, Graphable, Factor
 from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
 from weaveio.neo4j import parse_apoc_tree
+from weaveio.product import get_product
 
 
 def quote(x):
@@ -58,15 +61,19 @@ class Data:
         d = list(self.singular_hierarchies.values())
         while len(d):
             h = d.pop()
-            self.relation_graph.add_node(h.singular_name)
+            try:
+                is_file = issubclass(h, File)
+            except:
+                is_file = False
+            self.relation_graph.add_node(h.singular_name, is_file=is_file)
             for parent in h.parents:
                 multiplicity = isinstance(parent, Multiple)
-                self.relation_graph.add_node(parent.singular_name)
+                self.relation_graph.add_node(parent.singular_name, is_file=is_file)
                 self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity)
                 d.append(parent)
             try:
                 for f in h.factors:
-                    self.relation_graph.add_node(f.lower())
+                    self.relation_graph.add_node(f.lower(), is_file=False)
                     self.relation_graph.add_edge(f.lower(), h.singular_name, multiplicity=False)
             except AttributeError:
                 pass
@@ -97,6 +104,8 @@ class Data:
 
     def node_implies_plurality_of(self, start_node, implication_node):
         if nx.has_path(self.relation_graph, start_node, implication_node):
+            if self.relation_graph.nodes[implication_node]['is_file']:
+                return False, 'below'
             return True, 'below'
         else:
             edges = nx.shortest_path(self.relation_graph, implication_node, start_node)
@@ -337,7 +346,11 @@ class HomogeneousFactor(Executable):
         return [r[0]['value'] for r in result]
 
 
-class SingleHierarchy(Executable):
+class ExecutableHierarchy(Executable):
+    pass
+
+
+class SingleHierarchy(ExecutableHierarchy):
     def __init__(self, data, query, nodetype, idvalue=None):
         super().__init__(data, query, nodetype)
         self.idvalue = idvalue
@@ -364,6 +377,8 @@ class SingleHierarchy(Executable):
         return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
 
     def __getattr__(self, item):
+        if item in getattr(self.nodetype, 'products', []):
+            return Products(self, item)
         return self.index_by_hierarchy_name(item)
 
     def __call__(self):
@@ -372,7 +387,7 @@ class SingleHierarchy(Executable):
         return rs[0]
 
 
-class HomogeneousHierarchy(Executable):
+class HomogeneousHierarchy(ExecutableHierarchy):
     """
 	.<other> - OBs.OBspec
 		- returns Hierarchy/factor/id/file
@@ -404,12 +419,52 @@ class HomogeneousHierarchy(Executable):
             return self.index_by_id(item)
 
     def __getattr__(self, item):
+        if item in getattr(self.nodetype, 'products', []):
+            return Products(self, item)
         if self.data.is_plural_name(item):
             name = self.data.singular_name(item)
         else:
             raise ValueError(f"{self} requires a plural {item}, try `.{self.data.plural_name(item)}`")
         _, direction = self.implied_plurality_direction_of_node(name)
         return self.index_by_plural_hierarchy(item, direction)
+
+
+
+class Products:
+    def __init__(self, filenode, product_name, index=None):
+        self.filenode = filenode
+        self.product_name = product_name
+        if issubclass(filenode.nodetype, File):
+            indexables = self.filenode.nodetype.product_indexables[product_name]
+            if indexables is None and index is not None:
+                raise ValueError(f"{filenode.nodetype.singular_name}.{product_name} is not to be indexed")
+            if not isinstance(indexables, (list, tuple)):
+                indexables = [indexables]
+            if isinstance(index, (list, tuple, np.ndarray)):
+                index = np.asarray(index)
+                self.index = pd.DataFrame(index, columns=indexables)
+            elif index is None:
+                self.index = None
+            else:
+                self.index = pd.DataFrame([index], columns=indexables)
+        elif index is not None:
+            raise ValueError(f"{filenode.nodetype.singular_name}.{product_name} is not to be indexed")
+
+    def __getitem__(self, item):
+        if isinstance(item, Address):
+            return Products(self.filenode.__getitem__(item), self.product_name, self.index)
+        return Products(self.filenode, self.product_name, item)
+
+    def __getattr__(self, item):
+        if item == self.filenode.nodetype.singular_name:
+            return self.filenode
+        return self.filenode.__getattr__(item)
+
+    def __call__(self):
+        result = self.filenode.__call__()
+        if not isinstance(result, (list, tuple)):
+            result = [result]
+        return get_product(result, self.product_name, self.index)
 
 
 # class HomogeneousProduct(HomogeneousHierarchy):

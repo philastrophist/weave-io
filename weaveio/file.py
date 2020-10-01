@@ -89,6 +89,8 @@ class HeaderFibinfoFile(File):
                                'ivar_noss': spectral_concatenation_constants,
                                'sens_func': spectral_concatenation_constants,
                                'fibtable': ['NAXIS1']}
+    product_indexables = {'primary': None, 'data': 'cname', 'ivar': 'cname', 'data_noss': 'cname', 'ivar_noss': 'cname',
+                          'sensfunc': 'cname', 'fibtable': 'cname'}
     hdus = ['primary', 'data', 'ivar', 'data_noss', 'ivar_noss', 'sensfunc', 'fibtable']
 
     def read_concatenation_constants(self, product_name) -> Tuple:

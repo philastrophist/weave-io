@@ -65,7 +65,7 @@ class Header(Product):
         return Table.concatenate([Table(header2table(p), p.index) for p in products])
 
 
-def get_product(files: List['File'], product_name: str, product_index: pd.DataFrame) -> Product:
+def get_product(files: List['File'], product_name: str, product_index: pd.DataFrame = None) -> Product:
     product_type = files[0].products[product_name]
     for f in files:
         if f.products[product_name] is not product_type:

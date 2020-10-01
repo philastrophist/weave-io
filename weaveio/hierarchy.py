@@ -9,6 +9,10 @@ from .config_tables import progtemp_config
 from .graph import Graph, Node, Relationship, ContextError
 
 
+def chunker(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
 def graph2pdf(graph, ftitle):
     dot = nx.nx_pydot.to_pydot(graph)
     dot.set_strict(False)
@@ -191,16 +195,21 @@ class Hierarchy(Graphable):
     def __repr__(self):
         return self.name
 
+    def generate_identifier(self):
+        raise NotImplementedError
+
     def __init__(self, **kwargs):
-        if self.idname not in kwargs and self.idname is not None:
-            kwargs[self.idname] = ''.join(str(kwargs[f.lower()]) for f in self.factors)
+        if self.idname is None:
+            self.idname = 'id'
+        if self.idname not in kwargs:
+            self.identifier = None
+        else:
+            self.identifier = kwargs.pop(self.idname)
+
         parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
-        if self.idname is not None:
-            self.identifier = kwargs.pop(self.idname)
-            setattr(self, self.idname, self.identifier)
         self._kwargs = kwargs.copy()
 
         predecessors = {}
@@ -219,23 +228,20 @@ class Hierarchy(Graphable):
             predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
-        if self.idname is not None:
-            self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
-        else:
-            name = xxhash.xxh32()
-            for predecessor_list in predecessors.values():
-                for predecessor in predecessor_list:
-                    name.update(predecessor.name)
-            name = '#' + name.hexdigest()
-            self.idname = 'id'
-            self.identifier = name
-            self.name = f"{self.__class__.__name__}({name})"
+        self.predecessors = predecessors
+        if self.identifier is None:
+            self.identifier = self.generate_identifier()
+        setattr(self, self.idname, self.identifier)
+        self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
 
 
 class ArmConfig(Hierarchy):
     factors = ['Resolution', 'VPH', 'Camera']
     idname = 'armcode'
+
+    def generate_identifier(self):
+        return f'{self.resolution}{self.vph}{self.camera}'
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -249,6 +255,9 @@ class ObsTemp(Hierarchy):
     factors = ['MaxSeeing', 'MinTrans', 'MinElev', 'MinMoon', 'MaxSky']
     idname = 'obstemp'
 
+    def generate_identifier(self):
+        return f'{self.maxseeing}{self.mintrans}{self.minelev}{self.minmoon}{self.maxsky}'
+
     @classmethod
     def from_header(cls, header):
         names = [f.lower() for f in cls.factors]
@@ -258,18 +267,22 @@ class ObsTemp(Hierarchy):
 class Target(Hierarchy):
     idname = 'cname'
 
+    def generate_identifier(self):
+        return f"{self.cname}"
+
     @classmethod
     def from_fibinfo_row(cls, row):
         return Target(cname=row['CNAME'])
 
 
-def chunker(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
-
-
 class TargetSet(Hierarchy):
     parents = [Multiple(Target)]
+
+    def generate_identifier(self):
+        h = xxhash.xxh64()
+        for i, t in enumerate(self.targets):
+            h.update(f"{i}{t.cname}")
+        return '#' + h.hexdigest()
 
     @classmethod
     def from_fibinfo(cls, fibinfo):
@@ -280,6 +293,9 @@ class TargetSet(Hierarchy):
 class ProgTemp(Hierarchy):
     factors = ['Mode', 'Binning']
     parents = [Multiple(ArmConfig, 2, 2)]
+
+    def generate_identifier(self):
+        return f'{self.mode}{self.binning}{"".join(a.identifier for a in self.armconfigs)}'
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -295,6 +311,9 @@ class OBSpec(Hierarchy):
     factors = ['OBTitle']
     parents = [ObsTemp, TargetSet, ProgTemp]
 
+    def generate_identifier(self):
+        return f"{self.obstemp.identifier}-{self.progtemp.identifier}-{self.targetset.identifier}"
+
 
 class OBRealisation(Hierarchy):
     idname = 'obid'
@@ -305,6 +324,9 @@ class OBRealisation(Hierarchy):
 class Exposure(Hierarchy):
     parents = [OBRealisation]
     factors = ['ExpMJD']
+
+    def generate_identifier(self):
+        return f"{self.obrealisation.identifier}-{self.expmjd}"
 
 
 class Run(Hierarchy):
