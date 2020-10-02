@@ -9,10 +9,11 @@ import pandas as pd
 
 import networkx as nx
 import py2neo
+from tqdm import tqdm
 
 from weaveio.address import Address
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, Graphable, Factor
+from weaveio.hierarchy import Multiple, Graphable
 from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
 from weaveio.neo4j import parse_apoc_tree
 from weaveio.product import get_product
@@ -75,11 +76,11 @@ class Data:
             self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
             for filetype, files in self.filelists.items():
-                for file in files:
+                for file in tqdm(files, desc=filetype.__name__):
                     tx = self.graph.begin()
                     filetype(file)
                     if not tx.finished():
-                        tx.commit()
+                        self.graph.commit()
 
     def traversal_path(self, start, end):
         if nx.has_path(self.relation_graph, end, start):

@@ -1,6 +1,6 @@
 from typing import Dict, Any, Union, List, Type
 
-from weaveio.hierarchy import Hierarchy, Factor
+from weaveio.hierarchy import Hierarchy
 from weaveio.file import File
 
 

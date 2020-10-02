@@ -1,4 +1,5 @@
 import inspect
+from typing import Tuple, Dict, Type
 
 import networkx as nx
 import xxhash
@@ -6,7 +7,8 @@ from graphviz import Source
 from tqdm import tqdm
 
 from .config_tables import progtemp_config
-from .graph import Graph, Node, Relationship, ContextError
+from .graph import Graph, Node, Relationship, ContextError, Unwind
+from .utilities import Varname
 
 
 def chunker(lst, n):
@@ -83,6 +85,7 @@ class Graphable(metaclass=PluralityMeta):
     plural_name = None
     singular_name = None
     parents = []
+    uses_tables = False
 
     def add_parent_data(self, data):
         self.data = data
@@ -124,73 +127,54 @@ class Graphable(metaclass=PluralityMeta):
                 return current
             except AttributeError as e:
                 raise AttributeError(f"{item} cannot be found in {self} or its parent structure.") from e
-        raise NotImplementedError("Data not added to hierarchy object")
+        raise AttributeError(f"Data not added to {self}, cannot search for {self}.{item}")
 
     @property
     def neotypes(self):
         clses = [i.__name__ for i in inspect.getmro(self.__class__)]
         clses = clses[:clses.index('Graphable')]
-        return clses
+        return clses[::-1]
 
     @property
     def neoproperties(self):
-        if self.idname is not None:
+        if self.identifier is None:
+            d = {self.idname: 'None'}
+            d['id'] = 'None'
+        else:
             d = {self.idname: self.identifier}
             d['id'] = self.identifier
-            return d
-        else:
-            return {'dummy': 1}   # just to stop py2neo complaining, shouldnt actually be encountered
+        for f in self.factors:
+                d[f.lower()] = getattr(self, f.lower())
+        return d
 
     def __init__(self, **predecessors):
+        self.predecessors = predecessors
         self.data = None
         try:
-            graph = Graph.get_context()
-            graph.statement
-            graph.tx.evaluate(self.statement, rows=params)
-
-
-            self.node = Node(*self.neotypes, **self.neoproperties)
-            try:
-                key = list(self.neoproperties.keys())[0]
-            except IndexError:
-                key = None
-            primary = {'primary_label': self.neotypes[-1], 'primary_key': key}
-            tx.merge(self.node, **primary)
+            graph = Graph.get_context()  # type: Graph
+            self.node = graph.add_node(*self.neotypes, **self.neoproperties)
             for k, node_list in predecessors.items():
-                for inode, node in enumerate(node_list):
-                    if k in [i.lower() for i in self.indexers]:
-                        type = 'indexes'
-                    else:
-                        type = 'is_required_by'
-                    tx.merge(Relationship(node.node, type, self.node, order=inode))
+                if k in [i.lower() for i in self.indexers]:
+                    type = 'indexes'
+                else:
+                    type = 'is_required_by'
+                if isinstance(node_list, (list, tuple)):
+                    for inode, node in enumerate(node_list):
+                        graph.add_relationship(node.node, self.node, type, order=inode)
+                else:
+                    order = None
+                    for v in node_list.neoproperties.values():
+                        if isinstance(v, Unwind):
+                            order = f"{v.name}._input_index"
+                    graph.add_relationship(node_list.node, self.node, type,
+                                           order=Varname(order))
         except ContextError:
             pass
-        self.predecessors = predecessors
-
-
-class Factor(Graphable):
-    type_graph_attrs = factor_attrs
-
-    @property
-    def neotypes(self):
-        return ['Factor', self.idname]
-
-    @property
-    def neoproperties(self):
-        return {'value': self.identifier, 'id': self.identifier}
-
-    def __init__(self, name, value, plural_name=None):
-        self.idname = name
-        self.identifier = value
-        self.name = f"{self.idname}({self.identifier})"
-        super(Factor, self).__init__()
-
-    def __repr__(self):
-        return f"<Factor({self.idname}={self.identifier})>"
 
 
 class Hierarchy(Graphable):
     idname = None
+    identifier_builder = []
     parents = []
     factors = []
     indexers = []
@@ -200,52 +184,86 @@ class Hierarchy(Graphable):
         return self.name
 
     def generate_identifier(self):
-        raise NotImplementedError
-
-    def __init__(self, **kwargs):
-        if self.idname is None:
-            self.idname = 'id'
-        if self.idname not in kwargs:
-            self.identifier = None
+        """
+        if `idname` is set, then return the identifier set at instantiation
+        otherwise, make an identifier by stitching together identifiers of its input
+        """
+        if self.identifier is not None:
+            return self.identifier
+        elif len(self.identifier_builder):
+            strings = []
+            for i in self.identifier_builder:
+                obj = getattr(self, i)
+                if isinstance(obj, Hierarchy):
+                    obj = obj.identifier
+                if isinstance(obj, Unwind):
+                    s = str(obj)
+                    strings += ['+', s, '+']
+                else:
+                    s = str(obj)
+                    strings.append(f"'{s}'")
+            final =  ''.join(strings).strip('+').replace('++', '+').replace("''", "")
+            return Varname(final)
         else:
-            self.identifier = kwargs.pop(self.idname)
+            return None
 
+    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str]]:
+        """
+        Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
+        """
         parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
-        self._kwargs = kwargs.copy()
+        return specification, factors
 
+    def __init__(self, tables=None, **kwargs):
+        if tables is None:
+            for value in kwargs.values():
+                if getattr(value, 'uses_tables', False) or isinstance(value, Unwind):
+                    self.uses_tables = True
+        else:
+            self.uses_tables = True
+        if self.idname not in kwargs:
+            self.identifier = None
+        else:
+            self.identifier = kwargs.pop(self.idname)
+        specification, factors = self.make_specification()
+        # add any data held in a neo4j unwind table
+        for k, v in specification.items():
+            if k not in kwargs:
+                if tables is not None:
+                    if k in tables:
+                        kwargs[k] = tables[k]
+        self._kwargs = kwargs.copy()
+        # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
         for name, nodetype in specification.items():
             value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
-                if not isinstance(value, (tuple, list)):
+                if not getattr(value, 'uses_tables', False) and not isinstance(value, (tuple, list)):
                     raise TypeError(f"{name} expects multiple elements")
-                if name in factors:
-                    value = [Factor(name, val) for val in value]
-            elif name in factors:
-                value = [Factor(name, value)]
             else:
                 value = [value]
-            predecessors[name] = value
+            if name not in factors:
+                predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors
         if self.identifier is None:
             self.identifier = self.generate_identifier()
+        if self.idname is None:
+            self.idname = 'id'
         setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
 
 
 class ArmConfig(Hierarchy):
-    factors = ['Resolution', 'VPH', 'Camera']
+    factors = ['resolution', 'vph', 'camera']
     idname = 'armcode'
-
-    def generate_identifier(self):
-        return f'{self.resolution}{self.vph}{self.camera}'
+    identifier_builder = ['resolution', 'vph', 'camera']
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -257,66 +275,67 @@ class ArmConfig(Hierarchy):
 
 class ObsTemp(Hierarchy):
     factors = ['MaxSeeing', 'MinTrans', 'MinElev', 'MinMoon', 'MaxSky']
-    idname = 'obstemp'
-
-    def generate_identifier(self):
-        return f'{self.maxseeing}{self.mintrans}{self.minelev}{self.minmoon}{self.maxsky}'
+    idname = 'obstemp_code'
 
     @classmethod
     def from_header(cls, header):
         names = [f.lower() for f in cls.factors]
-        return cls(**{n: v for v, n in zip(list(header['OBSTEMP']), names)})
+        obstemp_code = list(header['OBSTEMP'])
+        return cls(obstemp_code=''.join(obstemp_code), **{n: v for v, n in zip(obstemp_code, names)})
+
+
+class Survey(Hierarchy):
+    idname = 'surveyname'
+
+
+class Catalogue(Hierarchy):
+    pass
+
+
+class WeaveInputCatalogue(Hierarchy):
+    pass
 
 
 class Target(Hierarchy):
     idname = 'cname'
-
-    def generate_identifier(self):
-        return f"{self.cname}"
-
-    @classmethod
-    def from_fibinfo_row(cls, row):
-        return Target(cname=row['CNAME'])
+    factors = ['targid']
+    parents = [Multiple(Survey)]
 
 
-class TargetSet(Hierarchy):
-    parents = [Multiple(Target)]
+class Fibre(Hierarchy):
+    idname = 'fibreid'
 
-    def generate_identifier(self):
-        h = xxhash.xxh64()
-        for i, t in enumerate(self.targets):
-            h.update(f"{i}{t.cname}")
-        return '#' + h.hexdigest()
 
-    @classmethod
-    def from_fibinfo(cls, fibinfo):
-        targets = [Target.from_fibinfo_row(row) for row in tqdm(fibinfo)]
-        return cls(targets=targets)
+class FibreAssignment(Hierarchy):
+    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition']
+    parents = [Fibre, Target]
+    identifier_builder = ['fibre', 'target', 'xposition', 'yposition']
+
+
+class FibreSet(Hierarchy):
+    parents = [Multiple(FibreAssignment)]
+    idname = 'id'
 
 
 class ProgTemp(Hierarchy):
     factors = ['Mode', 'Binning']
     parents = [Multiple(ArmConfig, 2, 2)]
-
-    def generate_identifier(self):
-        return f'{self.mode}{self.binning}{"".join(a.identifier for a in self.armconfigs)}'
+    idname = 'progtemp_code'
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
         progtemp_code = progtemp_code.split('.')[0]
-        progtemp_code = list(map(int, progtemp_code))
-        configs = ArmConfig.from_progtemp_code(progtemp_code)
-        mode = progtemp_config.loc[progtemp_code[0]]['mode']
-        binning = progtemp_code[3]
-        return cls(mode=mode, binning=binning, armconfigs=configs)
+        progtemp_code_list = list(map(int, progtemp_code))
+        configs = ArmConfig.from_progtemp_code(progtemp_code_list)
+        mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
+        binning = progtemp_code_list[3]
+        return cls(progtemp_code=progtemp_code, mode=mode, binning=binning, armconfigs=configs)
 
 
 class OBSpec(Hierarchy):
+    idname = 'catname'
     factors = ['OBTitle']
-    parents = [ObsTemp, TargetSet, ProgTemp]
-
-    def generate_identifier(self):
-        return f"{self.obstemp.identifier}-{self.progtemp.identifier}-{self.targetset.identifier}"
+    parents = [ObsTemp, FibreSet, ProgTemp]
 
 
 class OBRealisation(Hierarchy):
@@ -328,9 +347,7 @@ class OBRealisation(Hierarchy):
 class Exposure(Hierarchy):
     parents = [OBRealisation]
     factors = ['ExpMJD']
-
-    def generate_identifier(self):
-        return f"{self.obrealisation.identifier}-{self.expmjd}"
+    identifier_builder = ['expmjd']
 
 
 class Run(Hierarchy):

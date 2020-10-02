@@ -8,7 +8,8 @@ from astropy.table import Table as AstropyTable
 
 from weaveio.config_tables import progtemp_config
 from weaveio.graph import Graph
-from weaveio.hierarchy import Run, OBRealisation, OBSpec, ArmConfig, Target, Exposure, Multiple, TargetSet, ProgTemp, ObsTemp, Graphable, l1file_attrs
+from weaveio.hierarchy import Run, OBRealisation, OBSpec, ArmConfig, Target, Exposure, \
+    Multiple, FibreSet, ProgTemp, ObsTemp, Graphable, l1file_attrs, Survey, Fibre, FibreAssignment
 from weaveio.product import Header, Array, Table
 
 
@@ -17,6 +18,7 @@ class File(Graphable):
     constructed_from = []
     indexable_by = []
     products = {}
+    factors = []
     type_graph_attrs = l1file_attrs
     concatenation_constant_names = {}
 
@@ -28,9 +30,13 @@ class File(Graphable):
         if len(kwargs):
             for k, v in kwargs.items():
                 setattr(self, k, v)
-            self.predecessors = kwargs
+            self.predecessors, factors = kwargs
         else:
-            self.predecessors = self.read()
+            self.predecessors, factors = self.read()
+        for p, v in self.predecessors.items():
+            setattr(self, p, v[0])
+        for f, v in factors.items():
+            setattr(self, f, v)
         super(File, self).__init__(**self.predecessors)
         self.product_data = {}
 
@@ -105,20 +111,29 @@ class HeaderFibinfoFile(File):
         res = str(header['VPH']).rstrip('123')
         obstart = str(header['OBSTART'])
         obtitle = str(header['OBTITLE'])
+        catname = str(header['CAT-NAME'])
         obid = str(header['OBID'])
 
-        fibinfo = self._read_fibtable()
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
         vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.mode)
-                              & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
-        armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
+                                  & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
+        ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
-        targetset = TargetSet.from_fibinfo(fibinfo)
-        obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
+
+        graph = Graph.get_context()
+        fibinfo = self._read_fibtable().to_pandas()
+        table = graph.add_table(fibinfo, split=[('targsrvy', ',')])
+        fibres = Fibre(fibreid=table['fibreid'])
+        surveys = Survey(surveyname=table['targsrvy'])
+        targets = Target(cname=table['cname'], tables=table, surveys=surveys)
+        fibreassignments = FibreAssignment(target=targets, fibre=fibres, tables=table)
+        fibreset = FibreSet(fibreassignments=fibreassignments, id=table.hash())
+
+        obspec = OBSpec(catname=catname, fibreset=fibreset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
         obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
         run = Run(runid=runid, camera=camera, exposure=exposure)
-        return {'run': [run]}
+        return {'run': [run]}, {'camera': camera}
 
     def build_index(self) -> None:
         if self.index is None:
@@ -144,15 +159,15 @@ class HeaderFibinfoFile(File):
         return Array(fits.open(self.fname)[5].data, self.index)
 
     def _read_fibtable(self):
-        return AstropyTable(fits.open(self.fname)[self.fibinfo_i].data)[:5]
+        return AstropyTable(fits.open(self.fname)[self.fibinfo_i].data)
 
     def read_fibtable(self):
         return Table(self._read_fibtable(), self.index)
 
 
-
 class Raw(HeaderFibinfoFile):
     parents = [Run]
+    factors = ['camera']
     fibinfo_i = 3
 
     @classmethod
@@ -162,6 +177,7 @@ class Raw(HeaderFibinfoFile):
 
 class L1Single(HeaderFibinfoFile):
     parents = [Run]
+    factors = ['camera']
     constructed_from = [Raw]
 
     @classmethod
@@ -171,7 +187,7 @@ class L1Single(HeaderFibinfoFile):
 
 class L1Stack(HeaderFibinfoFile):
     parents = [OBRealisation]
-    factors = ['VPH']
+    factors = ['camera']
     constructed_from = [L1Single]
 
     @classmethod
@@ -181,7 +197,7 @@ class L1Stack(HeaderFibinfoFile):
 
 class L1SuperStack(File):
     parents = [OBSpec]
-    factors = ['VPH']
+    factors = ['camera']
     constructed_from = [L1Single]
 
     @classmethod
@@ -191,7 +207,7 @@ class L1SuperStack(File):
 
 class L1SuperTarget(File):
     parents = [ArmConfig, Target]
-    factors = ['Binning', 'Mode']
+    factors = ['binning', 'mode']
     constructed_from = [L1Single]
 
     @classmethod
@@ -209,8 +225,8 @@ class L2Single(File):
 
 
 class L2Stack(File):
-    parents = [Multiple(ArmConfig, 1, 3), TargetSet]
-    factors = ['Binning', 'Mode']
+    parents = [Multiple(ArmConfig, 1, 3), FibreSet]
+    factors = ['binning', 'mode']
     constructed_from = [Multiple(L1Stack, 0, 3), Multiple(L1SuperStack, 0, 3)]
 
     @classmethod
@@ -220,7 +236,7 @@ class L2Stack(File):
 
 class L2SuperTarget(File):
     parents = [Multiple(ArmConfig, 1, 3), Target]
-    factors = ['Mode', 'Binning']
+    factors = ['mode', 'binning']
     constructed_from = [Multiple(L1SuperTarget, 2, 3)]
 
     @classmethod

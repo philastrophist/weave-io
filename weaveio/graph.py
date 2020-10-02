@@ -7,7 +7,7 @@ from typing import Optional, Type, TypeVar, List, Union, Any, Dict
 
 from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
 
-from weaveio.utilities import quote, Varname
+from weaveio.utilities import quote, Varname, hash_pandas_dataframe
 import pandas as pd
 import numpy as np
 
@@ -52,7 +52,7 @@ class ContextMeta(type):
             cls._context_class = context_class
         super().__init__(name, bases, nmspc)
 
-    def get_context(cls, error_if_none=True) -> Optional[T]:
+    def get_context(cls, error_if_none=True) -> Optional['Graph']:
         """Return the most recently pushed context object of type ``cls``
         on the stack, or ``None``. If ``error_if_none`` is True (default),
         raise a ``ContextError`` instead of returning ``None``."""
@@ -154,28 +154,58 @@ class TransactionWrapper:
 
 
 class Unwind:
-    def __init__(self, data, name, columns=None, _renames=None):
+    def __init__(self, data, name, columns=None, _renames=None, single=False, splits=None):
+        data.columns = [c.lower() for c in data.columns]
         self.data = data
         self.name = name
+        self.single = single
+        self.splits = [] if splits is None else splits
         self.columns = self.data.columns if columns is None else columns
         self._renames = {} if _renames is None else _renames
+
+    def __contains__(self, item):
+        return item in self.columns
 
     def rename(self, **names):
         renames = self._renames.copy()
         renames.update(names)
-        return Unwind(self.data, self.name, self.columns, renames)
+        return Unwind(self.data, self.name, self.columns, renames, self.splits)
 
-    def to_dict(self):
-        columns = {c.lower(): c for c in self.columns}
-        for a, b in self._renames.items():
-            columns[b.lower()] = columns[a.lower()]
-            del columns[a.lower()]
-        return {varname: Varname(f'{self.name}.{colname}') for varname, colname in columns.items()}
+    # def to_dict(self):
+    #     columns = {c.lower(): c for c in self.columns}
+    #     for a, b in self._renames.items():
+    #         columns[b.lower()] = columns[a.lower()]
+    #         del columns[a.lower()]
+    #     return {varname: Varname(f'{self.name}.{colname}') for varname, colname in columns.items()}
 
     def __getitem__(self, item):
+        if self.single:
+            raise TypeError(f"Cannot index a single Unwind column")
         if not isinstance(item, (list, tuple, np.ndarray)):
             item = [item]
-        return Unwind(self.data[item], self.name, item)
+            single = True
+        else:
+            single = False
+        return Unwind(self.data[item], self.name, item,
+                      {k: v for k, v in self._renames.items() if k in item}, single=single,
+                      splits=self.splits)
+
+    def list(self):
+        return [f"{self.name}_{c}" if c in self.splits else f"{self.name}.{c}" for c in self.columns]
+
+    def get(self):
+        if self.single:
+            return self.list()[0]
+        return '[' + ','.join(self.list()) + ']'
+
+    def __str__(self):
+        if self.single:
+            return self.list()[0]
+        return '+'.join(self.list())
+
+    def hash(self):
+        return hash_pandas_dataframe(self.data)
+
 
 
 class Graph(metaclass=ContextMeta):
@@ -193,17 +223,24 @@ class Graph(metaclass=ContextMeta):
 
     def begin(self, **kwargs):
         self.tx = self.neograph.begin(**kwargs)
+        self.uses_table = False
         self.simples = []
+        self.simples_index = defaultdict(list)
+        self.split_contexts = []
         self.unwinds = []
         self.data = {}
         self.counter = defaultdict(int)
         return self.tx
 
     def string_properties(self, properties):
+        properties = {k: Varname(v.get()) if isinstance(v, Unwind) else v for k, v in properties.items()}
         return ', '.join(f'{k}: {quote(v)}' for k, v in properties.items())
 
     def string_labels(self, labels):
         return ':'.join(labels)
+
+    def add_split_context(self, inname, delimiter):
+        self.split_contexts.append([inname, delimiter])
 
     def add_node(self, *labels, **properties):
         table_properties_list = properties.pop('tables', [])
@@ -211,23 +248,34 @@ class Graph(metaclass=ContextMeta):
             table_properties_list = [table_properties_list]
         table_properties = {k: v for p in table_properties_list for k, v in p.to_dict().items()}
         properties.update(table_properties)
+        self.counter[labels[-1]] += 1
         n = self.counter[labels[-1]]
         key = f"{labels[-1]}{n}".lower()
         data = self.string_properties(properties)
         labels = self.string_labels(labels)
         self.simples.append(f'MERGE ({key}:{labels} {{{data}}})')
+        self.simples_index[key].append(len(self.simples))
         return key
 
     def add_relationship(self, a, b, *labels, **properties):
         data = self.string_properties(properties)
         labels = self.string_labels([l.upper() for l in labels])
         self.simples.append(f'MERGE ({a})-[:{labels} {{{data}}}]->({b})')
+        self.simples_index[a].append(len(self.simples))
+        self.simples_index[b].append(len(self.simples))
 
-    def add_table_as_name(self, table: pd.DataFrame, name: str):
-        assert name not in self.counter, "name for the table must not have been used"
+    def add_table(self, table: pd.DataFrame, split=None):
+        self.uses_table = True
+        name = 'table'
+        table.columns = [c.lower() for c in table.columns]
+        table['_input_index'] = table.index.values
         self.unwinds.append(f"UNWIND ${name}s as {name}")
-        self.data[name+'s'] = list(table.T.to_dict().values())
-        return Unwind(table, name)
+        if split is not None:
+            for s in split:
+                table[s[0]] = table[s[0]].str.split(s[1])
+                self.unwinds.append(f"UNWIND {name}.{s[0]} as {name}_{s[0]}")
+        self.data[name+'s'] = [row.to_dict() for _, row in table.iterrows()]
+        return Unwind(table, name, splits=[s[0] for s in split])
 
     def make_statement(self):
         unwinds = '\n'.join(self.unwinds)
@@ -242,5 +290,13 @@ class Graph(metaclass=ContextMeta):
         if len(self.simples) or len(self.data):
             self.evaluate_statement()
         return self.tx.commit()
+
+    def make_unique_constraint(self):
+        for label in labels:
+            try:
+                self.neograph.schema.create_uniqueness_constraint(label, 'url')
+            except:
+                pass
+
 
 Graph._context_class = Graph
