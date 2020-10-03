@@ -81,6 +81,7 @@ class Data:
                     filetype(file)
                     if not tx.finished():
                         self.graph.commit()
+            self.graph.execute_cleanup()
 
     def traversal_path(self, start, end):
         if nx.has_path(self.relation_graph, end, start):

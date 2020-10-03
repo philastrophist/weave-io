@@ -122,6 +122,7 @@ class HeaderFibinfoFile(File):
 
         graph = Graph.get_context()
         fibinfo = self._read_fibtable().to_pandas()
+        fibinfo['TARGSRVY'] = fibinfo['TARGSRVY'].str.replace(' ', '')
         table = graph.add_table(fibinfo, split=[('targsrvy', ',')])
         fibres = Fibre(fibreid=table['fibreid'])
         surveys = Survey(surveyname=table['targsrvy'])

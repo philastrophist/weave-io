@@ -1,13 +1,10 @@
 from typing import Dict, Any, Union, List, Type
 
-from weaveio.hierarchy import Hierarchy
 from weaveio.file import File
 
 
-
-
-def parse_apoc_tree(root_hierarchy: Type[Hierarchy], root_id: Any, tree: Dict[str, Any],
-                    data) -> Union[Hierarchy, List[Hierarchy]]:
+def parse_apoc_tree(root_hierarchy: Type['Hierarchy'], root_id: Any, tree: Dict[str, Any],
+                    data) -> Union['Hierarchy', List['Hierarchy']]:
     hierarchies = data.class_hierarchies
     subclassed = {k.__name__: len(k.__subclasses__()) for k in hierarchies.values()}
     inputs = {}

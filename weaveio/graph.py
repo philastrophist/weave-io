@@ -7,6 +7,7 @@ from typing import Optional, Type, TypeVar, List, Union, Any, Dict
 
 from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
 
+from weaveio.neo4jqueries import split_node_names
 from weaveio.utilities import quote, Varname, hash_pandas_dataframe
 import pandas as pd
 import numpy as np
@@ -220,13 +221,13 @@ class Graph(metaclass=ContextMeta):
 
     def __init__(self, profile=None, name=None, **settings):
         self.neograph = NeoGraph(profile, name, **settings)
+        self.split_contexts = {}
 
     def begin(self, **kwargs):
         self.tx = self.neograph.begin(**kwargs)
         self.uses_table = False
         self.simples = []
         self.simples_index = defaultdict(list)
-        self.split_contexts = []
         self.unwinds = []
         self.data = {}
         self.counter = defaultdict(int)
@@ -239,8 +240,8 @@ class Graph(metaclass=ContextMeta):
     def string_labels(self, labels):
         return ':'.join(labels)
 
-    def add_split_context(self, inname, delimiter):
-        self.split_contexts.append([inname, delimiter])
+    def add_split_context(self, label, property, delimiter, *other_properties_to_set):
+        self.split_contexts[(label, property, delimiter)] = split_node_names(label, property, delimiter, *other_properties_to_set)
 
     def add_node(self, *labels, **properties):
         table_properties_list = properties.pop('tables', [])
@@ -255,6 +256,13 @@ class Graph(metaclass=ContextMeta):
         labels = self.string_labels(labels)
         self.simples.append(f'MERGE ({key}:{labels} {{{data}}})')
         self.simples_index[key].append(len(self.simples))
+        properties.pop('id')
+        for k, v in properties.items():
+            if isinstance(v, Unwind):
+                if v.splits is not None:
+                    for splitvar, splitdelimiter in v.splits:
+                        if splitvar in v.columns:
+                            self.add_split_context(labels, 'id', splitdelimiter, k)
         return key
 
     def add_relationship(self, a, b, *labels, **properties):
@@ -270,17 +278,21 @@ class Graph(metaclass=ContextMeta):
         table.columns = [c.lower() for c in table.columns]
         table['_input_index'] = table.index.values
         self.unwinds.append(f"UNWIND ${name}s as {name}")
-        if split is not None:
-            for s in split:
-                table[s[0]] = table[s[0]].str.split(s[1])
-                self.unwinds.append(f"UNWIND {name}.{s[0]} as {name}_{s[0]}")
         self.data[name+'s'] = [row.to_dict() for _, row in table.iterrows()]
-        return Unwind(table, name, splits=[s[0] for s in split])
+        return Unwind(table, name, splits=split)
 
     def make_statement(self):
         unwinds = '\n'.join(self.unwinds)
         simples = '\n'.join(self.simples)
         return f'{unwinds}\n{simples}'
+
+    def print_profiler(self):
+        statement = self.make_statement()
+        from py2neo.client.packstream import PackStreamHydrant
+        hydrant = PackStreamHydrant(self.neograph)
+        r = hydrant.dehydrate(self.data)
+        r = str(r).replace("':", ":").replace(", '", ", ").replace("{'", "{")
+        return f':params {r}' + '\nPROFILE\n' + statement
 
     def evaluate_statement(self):
         statement = self.make_statement()
@@ -290,6 +302,15 @@ class Graph(metaclass=ContextMeta):
         if len(self.simples) or len(self.data):
             self.evaluate_statement()
         return self.tx.commit()
+
+    def clean_up_statement(self):
+        splits = 'WITH *\n'.join(self.split_contexts.values())
+        return splits
+
+    def execute_cleanup(self):
+        statement = self.clean_up_statement()
+        tx = self.neograph.auto()
+        tx.evaluate(statement)
 
     def make_unique_constraint(self):
         for label in labels:
