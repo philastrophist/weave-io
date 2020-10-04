@@ -43,6 +43,15 @@ l1file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightblue, 'shap
 l2file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightgreen, 'shape': 'box', 'edgecolor': lightgreen}
 rawfile_attrs = l1file_attrs
 
+FORBIDDEN_LABELS = []
+FORBIDDEN_PROPERTY_NAMES = []
+FORBIDDEN_LABEL_PREFIXES = ['_']
+FORBIDDEN_PROPERTY_PREFIXES = ['_']
+
+
+class RuleBreakingException(Exception):
+    pass
+
 
 class Multiple:
     def __init__(self, node, minnumber=1, maxnumber=None):
@@ -65,18 +74,27 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
-class PluralityMeta(type):
-    def __new__(meta, name, bases, dct):
+class GraphableMeta(type):
+    def __new__(meta, name: str, bases, dct):
         if dct.get('plural_name', None) is None:
             dct['plural_name'] = name.lower() + 's'
         dct['singular_name'] = name.lower()
         dct['plural_name'] = dct['plural_name'].lower()
         dct['singular_name'] = dct['singular_name'].lower()
-        r = super(PluralityMeta, meta).__new__(meta, name, bases, dct)
+        if name[0] != name.capitalize()[0] or '_' in name:
+            raise RuleBreakingException(f"{name} must have `CamelCaseName` style name")
+        for factor in dct.get('factors', []) + ['idname'] + [dct['singular_name'], dct['plural_name']]:
+            if factor != factor.lower():
+                raise RuleBreakingException(f"{name}.{factor} must have `lower_snake_case` style name")
+            if factor in FORBIDDEN_PROPERTY_NAMES:
+                raise RuleBreakingException(f"The name {factor} is not allowed for class {name}")
+            if any(factor.startswith(p) for p in FORBIDDEN_PROPERTY_PREFIXES):
+                raise RuleBreakingException(f"The name {factor} may not start with any of {FORBIDDEN_PROPERTY_PREFIXES} for {name}")
+        r = super(GraphableMeta, meta).__new__(meta, name, bases, dct)
         return r
 
 
-class Graphable(metaclass=PluralityMeta):
+class Graphable(metaclass=GraphableMeta):
     idname = None
     name = None
     identifier = None
@@ -86,6 +104,7 @@ class Graphable(metaclass=PluralityMeta):
     singular_name = None
     parents = []
     uses_tables = False
+    factors = []
 
     def add_parent_data(self, data):
         self.data = data
@@ -274,7 +293,7 @@ class ArmConfig(Hierarchy):
 
 
 class ObsTemp(Hierarchy):
-    factors = ['MaxSeeing', 'MinTrans', 'MinElev', 'MinMoon', 'MaxSky']
+    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
     idname = 'obstemp_code'
 
     @classmethod
@@ -298,7 +317,10 @@ class WeaveInputCatalogue(Hierarchy):
 
 class Target(Hierarchy):
     idname = 'cname'
-    factors = ['targid']
+    factors = ['targid', 'targname', 'targid', 'targra', 'targdec', 'targepoch', 'targcat',
+               'targpmra', 'targpmdec', 'targparal', 'targuse', 'targprog',  'targprog',
+               'targprio', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg',
+               'emag_gg', 'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp', 'fpvignet', 'simvel']
     parents = [Multiple(Survey)]
 
 
@@ -307,7 +329,7 @@ class Fibre(Hierarchy):
 
 
 class FibreAssignment(Hierarchy):
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition']
+    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition', 'orientat', 'retries',]
     parents = [Fibre, Target]
     identifier_builder = ['fibre', 'target', 'xposition', 'yposition']
 
@@ -318,7 +340,7 @@ class FibreSet(Hierarchy):
 
 
 class ProgTemp(Hierarchy):
-    factors = ['Mode', 'Binning']
+    factors = ['mode', 'binning']
     parents = [Multiple(ArmConfig, 2, 2)]
     idname = 'progtemp_code'
 
@@ -334,24 +356,24 @@ class ProgTemp(Hierarchy):
 
 class OBSpec(Hierarchy):
     idname = 'catname'
-    factors = ['OBTitle']
+    factors = ['obtitle']
     parents = [ObsTemp, FibreSet, ProgTemp]
 
 
 class OBRealisation(Hierarchy):
     idname = 'obid'
-    factors = ['OBStartMJD']
+    factors = ['obstartmjd']
     parents = [OBSpec]
 
 
 class Exposure(Hierarchy):
     parents = [OBRealisation]
-    factors = ['ExpMJD']
+    factors = ['expmjd']
     identifier_builder = ['expmjd']
 
 
 class Run(Hierarchy):
     idname = 'runid'
     parents = [Exposure]
-    factors = ['Camera']
-    indexers = ['Camera']
+    factors = ['camera']
+    indexers = ['camera']
