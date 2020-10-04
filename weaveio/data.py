@@ -71,16 +71,29 @@ class Data:
             except AttributeError:
                 pass
 
+    def make_constraints(self):
+        for hierarchy in self.hierarchies:
+            self.graph.create_unique_constraint(hierarchy.__name__, 'id')
+
+    def drop_constraints(self):
+        for hierarchy in self.hierarchies:
+            self.graph.drop_unique_constraint(hierarchy.__name__, 'id')
+
     def directory_to_neo4j(self):
         for filetype in self.filetypes:
             self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
+            self.make_constraints()
             for filetype, files in self.filelists.items():
                 for file in tqdm(files, desc=filetype.__name__):
                     tx = self.graph.begin()
                     filetype(file)
                     if not tx.finished():
-                        self.graph.commit()
+                        try:
+                            self.graph.commit()
+                        except py2neo.database.work.ClientError as e:
+                            logging.exception(self.graph.make_statement(), exc_info=True)
+                            raise e
             self.graph.execute_cleanup()
 
     def traversal_path(self, start, end):

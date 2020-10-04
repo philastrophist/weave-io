@@ -5,6 +5,7 @@ from collections import defaultdict
 from sys import modules
 from typing import Optional, Type, TypeVar, List, Union, Any, Dict
 
+import py2neo
 from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
 
 from weaveio.neo4jqueries import split_node_names
@@ -155,7 +156,7 @@ class TransactionWrapper:
 
 
 class Unwind:
-    def __init__(self, data, name, columns=None, _renames=None, single=False, splits=None):
+    def __init__(self, data:pd.DataFrame, name, columns=None, _renames=None, single=False, splits=None):
         data.columns = [c.lower() for c in data.columns]
         self.data = data
         self.name = name
@@ -171,13 +172,6 @@ class Unwind:
         renames = self._renames.copy()
         renames.update(names)
         return Unwind(self.data, self.name, self.columns, renames, self.splits)
-
-    # def to_dict(self):
-    #     columns = {c.lower(): c for c in self.columns}
-    #     for a, b in self._renames.items():
-    #         columns[b.lower()] = columns[a.lower()]
-    #         del columns[a.lower()]
-    #     return {varname: Varname(f'{self.name}.{colname}') for varname, colname in columns.items()}
 
     def __getitem__(self, item):
         if self.single:
@@ -205,7 +199,7 @@ class Unwind:
         return '+'.join(self.list())
 
     def hash(self):
-        return hash_pandas_dataframe(self.data)
+        return hash_pandas_dataframe(self.data.sort_index())
 
 
 
@@ -272,13 +266,15 @@ class Graph(metaclass=ContextMeta):
         self.simples_index[a].append(len(self.simples))
         self.simples_index[b].append(len(self.simples))
 
-    def add_table(self, table: pd.DataFrame, split=None):
+    def add_table(self, table: pd.DataFrame, index, split=None):
         self.uses_table = True
         name = 'table'
         table.columns = [c.lower() for c in table.columns]
         table['_input_index'] = table.index.values
+        table.set_index(index, drop=False, inplace=True)
         self.unwinds.append(f"UNWIND ${name}s as {name}")
-        self.data[name+'s'] = [row.to_dict() for _, row in table.iterrows()]
+        safe_df = table.where(pd.notnull(table), 'NaN')
+        self.data[name+'s'] = [row.to_dict() for _, row in safe_df.iterrows()]
         return Unwind(table, name, splits=split)
 
     def make_statement(self):
@@ -312,12 +308,17 @@ class Graph(metaclass=ContextMeta):
         tx = self.neograph.auto()
         tx.evaluate(statement)
 
-    def make_unique_constraint(self):
-        for label in labels:
-            try:
-                self.neograph.schema.create_uniqueness_constraint(label, 'url')
-            except:
-                pass
+    def create_unique_constraint(self, label, key):
+        try:
+            self.neograph.schema.create_uniqueness_constraint(label, key)
+        except py2neo.database.work.ClientError:
+            pass
+
+    def drop_unique_constraint(self, label, key):
+        try:
+            self.neograph.schema.drop_uniqueness_constraint(label, key)
+        except py2neo.database.work.DatabaseError:
+            pass
 
 
 Graph._context_class = Graph

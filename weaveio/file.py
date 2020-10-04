@@ -1,3 +1,4 @@
+from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 from typing import Union, Tuple
@@ -123,13 +124,13 @@ class HeaderFibinfoFile(File):
         graph = Graph.get_context()
         fibinfo = self._read_fibtable().to_pandas()
         fibinfo['TARGSRVY'] = fibinfo['TARGSRVY'].str.replace(' ', '')
-        table = graph.add_table(fibinfo, split=[('targsrvy', ',')])
+        table = graph.add_table(fibinfo, index='fibreid', split=[('targsrvy', ',')])
         fibres = Fibre(fibreid=table['fibreid'])
         surveys = Survey(surveyname=table['targsrvy'])
         targets = Target(cname=table['cname'], tables=table, surveys=surveys)
         fibreassignments = FibreAssignment(target=targets, fibre=fibres, tables=table)
-        fibreset = FibreSet(fibreassignments=fibreassignments, id=table.hash())
-
+        # hashid = table[Target.factors + Fibre.factors + [Target.idname, Fibre.idname]].hash()
+        fibreset = FibreSet(fibreassignments=fibreassignments, id=catname+'-fibres')
         obspec = OBSpec(catname=catname, fibreset=fibreset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
         obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
