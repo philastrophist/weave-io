@@ -267,7 +267,7 @@ class BasicQuery:
         if property is not None:
             if branch:
                 raise ValueError(f"May not return branches if returning a property value")
-            returns = f"\nRETURN DISTINCT {self.current_varname}.{property}\nORDER BY {self.current_varname}.id, {{}}"
+            returns = f"\nRETURN DISTINCT {self.current_varname}.{property}, {{}}, {{}}\nORDER BY {self.current_varname}.id"
         else:
             if branch:
                 returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
@@ -275,12 +275,13 @@ class BasicQuery:
                                      f"OPTIONAL MATCH p2=({self.current_varname})-[*]->(n2)",
                                      f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
                                      f"CALL apoc.convert.toTree(p1s+p2s) yield value",
-                                     f"RETURN {self.current_varname} as {self.current_label}, value as branch",
+                                     f"RETURN {self.current_varname} as {self.current_label}, value as branch, indexer",
                                      f"ORDER BY {self.current_varname}.id"])
                 returns = r'//Add Hierarchy Branch'+'\n' + returns
             else:
-                returns = f"\nRETURN DISTINCT {self.current_varname}\nORDER BY {self.current_varname}.id, {{}}"
-        return f"{match}\n{returns}"
+                returns = f"\nRETURN DISTINCT {self.current_varname}, {{}}, indexer \nORDER BY {self.current_varname}.id"
+        indexers = f"\nOPTIONAL MATCH ({self.current_varname})<-[:INDEXES]-(indexer)"
+        return f"{match}\n{indexers}\n{returns}"
 
     def index_by_address(self, address):
         if self.current_varname is None:
@@ -291,8 +292,8 @@ class BasicQuery:
         for k, v in address.items():
             k = k.lower()
             count = self.counter[k]
-            path_match = f"OPTIONAL MATCH ({k}{count} {{{k}: {quote(v)}}})-[*]->({name})"
-            possible_index_match = f"OPTIONAL MATCH ({name})<-[:indexes]-({k}{count+1} {{{k}: {quote(v)}}})"
+            path_match = f"OPTIONAL MATCH ({k}{count} {{{k}: {quote(v)}}})-[:IS_REQUIRED_BY*]->({name})"
+            possible_index_match = f"OPTIONAL MATCH ({name})<-[:INDEXES]-({k}{count+1} {{{k}: {quote(v)}}})"
             with_segment = f"WITH {k}{count}, {k}{count+1}, {name}"
             where = f"WHERE ({k}{count}={k}{count+1} OR {k}{count+1} IS NULL) OR ({name}.{k}={quote(v)})"
             block = [path_match, possible_index_match, with_segment, where]
@@ -406,7 +407,7 @@ class HeterogeneousHierarchy(Indexable):
 
 
 class Executable(Indexable):
-    return_branch = True
+    return_branch = False
 
     def __init__(self, data, query, nodetype):
         assert issubclass(nodetype, Graphable)
@@ -420,10 +421,32 @@ class Executable(Indexable):
         logging.info(f"Query completed in {durations[0]} secs ({durations[1]}) of which were process time")
         return self._process_result(result)
 
+
+    def _process_result_row(self, row, nodetype):
+        node, branch, indexer = row
+        inputs = {}
+        for f in nodetype.factors:
+            inputs[f] = node[f]
+        inputs[nodetype.idname] = node[nodetype.idname]
+        try:
+            base_query = self[node['id']]
+        except TypeError:
+            base_query = getattr(self, nodetype.plural_name)[node['id']]
+        for p in nodetype.parents:
+            if p.singular_name == nodetype.indexer:
+                inputs[p.singular_name] = self._process_result_row([indexer, {}, {}], p)
+            elif isinstance(p, Multiple):
+                inputs[p.plural_name] = getattr(base_query, p.plural_name)
+            else:
+                inputs[p.singular_name] = getattr(base_query, p.singular_name)
+        h = nodetype(**inputs)
+        h.add_parent_query(base_query)
+        return h
+
     def _process_result(self, result):
         results = []
         for row in result:
-            h = parse_apoc_tree(self.nodetype, row[0]['id'], row[1], self.data)
+            h = self._process_result_row(row, self.nodetype)
             results.append(h)
         return results
 

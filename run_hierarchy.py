@@ -17,7 +17,16 @@ data = OurData('data/', port=11007)
 # print('validating...')
 # data.validate()
 
-query = data[Address(camera='red', mode='MOS')].runs['1002793'].obrealisation
+query = data[Address(camera='red', mode='MOS')].runs['1002793'].obrealisation.exposures
+exposures = query()
+print(exposures)
+exposure = exposures[0]
+print(exposure)
+print(exposure.runs())
+print(exposure.obrealisation())
+print(exposure.obrealisation.expmjds())
+
+
 # print(f"Runid={run.runid}, exposure-mjd={run.expmjd}")
 #
 # print("|Get the l1single file from that run")

@@ -81,6 +81,8 @@ class GraphableMeta(type):
         dct['singular_name'] = name.lower()
         dct['plural_name'] = dct['plural_name'].lower()
         dct['singular_name'] = dct['singular_name'].lower()
+        if not isinstance(dct.get('idname', ''), str):
+            raise RuleBreakingException(f"{name}.idname must be a string")
         if name[0] != name.capitalize()[0] or '_' in name:
             raise RuleBreakingException(f"{name} must have `CamelCaseName` style name")
         for factor in dct.get('factors', []) + ['idname'] + [dct['singular_name'], dct['plural_name']]:
@@ -95,10 +97,10 @@ class GraphableMeta(type):
 
 
 class Graphable(metaclass=GraphableMeta):
-    idname = None
+    idname = 'id'
     name = None
     identifier = None
-    indexers = []
+    indexer = None
     type_graph_attrs = {}
     plural_name = None
     singular_name = None
@@ -106,48 +108,33 @@ class Graphable(metaclass=GraphableMeta):
     uses_tables = False
     factors = []
     data = None
+    query = None
+
+    @classmethod
+    def requirement_names(cls):
+        l = []
+        for p in cls.parents:
+            if isinstance(p, type):
+                if issubclass(p, Graphable):
+                    l.append(p.singular_name)
+            else:
+                if isinstance(p, Multiple):
+                    l.append(p.plural_name)
+                else:
+                    raise RuleBreakingException(f"The parent list of a Hierarchy must contain "
+                                                f"only other Hierarchies or Multiple(Hierarchy)")
+        return l
 
     def add_parent_data(self, data):
         self.data = data
 
+    def add_parent_query(self, query):
+        self.query = query
+
     def __getattr__(self, item):
-        if self.data is not None:
-            if self.data.is_plural_idname(item):
-                is_plural = True
-                name = self.data.singular_idnames[item[:-1]].singular_name
-                final = [item[:-1]]
-            elif self.data.is_singular_idname(item):
-                is_plural = False
-                name = self.data.singular_idnames[item].singular_name
-                final = [item]
-            elif self.data.is_plural_name(item):
-                is_plural = True
-                name = self.data.singular_name(item)
-                final = []
-            elif self.data.is_singular_name(item):
-                is_plural = False
-                name = item
-                final = []
-            else:
-                raise AttributeError(f"{self} has no attribute {item}")
-            should_be_plural, _ = self.data.node_implies_plurality_of(self.singular_name, name)
-            plural_name = self.data.plural_name(name)
-            if should_be_plural and not is_plural:
-                raise AttributeError(f"{self} has no attribute '{item}' but it does have the plural '{plural_name}'")
-            elif not should_be_plural and is_plural:
-                raise AttributeError(f"{self} has no plural attribute '{item}' but it does have the singular '{name}'")
-            path = self.data.traversal_path(self.singular_name, name) + final
-            current = self
-            try:
-                for attribute in path:
-                    if isinstance(current, (list, tuple)):
-                        current = [getattr(c, attribute) for c in current]
-                    else:
-                        current = getattr(current, attribute)
-                return current
-            except AttributeError as e:
-                raise AttributeError(f"{item} cannot be found in {self} or its parent structure.") from e
-        raise AttributeError(f"Data not added to {self}, cannot search for {self}.{item}")
+        if self.query is not None:
+            return getattr(self.query, item)
+        raise AttributeError(f"Query not added to {self}, cannot search for {self}.{item}")
 
     @property
     def neotypes(self):
@@ -174,7 +161,9 @@ class Graphable(metaclass=GraphableMeta):
             graph = Graph.get_context()  # type: Graph
             self.node = graph.add_node(*self.neotypes, **self.neoproperties)
             for k, node_list in predecessors.items():
-                if k in [i.lower() for i in self.indexers]:
+                if self.indexer is None:
+                    type = 'is_required_by'
+                if k in self.indexer.lower():
                     type = 'indexes'
                 else:
                     type = 'is_required_by'
@@ -188,11 +177,10 @@ class Graphable(metaclass=GraphableMeta):
 
 
 class Hierarchy(Graphable):
-    idname = None
     identifier_builder = []
     parents = []
     factors = []
-    indexers = []
+    indexer = None
     type_graph_attrs = hierarchy_attrs
 
     def __repr__(self):
@@ -240,10 +228,13 @@ class Hierarchy(Graphable):
         return specification, factors
 
     def __init__(self, tables=None, **kwargs):
+        self.uses_tables = False
         if tables is None:
             for value in kwargs.values():
-                if getattr(value, 'uses_tables', False) or isinstance(value, Unwind):
+                if isinstance(value, Unwind):
                     self.uses_tables = True
+                elif isinstance(value, Hierarchy):
+                    self.uses_tables = value.uses_tables
         else:
             self.uses_tables = True
         if self.idname not in kwargs:
@@ -275,8 +266,6 @@ class Hierarchy(Graphable):
         self.predecessors = predecessors
         if self.identifier is None:
             self.identifier = self.generate_identifier()
-        if self.idname is None:
-            self.idname = 'id'
         setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
@@ -397,4 +386,4 @@ class Exposure(Hierarchy):
 class Run(Hierarchy):
     idname = 'runid'
     parents = [ArmConfig, Exposure]
-    indexers = ['armconfig']
+    indexer = 'armconfig'

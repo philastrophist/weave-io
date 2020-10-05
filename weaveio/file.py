@@ -23,6 +23,9 @@ class File(Graphable):
     type_graph_attrs = l1file_attrs
     concatenation_constant_names = {}
 
+    def __repr__(self):
+        return f'<{self.singular_name}(fname={self.fname})>'
+
     def __init__(self, fname: Union[Path, str], **kwargs):
         self.index = None
         self.fname = Path(fname)
@@ -31,12 +34,12 @@ class File(Graphable):
         if len(kwargs):
             for k, v in kwargs.items():
                 setattr(self, k, v)
-            predecessors, factors = kwargs
+            predecessors = kwargs
         else:
             predecessors, factors = self.read()
         self.predecessors = {}
         fs = {f: '...' for f in self.factors}
-        exception = TypeError(f"{self}.read() must return [{self.parents}], {fs}")
+        exception = TypeError(f"{self}.read() must return dict of {self.parents}, {fs}")
         for p in self.parents:
             if isinstance(p, Multiple):
                 thing = predecessors[p.plural_name]
@@ -47,8 +50,6 @@ class File(Graphable):
                 self.predecessors[p.plural_name] = thing
             else:
                 thing = predecessors[p.singular_name]
-                if not isinstance(thing, p):
-                    raise exception
                 if isinstance(thing, Unwind):
                     self.predecessors[p.plural_name] = thing
                 else:
@@ -208,7 +209,7 @@ class L1Single(HeaderFibinfoFile):
 class L1Stack(HeaderFibinfoFile):
     parents = [OBRealisation, ArmConfig]
     constructed_from = [L1Single]
-    indexers = ['armconfig']
+    indexer = 'armconfig'
 
     @classmethod
     def match(cls, directory):
@@ -217,7 +218,7 @@ class L1Stack(HeaderFibinfoFile):
 
 class L1SuperStack(File):
     parents = [OBSpec, ArmConfig]
-    indexers = ['armconfig']
+    indexer = 'armconfig'
     constructed_from = [L1Single]
 
     @classmethod
@@ -228,7 +229,7 @@ class L1SuperStack(File):
 class L1SuperTarget(File):
     parents = [ArmConfig, WeaveTarget]
     factors = ['binning', 'mode']
-    indexers = ['armconfig']
+    indexers = 'armconfig'
     constructed_from = [L1Single]
 
     @classmethod
