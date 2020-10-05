@@ -255,8 +255,10 @@ class Hierarchy(Graphable):
             value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
-                if not getattr(value, 'uses_tables', False) and not isinstance(value, (tuple, list)):
-                    raise TypeError(f"{name} expects multiple elements")
+                if not isinstance(value, (tuple, list)):
+                    if isinstance(value, Graphable):
+                        if not getattr(value, 'uses_tables', False):
+                            raise TypeError(f"{name} expects multiple elements")
             else:
                 value = [value]
             if name not in factors:

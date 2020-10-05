@@ -254,7 +254,7 @@ class BasicQuery:
     def spawn(self, blocks, current_varname, current_label) -> 'BasicQuery':
         return BasicQuery(blocks, current_varname, current_label, self.counter)
 
-    def make(self, branch=False, property=None) -> str:
+    def make(self, branch=False, property=None, exclusive=True) -> str:
         """
         Return Cypher query which will return json records with entries of HierarchyName and branch
         `HierarchyName` - The nodes to be realised
@@ -264,10 +264,12 @@ class BasicQuery:
             match = '\n\n'.join(['\n'.join(blocks) for blocks in self.blocks])
         else:
             raise ValueError(f"Cannot build a query with no MATCH statements")
-        if property is not None:
+        if property is not None and exclusive:
             if branch:
                 raise ValueError(f"May not return branches if returning a property value")
             returns = f"\nRETURN DISTINCT {self.current_varname}.{property}, {{}}, {{}}\nORDER BY {self.current_varname}.id"
+        elif property is not None and not exclusive:
+            raise NotImplementedError
         else:
             if branch:
                 returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
@@ -356,12 +358,12 @@ class Indexable:
 
     def index_by_single_factor(self, factor_name, direction):
         factor = self.data.singular_factors[factor_name]
-        query = self.query.index_by_hierarchy_name(factor, direction)
+        query = self.query.index_by_factor_name(factor, direction)
         return SingleFactor(self.data, query, Factor)
 
     def index_by_plural_factor(self, factor_name, direction):
         factor = self.data.plural_factors[factor_name]
-        query = self.query.index_by_hierarchy_name(factor, direction)
+        query = self.query.index_by_factor_name(factor, direction)
         return HomogeneousFactor(self.data, query, Factor)
 
     def index_by_address(self, address):

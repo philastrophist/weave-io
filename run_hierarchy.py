@@ -17,14 +17,15 @@ data = OurData('data/', port=11007)
 # print('validating...')
 # data.validate()
 
-query = data[Address(camera='red', mode='MOS')].runs['1002793'].obrealisation.exposures
+query = data[Address(camera='red', mode='MOS')].runs['1002793'].obrealisation
+print(data.node_implies_plurality_of('run', 'obrealisation'))
 exposures = query()
-print(exposures)
-exposure = exposures[0]
-print(exposure)
-print(exposure.runs())
-print(exposure.obrealisation())
-print(exposure.obrealisation.expmjds())
+print(exposures.obid)
+# exposure = exposures[0]
+# print(exposure)
+# print(exposure.runs())
+# print(exposure.obrealisation())
+# print(exposure.instrumentconfiguration())
 
 
 # print(f"Runid={run.runid}, exposure-mjd={run.expmjd}")
