@@ -2,6 +2,7 @@
 
 import threading
 from collections import defaultdict
+from contextlib import contextmanager
 from sys import modules
 from typing import Optional, Type, TypeVar, List, Union, Any, Dict
 
@@ -202,6 +203,12 @@ class Unwind:
         return hash_pandas_dataframe(self.data.sort_index())
 
 
+@contextmanager
+def unwind_context(graph: 'Graph', unwind: Unwind):
+    graph.unwind_context = unwind.name
+    yield unwind
+    graph.unwind_context = None
+
 
 class Graph(metaclass=ContextMeta):
     def __new__(cls, *args, **kwargs):
@@ -222,6 +229,7 @@ class Graph(metaclass=ContextMeta):
         self.uses_table = False
         self.simples = []
         self.simples_index = defaultdict(list)
+        self.unwind_context = None
         self.unwinds = []
         self.data = {}
         self.counter = defaultdict(int)
@@ -260,6 +268,8 @@ class Graph(metaclass=ContextMeta):
         return key
 
     def add_relationship(self, a, b, *labels, **properties):
+        if properties['order'] is None:
+            properties['order'] = Varname(f"{self.unwind_context}._input_index")
         data = self.string_properties(properties)
         labels = self.string_labels([l.upper() for l in labels])
         self.simples.append(f'MERGE ({a})-[:{labels} {{{data}}}]->({b})')
@@ -275,7 +285,7 @@ class Graph(metaclass=ContextMeta):
         self.unwinds.append(f"UNWIND ${name}s as {name}")
         safe_df = table.where(pd.notnull(table), 'NaN')
         self.data[name+'s'] = [row.to_dict() for _, row in safe_df.iterrows()]
-        return Unwind(table, name, splits=split)
+        return unwind_context(self, Unwind(table, name, splits=split))
 
     def make_statement(self):
         unwinds = '\n'.join(self.unwinds)

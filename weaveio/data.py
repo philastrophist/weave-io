@@ -6,18 +6,66 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Union, List
 import pandas as pd
+import re
 
 import networkx as nx
 import py2neo
 from tqdm import tqdm
 
 from weaveio.address import Address
-from weaveio.graph import Graph
+from weaveio.graph import Graph, Unwind
 from weaveio.hierarchy import Multiple, Graphable
 from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
 from weaveio.neo4j import parse_apoc_tree
+from weaveio.neo4jqueries import number_of_relationships
 from weaveio.product import get_product
 from weaveio.utilities import quote
+
+CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
+                                r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
+
+def process_neo4j_error(data: 'Data', file: File, msg):
+    matches = CONSTRAINT_FAILURE.findall(msg)
+    if not len(matches):
+        return  # cannot help
+    label, idname, idvalue = matches[0]
+    # get the node properties that already exist
+    extant = data.graph.neograph.evaluate(f'MATCH (n:{label} {{{idname}: {idvalue}}}) RETURN properties(n)')
+    fname = data.graph.neograph.evaluate(f'MATCH (n:{label} {{{idname}: {idvalue}}})-[*]->(f:File) return f.fname limit 1')
+    idvalue = idvalue.strip("'").strip('"')
+    file.data = data
+    obj = [i for i in data.hierarchies if i.__name__ == label][0]
+    instance_list = getattr(file, obj.plural_name)
+    new = {}
+    if not isinstance(instance_list, (list, tuple)):  # has an unwind table object
+        new_idvalue = instance_list.identifier
+        if isinstance(new_idvalue, Unwind):
+            # find the index in the table and get the properties
+            filt = (new_idvalue.data == idvalue).iloc[:, 0]
+            for k in extant.keys():
+                if k == 'id':
+                    k = idname
+                value = getattr(instance_list, k, None)
+                if isinstance(value, Unwind):
+                    table = value.data.where(pd.notnull(value.data), 'NaN')
+                    new[k] = str(table[k][filt].values[0])
+                else:
+                    new[k] = str(value)
+        else:
+            # if the identifier of this object is not looping through a table, we cant proceed
+            return
+    else:  # is a list of non-table things
+        found = [i for i in instance_list if i.identifier == idvalue][0]
+        for k in extant.keys():
+            value = getattr(found, k, None)
+            new[k] = value
+    comparison = pd.concat([pd.Series(extant, name='extant'), pd.Series(new, name='to_add')], axis=1)
+    filt = comparison.extant != comparison.to_add
+    filt &= ~comparison.isnull().all(axis=1)
+    where_different = comparison[filt]
+    logging.exception(f"The node (:{label} {{{idname}: {idvalue}}}) tried to be created twice with different properties.")
+    logging.exception(f"{where_different}")
+    logging.exception(f"filenames: {fname}, {file.fname}")
 
 
 class Data:
@@ -79,22 +127,63 @@ class Data:
         for hierarchy in self.hierarchies:
             self.graph.drop_unique_constraint(hierarchy.__name__, 'id')
 
-    def directory_to_neo4j(self):
+    def directory_to_neo4j(self, *filetype_names):
         for filetype in self.filetypes:
             self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
             self.make_constraints()
             for filetype, files in self.filelists.items():
+                if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
+                    continue
                 for file in tqdm(files, desc=filetype.__name__):
                     tx = self.graph.begin()
-                    filetype(file)
+                    f = filetype(file)
                     if not tx.finished():
                         try:
                             self.graph.commit()
                         except py2neo.database.work.ClientError as e:
+                            process_neo4j_error(self, f, e.message)
                             logging.exception(self.graph.make_statement(), exc_info=True)
                             raise e
+            logging.info('Cleaning up...')
             self.graph.execute_cleanup()
+
+    def validate(self, *hierarchy_names):
+        bads = []
+        if len(hierarchy_names) == 0:
+            hierarchies = self.hierarchies
+        else:
+            hierarchies = [h for h in self.hierarchies if h.__name__ in hierarchy_names]
+        print(f'scanning {len(hierarchies)} hierarchies')
+        for hierarchy in tqdm(hierarchies):
+            for parent in hierarchy.parents:
+                if isinstance(parent, Multiple):
+                    lower, upper = parent.minnumber or 0, parent.maxnumber or np.inf
+                    parent_name = parent.node.__name__
+                else:
+                    lower, upper = 1, 1
+                    parent_name = parent.__name__
+                child_name = hierarchy.__name__
+                query = f"MATCH (parent: {parent_name}) MATCH (parent)-->(child: {child_name}) " \
+                        f"RETURN parent.id, child.id, '{child_name}' as child_label, '{parent_name}' as parent_label"
+                result = self.graph.neograph.run(query)
+                df = result.to_data_frame()
+                if len(df) == 0 and lower > 0:
+                    bad = pd.DataFrame({'child_label': child_name, 'child.id': np.nan,
+                                       'nrelationships': 0, 'parent_label': parent_name,
+                                       'expected': f'[{lower}, {upper}]'}, index=[0])
+                    bads.append(bad)
+                elif len(df):
+                    grouped = df.groupby(['child_label', 'child.id']).apply(len)
+                    grouped.name = 'nrelationships'
+                    bad = pd.DataFrame(grouped[(grouped < lower) | (grouped > upper)]).reset_index()
+                    bad['parent_name'] = parent_name
+                    bad['expected'] = f'[{lower}, {upper}]'
+                    bads.append(bad)
+        if len(bads):
+            bads = pd.concat(bads)
+            print(bads)
+        print(f"There are {len(bads)} potential violations of expected relationship number")
 
     def traversal_path(self, start, end):
         if nx.has_path(self.relation_graph, end, start):
@@ -202,10 +291,10 @@ class BasicQuery:
         for k, v in address.items():
             k = k.lower()
             count = self.counter[k]
-            path_match = f"MATCH ({k}{count}: {k} {{value: {quote(v)}}})-[*]->({name})"
-            possible_index_match = f"OPTIONAL MATCH ({name})<-[:indexes]-({k}{count+1}: {k})"
+            path_match = f"OPTIONAL MATCH ({k}{count} {{{k}: {quote(v)}}})-[*]->({name})"
+            possible_index_match = f"OPTIONAL MATCH ({name})<-[:indexes]-({k}{count+1} {{{k}: {quote(v)}}})"
             with_segment = f"WITH {k}{count}, {k}{count+1}, {name}"
-            where = f"WHERE {k}{count}={k}{count+1} OR {k}{count+1} IS NULL"
+            where = f"WHERE ({k}{count}={k}{count+1} OR {k}{count+1} IS NULL) OR ({name}.{k}={quote(v)})"
             block = [path_match, possible_index_match, with_segment, where]
             self.counter[k] += 2
             blocks.append(block)

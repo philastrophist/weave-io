@@ -1,5 +1,5 @@
 import inspect
-from typing import Tuple, Dict, Type
+from typing import Tuple, Dict, Type, Union, List
 
 import networkx as nx
 import xxhash
@@ -105,6 +105,7 @@ class Graphable(metaclass=GraphableMeta):
     parents = []
     uses_tables = False
     factors = []
+    data = None
 
     def add_parent_data(self, data):
         self.data = data
@@ -181,12 +182,7 @@ class Graphable(metaclass=GraphableMeta):
                     for inode, node in enumerate(node_list):
                         graph.add_relationship(node.node, self.node, type, order=inode)
                 else:
-                    order = None
-                    for v in node_list.neoproperties.values():
-                        if isinstance(v, Unwind):
-                            order = f"{v.name}._input_index"
-                    graph.add_relationship(node_list.node, self.node, type,
-                                           order=Varname(order))
+                    graph.add_relationship(node_list.node, self.node, type, order=None)
         except ContextError:
             pass
 
@@ -211,17 +207,24 @@ class Hierarchy(Graphable):
             return self.identifier
         elif len(self.identifier_builder):
             strings = []
+            identifiers = []
             for i in self.identifier_builder:
-                obj = getattr(self, i)
-                if isinstance(obj, Hierarchy):
-                    obj = obj.identifier
-                if isinstance(obj, Unwind):
-                    s = str(obj)
+                obj = getattr(self, i)  # type: Union[List[Union[Hierarchy, str]], Hierarchy, str]
+                if not isinstance(obj, (list, tuple)):
+                    obj = [obj]
+                for o in obj:
+                    if isinstance(o, Hierarchy):
+                        identifiers.append(o.identifier)
+                    else:
+                        identifiers.append(o)
+            for i in identifiers:
+                if isinstance(i, (Unwind, Varname)):
+                    s = str(i)
                     strings += ['+', s, '+']
                 else:
-                    s = str(obj)
-                    strings.append(f"'{s}'")
-            final =  ''.join(strings).strip('+').replace('++', '+').replace("''", "")
+                    s = str(i)
+                    strings.append(f"+'{s}'+")
+            final = ''.join(strings).strip('+').replace('++', '+').replace("''", "")
             return Varname(final)
         else:
             return None
@@ -280,9 +283,16 @@ class Hierarchy(Graphable):
 
 
 class ArmConfig(Hierarchy):
-    factors = ['resolution', 'vph', 'camera']
+    factors = ['resolution', 'vph', 'camera', 'colour']
     idname = 'armcode'
     identifier_builder = ['resolution', 'vph', 'camera']
+
+    def __init__(self, tables=None, **kwargs):
+        if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
+            kwargs['colour'] = 'green'
+        else:
+            kwargs['colour'] = kwargs['camera']
+        super().__init__(tables, **kwargs)
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -307,20 +317,9 @@ class Survey(Hierarchy):
     idname = 'surveyname'
 
 
-class Catalogue(Hierarchy):
-    pass
-
-
-class WeaveInputCatalogue(Hierarchy):
-    pass
-
-
-class Target(Hierarchy):
+class WeaveTarget(Hierarchy):
     idname = 'cname'
-    factors = ['targid', 'targname', 'targid', 'targra', 'targdec', 'targepoch', 'targcat',
-               'targpmra', 'targpmdec', 'targparal', 'targuse', 'targprog',  'targprog',
-               'targprio', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg',
-               'emag_gg', 'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp', 'fpvignet', 'simvel']
+    factors = []
     parents = [Multiple(Survey)]
 
 
@@ -329,19 +328,38 @@ class Fibre(Hierarchy):
 
 
 class FibreAssignment(Hierarchy):
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition', 'orientat', 'retries',]
-    parents = [Fibre, Target]
-    identifier_builder = ['fibre', 'target', 'xposition', 'yposition']
+    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition', 'orientat', 'retries']
+    parents = [Fibre, WeaveTarget]
+    identifier_builder = ['fibre', 'weavetarget', 'status', 'xposition', 'yposition']
+
+
+class OBSpecTarget(Hierarchy):
+    factors = ['obid', 'targid', 'targname', 'targra', 'targdec', 'targx', 'targy', 'targepoch', 'targcat',
+               'targpmra', 'targpmdec', 'targparal', 'targuse', 'targprog', 'targprio',
+               'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
+               'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
+    identifier_builder = ['obid', 'targid', 'targname', 'targprog', 'targuse', 'targx', 'targy']
+
+
+class FibreTarget(Hierarchy):
+    parents = [FibreAssignment, OBSpecTarget]
+    identifier_builder = ['fibreassignment', 'obspectarget']
 
 
 class FibreSet(Hierarchy):
-    parents = [Multiple(FibreAssignment)]
-    idname = 'id'
+    idname = 'obid'
+    parents = [Multiple(FibreTarget)]
+
+
+class InstrumentConfiguration(Hierarchy):
+    factors = ['mode', 'binning']
+    parents = [Multiple(ArmConfig, 2, 2)]
+    identifier_builder = ['mode', 'binning', 'armconfigs']
 
 
 class ProgTemp(Hierarchy):
-    factors = ['mode', 'binning']
-    parents = [Multiple(ArmConfig, 2, 2)]
+    parents = [InstrumentConfiguration]
+    factors = ['length', 'exposure_code']
     idname = 'progtemp_code'
 
     @classmethod
@@ -351,7 +369,11 @@ class ProgTemp(Hierarchy):
         configs = ArmConfig.from_progtemp_code(progtemp_code_list)
         mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
         binning = progtemp_code_list[3]
-        return cls(progtemp_code=progtemp_code, mode=mode, binning=binning, armconfigs=configs)
+        config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
+        exposure_code = progtemp_code[2:4]
+        length = progtemp_code_list[1]
+        return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
+                   instrumentconfiguration=config)
 
 
 class OBSpec(Hierarchy):
@@ -374,6 +396,5 @@ class Exposure(Hierarchy):
 
 class Run(Hierarchy):
     idname = 'runid'
-    parents = [Exposure]
-    factors = ['camera']
-    indexers = ['camera']
+    parents = [ArmConfig, Exposure]
+    indexers = ['armconfig']

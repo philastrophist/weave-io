@@ -8,9 +8,9 @@ from astropy.io import fits
 from astropy.table import Table as AstropyTable
 
 from weaveio.config_tables import progtemp_config
-from weaveio.graph import Graph
-from weaveio.hierarchy import Run, OBRealisation, OBSpec, ArmConfig, Target, Exposure, \
-    Multiple, FibreSet, ProgTemp, ObsTemp, Graphable, l1file_attrs, Survey, Fibre, FibreAssignment
+from weaveio.graph import Graph, Unwind
+from weaveio.hierarchy import Run, OBRealisation, OBSpec, ArmConfig, Exposure, \
+    Multiple, FibreSet, ProgTemp, ObsTemp, Graphable, l1file_attrs, Survey, Fibre, FibreAssignment, WeaveTarget, OBSpecTarget, FibreTarget
 from weaveio.product import Header, Array, Table
 
 
@@ -31,13 +31,32 @@ class File(Graphable):
         if len(kwargs):
             for k, v in kwargs.items():
                 setattr(self, k, v)
-            self.predecessors, factors = kwargs
+            predecessors, factors = kwargs
         else:
-            self.predecessors, factors = self.read()
+            predecessors, factors = self.read()
+        self.predecessors = {}
+        fs = {f: '...' for f in self.factors}
+        exception = TypeError(f"{self}.read() must return [{self.parents}], {fs}")
+        for p in self.parents:
+            if isinstance(p, Multiple):
+                thing = predecessors[p.plural_name]
+                if not isinstance(thing, (list, tuple)):
+                    raise exception
+                if not all(isinstance(pred, p.node) for pred in thing):
+                    raise exception
+                self.predecessors[p.plural_name] = thing
+            else:
+                thing = predecessors[p.singular_name]
+                if not isinstance(thing, p):
+                    raise exception
+                if isinstance(thing, Unwind):
+                    self.predecessors[p.plural_name] = thing
+                else:
+                    self.predecessors[p.singular_name] = [thing]
+        for f in self.factors:
+            setattr(self, f, factors[f])
         for p, v in self.predecessors.items():
             setattr(self, p, v[0])
-        for f, v in factors.items():
-            setattr(self, f, v)
         super(File, self).__init__(**self.predecessors)
         self.product_data = {}
 
@@ -116,26 +135,27 @@ class HeaderFibinfoFile(File):
         obid = str(header['OBID'])
 
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
-        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.mode)
+        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrumentconfiguration.mode)
                                   & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
-        ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
+        arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
 
         graph = Graph.get_context()
         fibinfo = self._read_fibtable().to_pandas()
         fibinfo['TARGSRVY'] = fibinfo['TARGSRVY'].str.replace(' ', '')
-        table = graph.add_table(fibinfo, index='fibreid', split=[('targsrvy', ',')])
-        fibres = Fibre(fibreid=table['fibreid'])
-        surveys = Survey(surveyname=table['targsrvy'])
-        targets = Target(cname=table['cname'], tables=table, surveys=surveys)
-        fibreassignments = FibreAssignment(target=targets, fibre=fibres, tables=table)
-        # hashid = table[Target.factors + Fibre.factors + [Target.idname, Fibre.idname]].hash()
-        fibreset = FibreSet(fibreassignments=fibreassignments, id=catname+'-fibres')
+        with graph.add_table(fibinfo, index='fibreid', split=[('targsrvy', ',')]) as table:
+            surveys = Survey(surveyname=table['targsrvy'])
+            weavetargets = WeaveTarget(cname=table['cname'], surveys=surveys)
+            fibres = Fibre(fibreid=table['fibreid'])
+            fibreassignments = FibreAssignment(weavetarget=weavetargets, fibre=fibres, tables=table)
+            obspectargets = OBSpecTarget(obid=obid, tables=table)
+            fibretarget = FibreTarget(fibreassignment=fibreassignments, obspectarget=obspectargets)
+            fibreset = FibreSet(fibretargets=fibretarget, obid=obid)
         obspec = OBSpec(catname=catname, fibreset=fibreset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
         obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
-        run = Run(runid=runid, camera=camera, exposure=exposure)
-        return {'run': [run]}, {'camera': camera}
+        run = Run(runid=runid, armconfig=arm, exposure=exposure)
+        return {'run': run, 'obrealisation': obrealisation, 'armconfig': arm}, {}
 
     def build_index(self) -> None:
         if self.index is None:
@@ -169,7 +189,6 @@ class HeaderFibinfoFile(File):
 
 class Raw(HeaderFibinfoFile):
     parents = [Run]
-    factors = ['camera']
     fibinfo_i = 3
 
     @classmethod
@@ -179,7 +198,6 @@ class Raw(HeaderFibinfoFile):
 
 class L1Single(HeaderFibinfoFile):
     parents = [Run]
-    factors = ['camera']
     constructed_from = [Raw]
 
     @classmethod
@@ -188,9 +206,9 @@ class L1Single(HeaderFibinfoFile):
 
 
 class L1Stack(HeaderFibinfoFile):
-    parents = [OBRealisation]
-    factors = ['camera']
+    parents = [OBRealisation, ArmConfig]
     constructed_from = [L1Single]
+    indexers = ['armconfig']
 
     @classmethod
     def match(cls, directory):
@@ -198,8 +216,8 @@ class L1Stack(HeaderFibinfoFile):
 
 
 class L1SuperStack(File):
-    parents = [OBSpec]
-    factors = ['camera']
+    parents = [OBSpec, ArmConfig]
+    indexers = ['armconfig']
     constructed_from = [L1Single]
 
     @classmethod
@@ -208,8 +226,9 @@ class L1SuperStack(File):
 
 
 class L1SuperTarget(File):
-    parents = [ArmConfig, Target]
+    parents = [ArmConfig, WeaveTarget]
     factors = ['binning', 'mode']
+    indexers = ['armconfig']
     constructed_from = [L1Single]
 
     @classmethod
@@ -237,7 +256,7 @@ class L2Stack(File):
 
 
 class L2SuperTarget(File):
-    parents = [Multiple(ArmConfig, 1, 3), Target]
+    parents = [Multiple(ArmConfig, 1, 3), WeaveTarget]
     factors = ['mode', 'binning']
     constructed_from = [Multiple(L1SuperTarget, 2, 3)]
 

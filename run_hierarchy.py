@@ -13,13 +13,11 @@ from weaveio.address import Address
 
 
 data = OurData('data/', port=11007)
-# data.drop_constraints()
 # data.directory_to_neo4j()
+# print('validating...')
+# data.validate()
 
-
-# print("|select a run from the database")
-# query = data[Address(camera='red', mode='MOS')].runs['1002793']
-# run = query()
+query = data[Address(camera='red', mode='MOS')].runs['1002793'].obrealisation
 # print(f"Runid={run.runid}, exposure-mjd={run.expmjd}")
 #
 # print("|Get the l1single file from that run")
