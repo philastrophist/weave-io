@@ -244,6 +244,12 @@ class Data:
     def is_plural_idname(self, value):
         return value in self.plural_idnames
 
+    def is_plural_factor(self, value):
+        return value in self.plural_factors
+
+    def is_singular_factor(self, value):
+        return value in self.singular_factors
+
     def plural_name(self, singular_name):
         if singular_name in self.singular_idnames:
             return singular_name + 's'
@@ -349,6 +355,8 @@ class BasicQuery:
         if self.current_varname is None:
             first_encountered = False
             blocks = deepcopy(self.blocks)
+            if len(blocks) == 0:
+                blocks += [[f"MATCH ({name} :{hierarchy_name})"]]
             for i, block in enumerate(blocks):
                 for j, line in enumerate(block):
                     if '<first>' in line and not first_encountered:
@@ -391,6 +399,19 @@ class Indexable:
         self.data = data
         self.query = query
 
+    def index_by_factor(self, factor_name):
+        raise NotImplementedError(f"Please specify the parent hierarchy for {factor_name}")
+        # if self.data.is_plural_name(factor_name):
+        #     name = self.data.singular_name(factor_name)
+        # else:
+        #     name = factor_name
+        # if self.data.is_singular_name(factor_name):
+        #     plural_name = self.data.plural_name(factor_name)
+        #     raise KeyError(f"{self} has several possible {plural_name}. Please use `.{plural_name}` instead")
+        # hierarchy_name = [n for n, d in self.data.relation_graph.nodes(data=True) if name in d['factors']][0]
+        # query = self.query.select_factor_of(name, hierarchy_name, 'below')
+        # return HomogeneousFactor(self.data, query, self.data.singular_hierarchies[hierarchy_name], name)
+
     def index_by_single_hierarchy(self, hierarchy_name, direction):
         try:
             hierarchy = self.data.singular_hierarchies[hierarchy_name]
@@ -407,23 +428,6 @@ class Indexable:
             return self.index_by_factor(hierarchy_name)
         query = self.query.index_by_hierarchy_name(hierarchy.__name__, direction)
         return HomogeneousHierarchy(self.data, query, hierarchy)
-
-    def index_by_factor(self, factor_name):
-        if self.data.is_plural_name(factor_name):
-            name = self.data.singular_name(factor_name)
-            plural_requested = True
-        else:
-            name = factor_name
-            plural_requested = False
-        plural, direction, path = self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
-        if plural and self.data.is_singular_name(factor_name):
-            plural_name = self.data.plural_name(factor_name)
-            raise KeyError(f"{self} has several possible {plural_name}. Please use `.{plural_name}` instead")
-        nodetype = self.data.singular_hierarchies[path[-1]]
-        query = self.query.select_factor_of(name, nodetype.__name__, direction)
-        if plural or plural_requested:
-            return HomogeneousFactor(self.data, query)
-        return SingleFactor(self.data, query)
 
     def index_by_address(self, address):
         query = self.query.index_by_address(address)
@@ -460,10 +464,15 @@ class HeterogeneousHierarchy(Indexable):
 
     def index_by_hierarchy_name(self, hierarchy_name):
         if not self.data.is_plural_name(hierarchy_name):
-            raise NotImplementedError(f"Can only index plural hierarchies in a heterogeneous address")
+            plural_name = self.data.plural_name(hierarchy_name)
+            raise NotImplementedError(f"Can only get a single hierarchy when you have specified it. "
+                                      f"Instead try `.{plural_name}`")
         return self.index_by_plural_hierarchy(hierarchy_name, 'below')
 
     def __getattr__(self, item):
+        # if self.data.is_singular_idname(item) or self.data.is_plural_idname(item) or \
+        #             self.data.is_singular_factor(item) or self.is_plural_factor(item):
+        #     return self.index_by_factor(item)
         return self.index_by_hierarchy_name(item)
 
 
@@ -481,6 +490,23 @@ class Executable(Indexable):
         durations = (time.perf_counter_ns() - starts[0]) * 1e-9, (time.process_time_ns() - starts[1]) * 1e-9
         logging.info(f"Query completed in {durations[0]} secs ({durations[1]}) of which were process time")
         return self._process_result(result)
+
+    def index_by_factor(self, factor_name):
+        if self.data.is_plural_name(factor_name):
+            name = self.data.singular_name(factor_name)
+            plural_requested = True
+        else:
+            name = factor_name
+            plural_requested = False
+        plural, direction, path = self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
+        if plural and self.data.is_singular_name(factor_name):
+            plural_name = self.data.plural_name(factor_name)
+            raise KeyError(f"{self} has several possible {plural_name}. Please use `.{plural_name}` instead")
+        nodetype = self.data.singular_hierarchies[path[-1]]
+        query = self.query.select_factor_of(name, nodetype.__name__, direction)
+        if plural or plural_requested:
+            return HomogeneousFactor(self.data, query, nodetype, name)
+        return SingleFactor(self.data, query, nodetype, name)
 
     def _process_result_row(self, row, nodetype):
         node, branch, indexer = row
@@ -511,21 +537,20 @@ class Executable(Indexable):
         return results
 
 
-class FactorExecutable(Executable):
-    def __init__(self, data, query):
-        super().__init__(data, query, Hierarchy)
-
-
-class SingleFactor(FactorExecutable):
+class ExecutableFactor(Executable):
     return_branch = False
 
+    def __init__(self, data, query, nodetype, factor_name):
+        super().__init__(data, query, nodetype)
+        self.factor_name = factor_name
+
+
+class SingleFactor(ExecutableFactor):
     def _process_result(self, result):
         return result[0][1]
 
 
-class HomogeneousFactor(FactorExecutable):
-    return_branch = False
-
+class HomogeneousFactor(ExecutableFactor):
     def _process_result(self, result):
         return [r[1] for r in result]
 

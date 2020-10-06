@@ -16,20 +16,11 @@ data = OurData('data/', port=11007)
 # data.directory_to_neo4j()
 # print('validating...')
 # data.validate()
-# print(data.node_implies_plurality_of('run', 'cname'))
-# print(data.traversal_path('run', 'cname'))
-runs = data[Address(camera='red', mode='MOS')].runs['1002793'].cnames
-print(runs.query.make())
-# print(runs.cnames())
-# exposure = exposures[0]
-# print(exposure)
-# print(exposure.runs())
-# print(exposure.obrealisation())
-# print(exposure.instrumentconfiguration())
 
+query =  data.weavetargets.cnames
+print(query())
 
-# print(f"Runid={run.runid}, exposure-mjd={run.expmjd}")
-#
+# query = data[Address(camera='red', mode='MOS')].runs['1002793']
 # print("|Get the l1single file from that run")
 # l1single_file_query = query.l1single
 # l1single_file = l1single_file_query()

@@ -160,7 +160,7 @@ class HeaderFibinfoFile(File):
 
     def build_index(self) -> None:
         if self.index is None:
-            self.index = pd.DataFrame({'cname': [i.cname for i in self.targets]})
+            self.index = pd.DataFrame({'cname': [i.cname for i in self.weavetargets]})
         super(HeaderFibinfoFile, self).build_index()
 
     def read_primary(self):
