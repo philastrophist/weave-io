@@ -317,20 +317,19 @@ class BasicQuery:
                 raise ValueError(f"May not return branches if returning a property value")
             returns = f"\nRETURN {self.current_varname}.id, " \
                       f"{self.current_varname}.{self.termination_factor}, " \
-                      f"{{}} as branch, {{}} as indexer\nORDER BY {self.current_varname}.id"
+                      f"{{}} as branch, {{}} as indexer"
         else:
             if branch:
                 returns = '\n'.join([f"OPTIONAL MATCH p1=({self.current_varname})<-[*]-(n1)",
                                      f"OPTIONAL MATCH p2=({self.current_varname})-[*]->(n2)",
                                      f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
                                      f"CALL apoc.convert.toTree(p1s+p2s) yield value",
-                                     f"RETURN {self.current_varname} as {self.current_label}, value as branch, indexer",
-                                     f"ORDER BY {self.current_varname}.id"])
+                                     f"RETURN {self.current_varname} as {self.current_label}, value as branch, indexer"])
                 returns = r'//Add Hierarchy Branch'+'\n' + returns
             else:
-                returns = f"\nRETURN {self.current_varname}, {{}} as branch, indexer \nORDER BY {self.current_varname}.id"
+                returns = f"\nRETURN {self.current_varname}, {{}} as branch, indexer"
         indexers = f"\nOPTIONAL MATCH ({self.current_varname})<-[:INDEXES]-(indexer)"
-        return f"{match}\nWITH DISTINCT {self.current_varname}\n{indexers}\n{returns}"
+        return f"{match}\n{indexers}\n{returns}"
 
     def index_by_address(self, address):
         if self.current_varname is None:
@@ -530,6 +529,8 @@ class Executable(Indexable):
         return h
 
     def _process_result(self, result):
+        if len(result) == 1 and result[0] is None:
+            return []
         results = []
         for row in result:
             h = self._process_result_row(row, self.nodetype)
@@ -552,6 +553,8 @@ class SingleFactor(ExecutableFactor):
 
 class HomogeneousFactor(ExecutableFactor):
     def _process_result(self, result):
+        if len(result) == 1 and result[0] is None:
+            return []
         return [r[1] for r in result]
 
 

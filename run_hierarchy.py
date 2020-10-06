@@ -17,19 +17,12 @@ data = OurData('data/', port=11007)
 # print('validating...')
 # data.validate()
 
-query =  data.weavetargets.cnames
-print(query())
+base_query = data
 
-# query = data[Address(camera='red', mode='MOS')].runs['1002793']
-# print("|Get the l1single file from that run")
-# l1single_file_query = query.l1single
-# l1single_file = l1single_file_query()
-# print(f"{l1single_file.fname}")
-#
-# print("|get data from that file")
-# fibtable_query = l1single_file_query.fibtable[['WVE_01094616+3709096', 'WVE_01095665+3704008']]
-# print(fibtable_query())
-#
-# print("|get the same targets from the many l1singles")
-# query = data[Address(camera='red', mode='MOS')].l1singles.fibtable[['WVE_01094616+3709096', 'WVE_01095665+3704008']]
-# print(query())
+print(len(base_query.obrealisations.obids()))
+print(len(base_query.runs.obids()))
+
+
+print(len(base_query.weavetargets.cnames()))
+print(len(base_query.obrealisations.cnames()))
+print(len(base_query.runs.cnames()))
