@@ -8,7 +8,7 @@ from astropy.io import fits
 from astropy.table import Table as AstropyTable
 
 from weaveio.config_tables import progtemp_config
-from weaveio.graph import Graph, Unwind
+from weaveio.graph import Graph, Unwind, ContextError
 from weaveio.hierarchy import Run, OBRealisation, OBSpec, ArmConfig, Exposure, \
     Multiple, FibreSet, ProgTemp, ObsTemp, Graphable, l1file_attrs, Survey, Fibre, FibreAssignment, WeaveTarget, OBSpecTarget, FibreTarget
 from weaveio.product import Header, Array, Table
@@ -36,7 +36,10 @@ class File(Graphable):
                 setattr(self, k, v)
             predecessors = kwargs
         else:
-            predecessors, factors = self.read()
+            try:
+                predecessors, factors = self.read()
+            except ContextError:
+                return
         self.predecessors = {}
         fs = {f: '...' for f in self.factors}
         exception = TypeError(f"{self}.read() must return dict of {self.parents}, {fs}")
@@ -108,17 +111,19 @@ class File(Graphable):
 class HeaderFibinfoFile(File):
     fibinfo_i = -1
     spectral_concatenation_constants = ['CRVAL1', 'CD1_1', 'NAXIS1']
-    products = {'primary': Header, 'data': Array, 'ivar': Array, 'data_noss': Array,
+    products = {'primary': Header, 'flux': Array, 'ivar': Array, 'flux_noss': Array,
                 'ivar_noss': Array, 'sensfunc': Array, 'fibtable': Table}
-    concatenation_constant_names = {'primary': True, 'data': spectral_concatenation_constants,
+    concatenation_constant_names = {'primary': True, 'flux': spectral_concatenation_constants,
                                'ivar': spectral_concatenation_constants,
-                               'data_noss': spectral_concatenation_constants,
+                               'flux_noss': spectral_concatenation_constants,
                                'ivar_noss': spectral_concatenation_constants,
                                'sens_func': spectral_concatenation_constants,
                                'fibtable': ['NAXIS1']}
-    product_indexables = {'primary': None, 'data': 'cname', 'ivar': 'cname', 'data_noss': 'cname', 'ivar_noss': 'cname',
-                          'sensfunc': 'cname', 'fibtable': 'cname'}
-    hdus = ['primary', 'data', 'ivar', 'data_noss', 'ivar_noss', 'sensfunc', 'fibtable']
+    product_indexables = {'primary': None, 'flux': 'cname',
+                          'ivar':  'cname', 'data_noss':  'cname',
+                          'ivar_noss':  'cname',
+                          'sensfunc':  'cname', 'fibtable':  'cname'}
+    hdus = ['primary', 'flux', 'ivar', 'data_noss', 'ivar_noss', 'sensfunc', 'fibtable']
 
     def read_concatenation_constants(self, product_name) -> Tuple:
         header = fits.open(self.fname)[self.hdus.index(product_name)].header
@@ -164,15 +169,15 @@ class HeaderFibinfoFile(File):
         super(HeaderFibinfoFile, self).build_index()
 
     def read_primary(self):
-         return Header(fits.open(self.fname)[0].header, self.index)
+        return Header(fits.open(self.fname)[0].header, self.index)
 
-    def read_data(self):
+    def read_flux(self):
         return Array(fits.open(self.fname)[1].data, self.index)
 
     def read_ivar(self):
         return Array(fits.open(self.fname)[2].data, self.index)
 
-    def read_data_noss(self):
+    def read_flux_noss(self):
         return Array(fits.open(self.fname)[3].data, self.index)
 
     def read_ivar_noss(self):
