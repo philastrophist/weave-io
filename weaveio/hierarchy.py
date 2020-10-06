@@ -61,6 +61,7 @@ class Multiple:
         self.name = node.plural_name
         self.singular_name = node.singular_name
         self.plural_name = node.plural_name
+        self.idname = self.node.idname
         try:
             self.factors =  self.node.factors
         except AttributeError:

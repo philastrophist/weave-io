@@ -1,3 +1,6 @@
+from itertools import product
+
+import networkx
 import numpy as np
 import logging
 import time
@@ -14,7 +17,7 @@ from tqdm import tqdm
 
 from weaveio.address import Address
 from weaveio.graph import Graph, Unwind
-from weaveio.hierarchy import Multiple, Graphable
+from weaveio.hierarchy import Multiple, Graphable, Hierarchy
 from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
 from weaveio.neo4j import parse_apoc_tree
 from weaveio.neo4jqueries import number_of_relationships
@@ -106,18 +109,14 @@ class Data:
                 is_file = issubclass(h, File)
             except:
                 is_file = False
-            self.relation_graph.add_node(h.singular_name, is_file=is_file)
+            self.relation_graph.add_node(h.singular_name, is_file=is_file,
+                                         factors=h.factors+[h.idname], idname=h.idname)
             for parent in h.parents:
                 multiplicity = isinstance(parent, Multiple)
-                self.relation_graph.add_node(parent.singular_name, is_file=is_file)
+                self.relation_graph.add_node(parent.singular_name, is_file=is_file,
+                                             factors=parent.factors+[h.idname], idname=h.idname)
                 self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity)
                 d.append(parent)
-            try:
-                for f in h.factors:
-                    self.relation_graph.add_node(f.lower(), is_file=False)
-                    self.relation_graph.add_edge(f.lower(), h.singular_name, multiplicity=False)
-            except AttributeError:
-                pass
 
     def make_constraints(self):
         for hierarchy in self.hierarchies:
@@ -186,27 +185,58 @@ class Data:
         print(f"There are {len(bads)} potential violations of expected relationship number")
 
     def traversal_path(self, start, end):
-        if nx.has_path(self.relation_graph, end, start):
-            start, end = end, start
-            reverse = True
+        multiplicity, direction, path = self.node_implies_plurality_of(start, end)
+        a, b = path[:-1], path[1:]
+        if direction == 'above':
+            b, a = a, b
+            plurals = [self.relation_graph.edges[(n1, n2)]['multiplicity'] for n1, n2 in zip(a, b)]
+            names = [self.plural_name(other) if is_plural else other for other, is_plural in zip(path[1:], plurals)]
         else:
-            reverse = False
-        edges = nx.shortest_path(self.relation_graph, start, end)
-        plurals = [self.relation_graph.edges[(n1, n2)]['multiplicity'] for n1, n2 in zip(edges[:-1], edges[1:])]
-        if reverse:
-            edges = edges[::-1]
-            plurals = plurals[::-1]
-        return [self.plural_name(other) if is_plural else other for other, is_plural in zip(edges[1:], plurals)]
+            names = [self.plural_name(p) for p in path[1:]]
+        if start in self.singular_factors or start in self.singular_idnames:
+            if self.is_singular_name(names[0]):
+                names.insert(0, start)
+            else:
+                names.insert(0, self.plural_name(start))
+        if end in self.singular_factors or end in self.singular_idnames:
+            if self.is_singular_name(names[-1]):
+                names.append(end)
+            else:
+                names.append(self.plural_name(end))
+        return names
 
     def node_implies_plurality_of(self, start_node, implication_node):
-        if nx.has_path(self.relation_graph, start_node, implication_node):
-            if self.relation_graph.nodes[implication_node]['is_file']:
-                return False, 'below'
-            return True, 'below'
+        start_factor, implication_factor = None, None
+        if start_node in self.singular_factors or start_node in self.singular_idnames:
+            start_factor = start_node
+            start_nodes = [n for n, data in self.relation_graph.nodes(data=True) if start_node in data['factors']]
         else:
-            edges = nx.shortest_path(self.relation_graph, implication_node, start_node)
-            return any(self.relation_graph.edges[(n1, n2)]['multiplicity']
-                       for n1, n2 in zip(edges[:-1], edges[1:])), 'above'
+            start_nodes = [start_node]
+        if implication_node in self.singular_factors or implication_node in self.singular_idnames:
+            implication_factor = implication_node
+            implication_nodes = [n for n, data in self.relation_graph.nodes(data=True) if implication_node in data['factors']]
+        else:
+            implication_nodes = [implication_node]
+        paths = []
+        for start, implication in product(start_nodes, implication_nodes):
+            if nx.has_path(self.relation_graph, start, implication):
+                paths.append((nx.shortest_path(self.relation_graph, start, implication), 'below'))
+            elif nx.has_path(self.relation_graph, implication, start):
+                paths.append((nx.shortest_path(self.relation_graph, implication, start)[::-1], 'above'))
+        paths.sort(key=lambda x: len(x[0]))
+        if not len(paths):
+            raise networkx.exception.NodeNotFound(f'{start_node} or {implication_node} not found')
+        path, direction = paths[0]
+        if len(path) == 1:
+            return False, 'above', path
+        if direction == 'below':
+            if self.relation_graph.nodes[path[-1]]['is_file']:
+                multiplicity = False
+            else:
+                multiplicity = True
+        else:
+            multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
+        return multiplicity, direction, path
 
     def is_singular_idname(self, value):
         return value in self.singular_idnames
@@ -215,26 +245,32 @@ class Data:
         return value in self.plural_idnames
 
     def plural_name(self, singular_name):
-        try:
-            return self.singular_factors[singular_name] + 's'
-        except KeyError:
-            return self.singular_hierarchies[singular_name].plural_name
+        if singular_name in self.singular_idnames:
+            return singular_name + 's'
+        else:
+            try:
+                return self.singular_factors[singular_name] + 's'
+            except KeyError:
+                return self.singular_hierarchies[singular_name].plural_name
 
     def singular_name(self, plural_name):
-        try:
-            return self.singular_factors[plural_name[:-1]]
-        except KeyError:
-            return self.plural_hierarchies[plural_name].singular_name
+        if plural_name in self.plural_idnames:
+            return plural_name[:-1]
+        else:
+            try:
+                return self.plural_factors[plural_name]
+            except KeyError:
+                return self.plural_hierarchies[plural_name].singular_name
 
     def is_plural_name(self, name):
         """
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
-        return name in self.plural_hierarchies or name in self.plural_factors
+        return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
 
     def is_singular_name(self, name):
-        return name in self.singular_hierarchies or name in self.singular_factors
+        return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
 
     def __getitem__(self, address):
         return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
@@ -245,16 +281,22 @@ class Data:
 
 class BasicQuery:
     def __init__(self, blocks: List = None, current_varname: str = None,
-                 current_label: str = None, counter: defaultdict = None):
+                 current_label: str = None, counter: defaultdict = None, termination_factor: str = None):
         self.blocks = [] if blocks is None else blocks
         self.current_varname = current_varname
         self.current_label = current_label
         self.counter = defaultdict(int) if counter is None else counter
+        self.termination_factor = termination_factor
 
     def spawn(self, blocks, current_varname, current_label) -> 'BasicQuery':
+        if self.termination_factor is not None:
+            raise IndexError(f"Cannot continue query if it has terminated at a factor {self.termination_factor}")
         return BasicQuery(blocks, current_varname, current_label, self.counter)
 
-    def make(self, branch=False, property=None, exclusive=True) -> str:
+    def terminate(self, blocks, current_varname, current_label, factor_name) -> 'BasicQuery':
+        return BasicQuery(blocks, current_varname, current_label, self.counter, factor_name)
+
+    def make(self, branch=False) -> str:
         """
         Return Cypher query which will return json records with entries of HierarchyName and branch
         `HierarchyName` - The nodes to be realised
@@ -264,16 +306,15 @@ class BasicQuery:
             match = '\n\n'.join(['\n'.join(blocks) for blocks in self.blocks])
         else:
             raise ValueError(f"Cannot build a query with no MATCH statements")
-        if property is not None and exclusive:
+        if self.termination_factor is not None:
             if branch:
                 raise ValueError(f"May not return branches if returning a property value")
-            returns = f"\nRETURN DISTINCT {self.current_varname}.{property}, {{}}, {{}}\nORDER BY {self.current_varname}.id"
-        elif property is not None and not exclusive:
-            raise NotImplementedError
+            returns = f"\nRETURN {self.current_varname}.id, " \
+                      f"{self.current_varname}.{self.termination_factor}, " \
+                      f"{{}} as branch, {{}} as indexer\nORDER BY {self.current_varname}.id"
         else:
             if branch:
-                returns = '\n'.join([f"WITH DISTINCT {self.current_varname}",
-                                     f"OPTIONAL MATCH p1=({self.current_varname})<-[*]-(n1)",
+                returns = '\n'.join([f"OPTIONAL MATCH p1=({self.current_varname})<-[*]-(n1)",
                                      f"OPTIONAL MATCH p2=({self.current_varname})-[*]->(n2)",
                                      f"WITH collect(p2) as p2s, collect(p1) as p1s, {self.current_varname}",
                                      f"CALL apoc.convert.toTree(p1s+p2s) yield value",
@@ -281,9 +322,9 @@ class BasicQuery:
                                      f"ORDER BY {self.current_varname}.id"])
                 returns = r'//Add Hierarchy Branch'+'\n' + returns
             else:
-                returns = f"\nRETURN DISTINCT {self.current_varname}, {{}}, indexer \nORDER BY {self.current_varname}.id"
+                returns = f"\nRETURN {self.current_varname}, {{}} as branch, indexer \nORDER BY {self.current_varname}.id"
         indexers = f"\nOPTIONAL MATCH ({self.current_varname})<-[:INDEXES]-(indexer)"
-        return f"{match}\n{indexers}\n{returns}"
+        return f"{match}\nWITH DISTINCT {self.current_varname}\n{indexers}\n{returns}"
 
     def index_by_address(self, address):
         if self.current_varname is None:
@@ -333,6 +374,17 @@ class BasicQuery:
                                  f"WHERE {self.current_varname}.id = {quote(id_value)}"]]
         return self.spawn(blocks, self.current_varname, self.current_label)
 
+    def select_factor_name(self, factor_name):
+        return self.terminate(self.blocks, self.current_varname, self.current_label, factor_name)
+
+    def select_factor_of(self, factor_name, hierarchy_name, direction):
+        if hierarchy_name != self.current_label:
+            hierarchy = self.index_by_hierarchy_name(hierarchy_name, direction)
+            return hierarchy.select_factor_name(factor_name)
+        else:
+            return self.select_factor_name(factor_name)
+
+
 
 class Indexable:
     def __init__(self, data, query: BasicQuery):
@@ -343,7 +395,7 @@ class Indexable:
         try:
             hierarchy = self.data.singular_hierarchies[hierarchy_name]
         except KeyError:
-            return self.index_by_single_factor(hierarchy_name, direction)
+            return self.index_by_factor(hierarchy_name)
         name = hierarchy.__name__
         query = self.query.index_by_hierarchy_name(name, direction)
         return SingleHierarchy(self.data, query, hierarchy)
@@ -352,19 +404,26 @@ class Indexable:
         try:
             hierarchy = self.data.plural_hierarchies[hierarchy_name]
         except KeyError:
-            return self.index_by_plural_factor(hierarchy_name, direction)
+            return self.index_by_factor(hierarchy_name)
         query = self.query.index_by_hierarchy_name(hierarchy.__name__, direction)
         return HomogeneousHierarchy(self.data, query, hierarchy)
 
-    def index_by_single_factor(self, factor_name, direction):
-        factor = self.data.singular_factors[factor_name]
-        query = self.query.index_by_factor_name(factor, direction)
-        return SingleFactor(self.data, query, Factor)
-
-    def index_by_plural_factor(self, factor_name, direction):
-        factor = self.data.plural_factors[factor_name]
-        query = self.query.index_by_factor_name(factor, direction)
-        return HomogeneousFactor(self.data, query, Factor)
+    def index_by_factor(self, factor_name):
+        if self.data.is_plural_name(factor_name):
+            name = self.data.singular_name(factor_name)
+            plural_requested = True
+        else:
+            name = factor_name
+            plural_requested = False
+        plural, direction, path = self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
+        if plural and self.data.is_singular_name(factor_name):
+            plural_name = self.data.plural_name(factor_name)
+            raise KeyError(f"{self} has several possible {plural_name}. Please use `.{plural_name}` instead")
+        nodetype = self.data.singular_hierarchies[path[-1]]
+        query = self.query.select_factor_of(name, nodetype.__name__, direction)
+        if plural or plural_requested:
+            return HomogeneousFactor(self.data, query)
+        return SingleFactor(self.data, query)
 
     def index_by_address(self, address):
         query = self.query.index_by_address(address)
@@ -423,7 +482,6 @@ class Executable(Indexable):
         logging.info(f"Query completed in {durations[0]} secs ({durations[1]}) of which were process time")
         return self._process_result(result)
 
-
     def _process_result_row(self, row, nodetype):
         node, branch, indexer = row
         inputs = {}
@@ -453,18 +511,23 @@ class Executable(Indexable):
         return results
 
 
-class SingleFactor(Executable):
+class FactorExecutable(Executable):
+    def __init__(self, data, query):
+        super().__init__(data, query, Hierarchy)
+
+
+class SingleFactor(FactorExecutable):
     return_branch = False
 
     def _process_result(self, result):
-        return result[0][0]['value']
+        return result[0][1]
 
 
-class HomogeneousFactor(Executable):
+class HomogeneousFactor(FactorExecutable):
     return_branch = False
 
     def _process_result(self, result):
-        return [r[0]['value'] for r in result]
+        return [r[1] for r in result]
 
 
 class ExecutableHierarchy(Executable):
@@ -495,7 +558,9 @@ class SingleHierarchy(ExecutableHierarchy):
     def implied_plurality_direction_of_node(self, name):
         if self.data.is_plural_name(name):
             name = self.data.singular_name(name)
-        return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
+        if not self.data.is_singular_name(name):
+            raise ValueError(f"{name} is not recognised as a factor/hierarchy name")
+        return self.data.node_implies_plurality_of(self.nodetype.singular_name, name)[:-1]
 
     def __getattr__(self, item):
         if item in getattr(self.nodetype, 'products', []):
@@ -546,7 +611,7 @@ class HomogeneousHierarchy(ExecutableHierarchy):
             name = self.data.singular_name(item)
         else:
             raise ValueError(f"{self} requires a plural {item}, try `.{self.data.plural_name(item)}`")
-        _, direction = self.implied_plurality_direction_of_node(name)
+        _, direction, _ = self.implied_plurality_direction_of_node(name)
         return self.index_by_plural_hierarchy(item, direction)
 
 
@@ -586,56 +651,6 @@ class Products:
         if not isinstance(result, (list, tuple)):
             result = [result]
         return get_product(result, self.product_name, self.index)
-
-
-# class HomogeneousProduct(HomogeneousHierarchy):
-#     """
-#     Products are not present in the graph
-#     query requests are mostly performed on the parent file object
-#     """
-#     def __init__(self, data, file_query: BasicQuery, file_type: Type[File],
-#                  product_type: Type[Product]):
-#         super().__init__(data, file_query, file_type)
-#         self.file_type = file_type
-#         self.product_type = product_type
-#
-#     def index_by_id(self, idvalue):
-#         raise NotImplementedError(f"Products have no id to index with")
-#
-#     def index_by_address(self, address):
-#         homogeneous_hierarchy = super().index_by_address(address)
-#         return HomogeneousProduct(self.data, homogeneous_hierarchy.query, self.file_type, self.product_type)
-#
-#     def __getattr__(self, item):
-#         try:
-#             return super().__getattr__(item)  # attempt to search hierarchy above the file
-#         except KeyError as e:
-#             raise KeyError(f"Cannot find {item} in the hierarchy above {self}, you must execute the"
-#                            f" query to access product attributes: `query()`") from e
-#
-#     def __call__(self):
-#         files = super().__call__()
-#         if files:
-#             return files[0].from_files(files)
-#         return []
-#
-#
-# class SingleProduct(SingleHierarchy):
-#     def __init__(self, data, file_query: BasicQuery, file_type: Type[File], file_idvalue: Any,
-#                  product_name: str):
-#         super().__init__(data, file_query, file_type, file_idvalue)
-#         self.product_name = product_name
-#
-#     def __getattr__(self, item):
-#         try:
-#             return super().__getattr__(item)  # attempt to search hierarchy above the file
-#         except KeyError as e:
-#             raise KeyError(f"Cannot find {item} in the hierarchy above {self}, you must execute the"
-#                            f" query to access product attributes: `query()`") from e
-#
-#     def __call__(self):
-#         file = super().__call__()
-#         return file.products[self.product_name]()
 
 
 class OurData(Data):

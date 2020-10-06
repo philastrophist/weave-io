@@ -16,11 +16,11 @@ data = OurData('data/', port=11007)
 # data.directory_to_neo4j()
 # print('validating...')
 # data.validate()
-
-query = data[Address(camera='red', mode='MOS')].runs['1002793'].obrealisation
-print(data.node_implies_plurality_of('run', 'obrealisation'))
-exposures = query()
-print(exposures.obid)
+# print(data.node_implies_plurality_of('run', 'cname'))
+# print(data.traversal_path('run', 'cname'))
+runs = data[Address(camera='red', mode='MOS')].runs['1002793'].cnames
+print(runs.query.make())
+# print(runs.cnames())
 # exposure = exposures[0]
 # print(exposure)
 # print(exposure.runs())
