@@ -10,8 +10,7 @@ from astropy.table import vstack, Table as AstropyTable
 
 def header2table(header):
     keys = set(header.keys())
-    data = AstropyTable([[header[k]] for k in keys], names=list(keys), meta=header.comments)
-    data.comments = data.meta
+    data = AstropyTable([[header[k]] for k in keys], names=list(keys))
     return data
 
 
@@ -61,8 +60,8 @@ class Table(Product):
 
 class Header(Product):
     @classmethod
-    def concatenate(cls, *products):
-        return Table.concatenate([Table(header2table(p), p.index) for p in products])
+    def concatenate_data(cls, *products):
+        return vstack([header2table(p.data) for p in products])
 
 
 def get_product(files: List['File'], product_name: str, product_index: pd.DataFrame = None) -> Product:

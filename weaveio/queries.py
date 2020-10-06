@@ -408,11 +408,16 @@ class Products:
         which = np.sum(l != 0, axis=0)
         if sum(which > 0) > 1:
             raise NotImplementedError(f"Cannot get data from a multi-index search, please report this")
-        indices = l[:, np.where(which>0)[0][0]]
+        try:
+            indices = l[:, np.where(which>0)[0][0]]
+        except IndexError:
+            indices = l[:, 0]  # they are all 0
         product_type = self.filenode.nodetype.products[self.product_name]
         data = []
         for fname, index in zip(result.iloc[:, 1], indices):
-            datum = getattr(self.filenode.nodetype(fname), f'read_{self.product_name}')().data[index]
+            datum = getattr(self.filenode.nodetype(fname), f'read_{self.product_name}')().data
+            if self.index is not None:
+                datum = datum[index]
             data.append(product_type(datum, None))
         if len(data) == 1:
             return data[0].data
@@ -423,13 +428,13 @@ class Products:
         under_type = self.filenode.nodetype.product_indexables[self.product_name]
         starts = time.perf_counter_ns(), time.process_time_ns()
         if self.index is None:
-            query_string = self.filenode.fname.query.make(False)
+            query_string = self.filenode.fnames.query.make(False)
             result = self.filenode.data.graph.neograph.run(query_string).to_data_frame()
-            result['orders'] = ''
-            result['orders'] = result['orders'].str.split(',')  # just to get a list
+            result['orders'] = 0
+            result['orders'] = result['orders'].apply(lambda x: [x])  # just to get a list
         else:
             orders_under = list(self.index.keys())
-            query_string = self.filenode.fname.query.make(False, orders_under)
+            query_string = self.filenode.fnames.query.make(False, orders_under)
             index = []
             for i in range(max(len(vs) for vs in self.index.values())):
                 d = {}
