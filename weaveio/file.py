@@ -111,19 +111,19 @@ class File(Graphable):
 class HeaderFibinfoFile(File):
     fibinfo_i = -1
     spectral_concatenation_constants = ['CRVAL1', 'CD1_1', 'NAXIS1']
-    products = {'primary': Header, 'flux': Array, 'ivar': Array, 'flux_noss': Array,
-                'ivar_noss': Array, 'sensfunc': Array, 'fibtable': Table}
-    concatenation_constant_names = {'primary': True, 'flux': spectral_concatenation_constants,
-                               'ivar': spectral_concatenation_constants,
-                               'flux_noss': spectral_concatenation_constants,
-                               'ivar_noss': spectral_concatenation_constants,
-                               'sens_func': spectral_concatenation_constants,
+    products = {'primary': Header, 'fluxes': Array, 'ivars': Array, 'fluxes_noss': Array,
+                'ivars_noss': Array, 'sensfuncs': Array, 'fibtable': Table}
+    concatenation_constant_names = {'primary': True, 'fluxes': spectral_concatenation_constants,
+                               'ivars': spectral_concatenation_constants,
+                               'fluxes_noss': spectral_concatenation_constants,
+                               'ivars_noss': spectral_concatenation_constants,
+                               'sens_funcs': spectral_concatenation_constants,
                                'fibtable': ['NAXIS1']}
-    product_indexables = {'primary': None, 'flux': 'cname',
-                          'ivar':  'cname', 'data_noss':  'cname',
-                          'ivar_noss':  'cname',
-                          'sensfunc':  'cname', 'fibtable':  'cname'}
-    hdus = ['primary', 'flux', 'ivar', 'data_noss', 'ivar_noss', 'sensfunc', 'fibtable']
+    product_indexables = {'primary': None, 'fluxes': 'cname',
+                          'ivars':  'cname', 'fluxes_noss':  'cname',
+                          'ivars_noss':  'cname',
+                          'sensfuncs':  'cname', 'fibtable':  'cname'}
+    hdus = ['primary', 'fluxes', 'ivars', 'fluxes_noss', 'ivars_noss', 'sensfuncs', 'fibtable']
 
     def read_concatenation_constants(self, product_name) -> Tuple:
         header = fits.open(self.fname)[self.hdus.index(product_name)].header
@@ -171,19 +171,19 @@ class HeaderFibinfoFile(File):
     def read_primary(self):
         return Header(fits.open(self.fname)[0].header, self.index)
 
-    def read_flux(self):
+    def read_fluxes(self):
         return Array(fits.open(self.fname)[1].data, self.index)
 
-    def read_ivar(self):
+    def read_ivars(self):
         return Array(fits.open(self.fname)[2].data, self.index)
 
-    def read_flux_noss(self):
+    def read_fluxes_noss(self):
         return Array(fits.open(self.fname)[3].data, self.index)
 
-    def read_ivar_noss(self):
+    def read_ivars_noss(self):
         return Array(fits.open(self.fname)[4].data, self.index)
 
-    def read_sens_func(self):
+    def read_sens_funcs(self):
         return Array(fits.open(self.fname)[5].data, self.index)
 
     def _read_fibtable(self):

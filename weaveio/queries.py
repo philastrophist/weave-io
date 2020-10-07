@@ -74,15 +74,18 @@ class BasicQuery:
         else:
             name = self.current_varname
         blocks = []
-        for k, v in address.items():
-            k = k.lower()
-            count = self.counter[k]
-            path_match = f"OPTIONAL MATCH ({k}{count} {{{k}: {quote(v)}}})-[:IS_REQUIRED_BY*]->({name})"
-            possible_index_match = f"OPTIONAL MATCH ({name})<-[:INDEXES]-({k}{count+1} {{{k}: {quote(v)}}})"
-            with_segment = f"WITH {k}{count}, {k}{count+1}, {name}"
-            where = f"WHERE ({k}{count}={k}{count+1} OR {k}{count+1} IS NULL) OR ({name}.{k}={quote(v)})"
+        for key, v in address.items():
+            key = key.lower()
+            count = self.counter[key]
+            parent = f"{key}{count}"
+            indexed = f"{key}{count+1}"
+            value = quote(v)
+            path_match = f"OPTIONAL MATCH ({parent} {{{key}: {value}}})-[:IS_REQUIRED_BY*]->({name})"
+            possible_index_match = f"OPTIONAL MATCH ({name})<-[:INDEXES]-({indexed})"
+            with_segment = f"WITH {parent}, {indexed}, {name}"
+            where = f"WHERE ({indexed} IS NULL AND {parent}.{key}={value}) OR ({indexed} IS NOT NULL AND {indexed}.{key}={value}) OR ({name}.{key}={value})"
             block = [path_match, possible_index_match, with_segment, where]
-            self.counter[k] += 2
+            self.counter[key] += 2
             blocks.append(block)
         return self.spawn(self.blocks + blocks, self.current_varname, self.current_label)
 
@@ -284,6 +287,11 @@ class HomogeneousFactor(ExecutableFactor):
             return []
         return [r[1] for r in result]
 
+    def __iter__(self):
+        ids = self()
+        for i in ids:
+            yield self.i
+
 
 class ExecutableHierarchy(Executable):
     pass
@@ -369,10 +377,16 @@ class HomogeneousHierarchy(ExecutableHierarchy):
         _, direction, _ = self.implied_plurality_direction_of_node(name)
         return self.index_by_plural_hierarchy(item, direction)
 
+    def __iter__(self):
+        ids = getattr(self, self.nodetype.idname+'s')()
+        for i in ids:
+            yield self[i]
+
 
 class Products:
     def __init__(self, filenode, product_name, index=None):
         self.filenode = filenode
+        self.query = filenode.query
         self.product_name = product_name
         assert issubclass(filenode.nodetype, File)
         self.default_key = self.filenode.nodetype.product_indexables[product_name]
@@ -404,6 +418,8 @@ class Products:
         return self.filenode.__getattr__(item)
 
     def _process_result(self, result):
+        if len(result) == 0:
+            return []
         l = np.asarray(result['orders'].tolist())
         which = np.sum(l != 0, axis=0)
         if sum(which > 0) > 1:
@@ -423,6 +439,10 @@ class Products:
             return data[0].data
         return product_type.concatenate_data(*data)
 
+    def __iter__(self):
+        ids = getattr(self.filenode, self.default_key+'s')()
+        for i in ids:
+            yield self[i]
 
     def __call__(self):
         under_type = self.filenode.nodetype.product_indexables[self.product_name]
