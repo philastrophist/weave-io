@@ -73,19 +73,31 @@ class BasicQuery:
             name = '<first>'
         else:
             name = self.current_varname
-        blocks = []
+        var_match = f"MATCH ({name}) "
+        blocks = [[var_match]]
         for key, v in address.items():
             key = key.lower()
             count = self.counter[key]
             parent = f"{key}{count}"
-            indexed = f"{key}{count+1}"
+            indexed_immediate = f"{key}{count+1}"
+            indexed_far = f"{key}{count+2}"
             value = quote(v)
             path_match = f"OPTIONAL MATCH ({parent} {{{key}: {value}}})-[:IS_REQUIRED_BY*]->({name})"
-            possible_index_match = f"OPTIONAL MATCH ({name})<-[:INDEXES]-({indexed})"
-            with_segment = f"WITH {parent}, {indexed}, {name}"
-            where = f"WHERE ({indexed} IS NULL AND {parent}.{key}={value}) OR ({indexed} IS NOT NULL AND {indexed}.{key}={value}) OR ({name}.{key}={value})"
-            block = [path_match, possible_index_match, with_segment, where]
-            self.counter[key] += 2
+            possible_index_match = f"OPTIONAL MATCH ({name})<-[:INDEXES]-({indexed_immediate})"
+            possible_index_path_match = f"OPTIONAL MATCH ({indexed_immediate})<-[:IS_REQUIRED_BY*0..]-({indexed_far})"
+            with_segment = f"WITH {parent}, {indexed_immediate}, {indexed_far}, {name}"
+            where = '\n'.join(["WHERE",
+                     f"    (EXISTS({name}.{key}) AND {name}.{key}={value}) OR",
+                     f"    (EXISTS({indexed_immediate}.{key}) // immediate indexer must be {value}",
+                     f"    AND {indexed_immediate}.{key}={value}) OR",
+                     f"    (EXISTS({indexed_far}.{key}) // indexer must have parent {value}",
+                     f"    AND {indexed_far}.{key}={value}) OR",
+                     f"    (EXISTS({parent}.{key}) AND",
+                     f"    NOT EXISTS({indexed_immediate}.{key}) AND",
+                     f"    NOT EXISTS({indexed_far}.{key}) AND",
+                     f"    {parent}.{key} = {value})"])
+            block = [path_match, possible_index_match,possible_index_path_match, with_segment, where]
+            self.counter[key] += 3
             blocks.append(block)
         return self.spawn(self.blocks + blocks, self.current_varname, self.current_label)
 
