@@ -1,3 +1,26 @@
+from weaveio.utilities import quote
+
+
+def property_value_in_hierarchy(name, **properties):
+    blocks = []
+    for property_name, property_value in properties.items():
+        property_value = quote(property_value)
+        blocks.append('\n'.join([f"//Begin WHERE {name} has {property_name}={property_value}",
+        f"({name}.{property_name}={property_value} OR",
+        f"    (",
+        f"        EXISTS {{",
+        f"            MATCH ({name})<-[:INDEXES]-(x)  // there is an index",
+        f"            WHERE",
+        f"               (EXISTS(x.{property_name}) AND x.{property_name}={property_value}) // index satisfies",
+        f"            OR (EXISTS {{ (x)<-[:IS_REQUIRED_BY*]-(y {{{property_name}: {property_value}}}) }})  // index has it in hierarchy",
+        f"            // original node has it in hierarchy",
+        f"            OR (NOT EXISTS(x.{property_name}) AND NOT EXISTS {{ (x)<-[:IS_REQUIRED_BY*]-(y {{{property_name}: {property_value}}}) }}",
+        f"                  AND EXISTS {{ ({name})<-[:IS_REQUIRED_BY*]-(parent {{{property_name}: {property_value}}}) }})",
+        f"        }}",
+        f"    )",
+        f")"]))
+    return '\nAND\n'.join(blocks)
+
 def split_node_names(label, main_property, delimiter, *other_properties_to_set):
     s = f"""
 MATCH (old: {label})

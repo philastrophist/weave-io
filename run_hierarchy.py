@@ -10,7 +10,7 @@ data = OurData('data/', port=11007)
 # data.directory_to_neo4j()
 # print('validating...')
 # data.validate()
+# print(data.traversal_path('run', 'mode'))
 base = data[Address(camera='red', vph=1, resolution='LowRes', mode='MOS')].runs.raws
-query = base.fibtable
-print(query())
-
+print(base.query.make())
+# print(base())
