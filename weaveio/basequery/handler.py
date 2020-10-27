@@ -28,29 +28,29 @@ class Handler:
         query = copy(parent.query)
         h = self.hierarchy_of_factor(factor_name)
         if isinstance(parent, HeterogeneousHierarchyFrozenQuery):
-            raise AmbiguousPathError(f"{query.root[-1].name} has multiple {factor_name}s. Use .{factor_name}s")
+            raise AmbiguousPathError(f"{query.matches[-1].name} has multiple {factor_name}s. Use .{factor_name}s")
         if isinstance(parent, HomogeneousHierarchyFrozenQuery):
-            if self.guaranteed_not_sharing_parent(query.root[-1].name, h):
-                raise AmbiguousPathError(f"{query.root[-1].name}.{factor_name} can only work if"
+            if self.guaranteed_not_sharing_parent(query.matches[-1].name, h):
+                raise AmbiguousPathError(f"{query.matches[-1].name}.{factor_name} can only work if"
                                          f"they share the same parent (this is not locally decidable)."
                                          f" Use .{factor_name}s")
-        if h not in query.root:
-            long_path = self.path(query.root.nodes[0], h)
+        if h not in query.matches:
+            long_path = self.path(query.matches.nodes[0], h)
             if self.path_plurality(long_path):
-                raise AmbiguousPathError(f"{query.root} has multiple {factor_name}s. Use .{factor_name}s")
-            short_path = query.root.merge(long_path)
+                raise AmbiguousPathError(f"{query.matches} has multiple {factor_name}s. Use .{factor_name}s")
+            short_path = query.matches.merge(long_path)
             query.exist_branches.append(short_path)
-        query.return_properties.append((query.root[h], factor_name))  # append pair of node, prop
+        query.return_properties.append((query.matches[h], factor_name))  # append pair of node, prop
         return SingleFactorFrozenQuery(self, query, parent)
 
     def _get_plural_factor(self, parent: HierarchyFrozenQuery, factor_name: str):
         query = copy(parent.query)
         h = self.hierarchy_of_factor(factor_name)
-        if h not in query.root:
-            long_path = self.path(query.root.nodes[0], h)
-            short_path = query.root.merge(long_path)
+        if h not in query.matches:
+            long_path = self.path(query.matches.nodes[0], h)
+            short_path = query.matches.merge(long_path)
             query.exist_branches.append(short_path)
-        query.return_properties.append((query.root[h], factor_name))  # append pair of node, prop
+        query.return_properties.append((query.matches[h], factor_name))  # append pair of node, prop
         cls = TableFactorFrozenQuery
         return cls(self, query, parent)
 
@@ -58,11 +58,11 @@ class Handler:
         query = copy(parent.query)
         for factor_name in factor_names:
             h = self.hierarchy_of_factor(factor_name)
-            if h not in query.root:
-                long_path = self.path(query.root.nodes[0], h)
-                short_path = query.root.merge(long_path)
+            if h not in query.matches:
+                long_path = self.path(query.matches.nodes[0], h)
+                short_path = query.matches.merge(long_path)
                 query.exist_branches.append(short_path)
-            query.return_properties.append((query.root[h], factor_name))  # append pair of node, prop
+            query.return_properties.append((query.matches[h], factor_name))  # append pair of node, prop
         if isinstance(parent, HomogeneousHierarchyFrozenQuery):
             cls = TableFactorFrozenQuery
         elif isinstance(parent, SingleHierarchyFrozenQuery):

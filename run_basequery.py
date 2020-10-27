@@ -13,7 +13,7 @@ query = query.identify_in_root('1002813')  # data.runs[runid]
 query = query.append_to_root('<--', Path(gen.node('Exposure')))  # data.runs[runid].exposure
 query = FullQuery(Path(gen.node('Run')), exist_branches=query.to_branches())
 
-query = query.merge_into_branches(Path(query.root.nodes[-2], '<-', gen.node('InstrumentConfiguration')))
+query = query.merge_into_branches(Path(query.matches.nodes[-2], '<-', gen.node('InstrumentConfiguration')))
 
 
 # query = query.return_property(query.root.nodes[-2], 'runid')

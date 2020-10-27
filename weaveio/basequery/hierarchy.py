@@ -1,7 +1,7 @@
 from copy import copy
 from typing import List, Tuple, Union, Any
 
-from .query import AmbiguousPathError, FullQuery, Node, Path
+from .query import AmbiguousPathError, FullQuery, Node, Path, Condition
 from ..address import Address
 from .common import NotYetImplementedError, FrozenQuery
 from ..hierarchy import Hierarchy
@@ -29,8 +29,8 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
     def _get_plural_hierarchy(self, hierarchy_name):
         hier = self.data.singular_hierarchies[hierarchy_name]
         label = hier.__name__
-        start = Node(label)
-        root = Path(start)
+        start = self.handler.generator.node(label)
+        root = [Path(start)]
         return HomogeneousHierarchyFrozenQuery(self.handler, FullQuery(root), hier, self)
 
 
@@ -60,5 +60,9 @@ class HomogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _filter_by_identifier(self, identifier: Union[str,int,float]) -> SingleHierarchyFrozenQuery:
         query = copy(self.query)
-        query.conditions.append(f"{query.root[-1]} = {quote(identifier)}")
+        condition = Condition(query.current_node, '==', quote(identifier))
+        if query.conditions is not None:
+            query.conditions = query.conditions & condition
+        else:
+            query.conditions = condition
         return SingleHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifier, self)
