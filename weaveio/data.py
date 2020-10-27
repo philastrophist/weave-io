@@ -1,210 +1,283 @@
-from functools import reduce
+from itertools import product
+
+import networkx
+import numpy as np
+import logging
 from pathlib import Path
-from typing import Union, Any, Dict, Set, List
+from typing import Union
+import pandas as pd
+import re
 
 import networkx as nx
+import py2neo
+from tqdm import tqdm
 
-from weaveio.graph import Graph
-from weaveio.hierarchy import File, Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, Hierarchy
+from weaveio.address import Address
+from weaveio.graph import Graph, Unwind
+from weaveio.hierarchy import Multiple
+from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
+from weaveio.queries import BasicQuery, HeterogeneousHierarchy
+
+CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
+                                r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
 
 
-class Address(dict):
-    pass
+def process_neo4j_error(data: 'Data', file: File, msg):
+    matches = CONSTRAINT_FAILURE.findall(msg)
+    if not len(matches):
+        return  # cannot help
+    label, idname, idvalue = matches[0]
+    # get the node properties that already exist
+    extant = data.graph.neograph.evaluate(f'MATCH (n:{label} {{{idname}: {idvalue}}}) RETURN properties(n)')
+    fname = data.graph.neograph.evaluate(f'MATCH (n:{label} {{{idname}: {idvalue}}})-[*]->(f:File) return f.fname limit 1')
+    idvalue = idvalue.strip("'").strip('"')
+    file.data = data
+    obj = [i for i in data.hierarchies if i.__name__ == label][0]
+    instance_list = getattr(file, obj.plural_name)
+    new = {}
+    if not isinstance(instance_list, (list, tuple)):  # has an unwind table object
+        new_idvalue = instance_list.identifier
+        if isinstance(new_idvalue, Unwind):
+            # find the index in the table and get the properties
+            filt = (new_idvalue.data == idvalue).iloc[:, 0]
+            for k in extant.keys():
+                if k == 'id':
+                    k = idname
+                value = getattr(instance_list, k, None)
+                if isinstance(value, Unwind):
+                    table = value.data.where(pd.notnull(value.data), 'NaN')
+                    new[k] = str(table[k][filt].values[0])
+                else:
+                    new[k] = str(value)
+        else:
+            # if the identifier of this object is not looping through a table, we cant proceed
+            return
+    else:  # is a list of non-table things
+        found = [i for i in instance_list if i.identifier == idvalue][0]
+        for k in extant.keys():
+            value = getattr(found, k, None)
+            new[k] = value
+    comparison = pd.concat([pd.Series(extant, name='extant'), pd.Series(new, name='to_add')], axis=1)
+    filt = comparison.extant != comparison.to_add
+    filt &= ~comparison.isnull().all(axis=1)
+    where_different = comparison[filt]
+    logging.exception(f"The node (:{label} {{{idname}: {idvalue}}}) tried to be created twice with different properties.")
+    logging.exception(f"{where_different}")
+    logging.exception(f"filenames: {fname}, {file.fname}")
 
 
 class Data:
     filetypes = []
 
-    def __init__(self, rootdir: Union[Path, str]):
-        super(Data, self).__init__()
-        self.graph = Graph()
+    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002):
+        self.graph = Graph(host=host, port=port)
         self.filelists = {}
         self.rootdir = Path(rootdir)
-        self.read_in_directory()
         self.address = Address()
-        self.hierarchies = {}
-        self.factors = []
+        self.hierarchies = set()
+        todo = set(self.filetypes.copy())
+        while len(todo):
+            thing = todo.pop()
+            self.hierarchies.add(thing)
+            for hier in thing.parents:
+                if isinstance(hier, Multiple):
+                    todo.add(hier.node)
+                else:
+                    todo.add(hier)
+        self.hierarchies |= set(self.filetypes)
+        self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
+        self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
+        self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
+        self.factors = {f.lower() for h in self.hierarchies for f in getattr(h, 'factors', [])}
+        self.plural_factors =  {f.lower() + 's': f.lower() for f in self.factors}
+        self.singular_factors = {f.lower() : f.lower() for f in self.factors}
+        self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
+        self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
+        self.make_relation_graph()
 
-    def read_in_directory(self):
+    def make_relation_graph(self):
+        self.relation_graph = nx.DiGraph()
+        d = list(self.singular_hierarchies.values())
+        while len(d):
+            h = d.pop()
+            try:
+                is_file = issubclass(h, File)
+            except:
+                is_file = False
+            self.relation_graph.add_node(h.singular_name, is_file=is_file,
+                                         factors=h.factors+[h.idname], idname=h.idname)
+            for parent in h.parents:
+                multiplicity = isinstance(parent, Multiple)
+                self.relation_graph.add_node(parent.singular_name, is_file=is_file,
+                                             factors=parent.factors+[h.idname], idname=h.idname)
+                self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity)
+                d.append(parent)
+
+    def make_constraints(self):
+        for hierarchy in self.hierarchies:
+            self.graph.create_unique_constraint(hierarchy.__name__, 'id')
+
+    def drop_constraints(self):
+        for hierarchy in self.hierarchies:
+            self.graph.drop_unique_constraint(hierarchy.__name__, 'id')
+
+    def directory_to_neo4j(self, *filetype_names):
         for filetype in self.filetypes:
-            self.filelists[filetype] = filetype.match(self.rootdir)
+            self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
+            self.make_constraints()
             for filetype, files in self.filelists.items():
-                for file in files:
-                    filetype(file).read()
-            self.graph.remove_node('Factor')
-        self.hierarchies = {h.__class__.__name__: h for ft in self.filetypes for h in ft.parents}
-        self.factors = [f for ft in self.filetypes for h in ft.parents for f in h.factors]
+                if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
+                    continue
+                for file in tqdm(files, desc=filetype.__name__):
+                    tx = self.graph.begin()
+                    f = filetype(file)
+                    if not tx.finished():
+                        try:
+                            self.graph.commit()
+                        except py2neo.database.work.ClientError as e:
+                            process_neo4j_error(self, f, e.message)
+                            logging.exception(self.graph.make_statement(), exc_info=True)
+                            raise e
+            logging.info('Cleaning up...')
+            self.graph.execute_cleanup()
 
+    def validate(self, *hierarchy_names):
+        bads = []
+        if len(hierarchy_names) == 0:
+            hierarchies = self.hierarchies
+        else:
+            hierarchies = [h for h in self.hierarchies if h.__name__ in hierarchy_names]
+        print(f'scanning {len(hierarchies)} hierarchies')
+        for hierarchy in tqdm(hierarchies):
+            for parent in hierarchy.parents:
+                if isinstance(parent, Multiple):
+                    lower, upper = parent.minnumber or 0, parent.maxnumber or np.inf
+                    parent_name = parent.node.__name__
+                else:
+                    lower, upper = 1, 1
+                    parent_name = parent.__name__
+                child_name = hierarchy.__name__
+                query = f"MATCH (parent: {parent_name}) MATCH (parent)-->(child: {child_name}) " \
+                        f"RETURN parent.id, child.id, '{child_name}' as child_label, '{parent_name}' as parent_label"
+                result = self.graph.neograph.run(query)
+                df = result.to_data_frame()
+                if len(df) == 0 and lower > 0:
+                    bad = pd.DataFrame({'child_label': child_name, 'child.id': np.nan,
+                                       'nrelationships': 0, 'parent_label': parent_name,
+                                       'expected': f'[{lower}, {upper}]'}, index=[0])
+                    bads.append(bad)
+                elif len(df):
+                    grouped = df.groupby(['child_label', 'child.id']).apply(len)
+                    grouped.name = 'nrelationships'
+                    bad = pd.DataFrame(grouped[(grouped < lower) | (grouped > upper)]).reset_index()
+                    bad['parent_name'] = parent_name
+                    bad['expected'] = f'[{lower}, {upper}]'
+                    bads.append(bad)
+        if len(bads):
+            bads = pd.concat(bads)
+            print(bads)
+        print(f"There are {len(bads)} potential violations of expected relationship number")
 
-    def _match_nodes(self, factor_type_name: str, factor_value: Any, nodetype: str) -> Set[str]:
-        """
-        Match files by building a list of shortest paths that have the subpath:
-            (factor_name)->(factor_value)->...->(file)->(filetype)
-        return [(file) from each valid path]
-        """
-        paths, lengths = zip(*[(p, len(p)) for p in nx.all_shortest_paths(self.graph, factor_type_name, nodetype)])
-        node = f'{factor_type_name}({factor_value})'
-        paths = [p for p in paths if len(p) == min(lengths) and node in p]
-        files = {p[-2] for p in paths}
-        return files
-
-    def _query_nodes(self, nodetype: str, factors: Dict[str, Any]) -> Set[str]:
-        """
-        Match all valid files
-        Do this for each given factor and take then intersection of the file set as the result
-        """
-        return reduce(lambda a, b: a & b, [self._match_nodes(k, v, nodetype) for k, v in factors.items()])
-
-    def graph_view(self, include: Union[str, List[str]] = None,
-                   exclude: Union[str, List[str]] = None) -> nx.Graph:
-        """
-        Returns a view (not a copy) into the data graph but hiding any nodes in `exclude` and any
-        nodes that don't have a path to any node in `include`.
-        :param include: Nodes that all resulting graph nodes should have a path to
-        :param exclude: Nodes that should be included
-        :return: networkx.Graph
-        """
-        if isinstance(include, str):
-            include = [include]
-        elif include is None:
-            include = []
-        if isinstance(exclude, str):
-            exclude = [exclude]
-        elif exclude is None:
-            exclude = []
-        view = self.graph
-        if include:
-            view = nx.subgraph_view(view, lambda n: any(nx.has_path(self.graph, n, i) for i in include))
-        if exclude:
-            view = nx.subgraph_view(view, lambda n: not any(n.startswith(i) for i in exclude))
-        isolates = nx.isolates(view)
-        view = nx.subgraph_view(view, lambda n: n not in isolates)
-        return view
+    def traversal_path(self, start, end):
+        multiplicity, direction, path = self.node_implies_plurality_of(start, end)
+        a, b = path[:-1], path[1:]
+        if direction == 'above':
+            b, a = a, b
+            plurals = [self.relation_graph.edges[(n1, n2)]['multiplicity'] for n1, n2 in zip(a, b)]
+            names = [self.plural_name(other) if is_plural else other for other, is_plural in zip(path[1:], plurals)]
+        else:
+            names = [self.plural_name(p) for p in path[1:]]
+        if start in self.singular_factors or start in self.singular_idnames:
+            if self.is_singular_name(names[0]):
+                names.insert(0, start)
+            else:
+                names.insert(0, self.plural_name(start))
+        if end in self.singular_factors or end in self.singular_idnames:
+            if self.is_singular_name(names[-1]):
+                names.append(end)
+            else:
+                names.append(self.plural_name(end))
+        return names
 
     def node_implies_plurality_of(self, start_node, implication_node):
-        if implication_node in self.relation_graph.descendants(start_node):
-            return True
+        start_factor, implication_factor = None, None
+        if start_node in self.singular_factors or start_node in self.singular_idnames:
+            start_factor = start_node
+            start_nodes = [n for n, data in self.relation_graph.nodes(data=True) if start_node in data['factors']]
         else:
-            edges = nx.shortest_path(self.relation_graph.reverse(), start_node, implication_node)
-            return any(self.relation_graph.edges[(n1, n2)]['multiplicity'] > 1 for n1, n2 in zip(edges[:-1], edges[1:]))
+            start_nodes = [start_node]
+        if implication_node in self.singular_factors or implication_node in self.singular_idnames:
+            implication_factor = implication_node
+            implication_nodes = [n for n, data in self.relation_graph.nodes(data=True) if implication_node in data['factors']]
+        else:
+            implication_nodes = [implication_node]
+        paths = []
+        for start, implication in product(start_nodes, implication_nodes):
+            if nx.has_path(self.relation_graph, start, implication):
+                paths.append((nx.shortest_path(self.relation_graph, start, implication), 'below'))
+            elif nx.has_path(self.relation_graph, implication, start):
+                paths.append((nx.shortest_path(self.relation_graph, implication, start)[::-1], 'above'))
+        paths.sort(key=lambda x: len(x[0]))
+        if not len(paths):
+            raise networkx.exception.NodeNotFound(f'{start_node} or {implication_node} not found')
+        path, direction = paths[0]
+        if len(path) == 1:
+            return False, 'above', path
+        if direction == 'below':
+            if self.relation_graph.nodes[path[-1]]['is_file']:
+                multiplicity = False
+            else:
+                multiplicity = True
+        else:
+            multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
+        return multiplicity, direction, path
 
-    def __getitem__(self, address):
-        return HeterogeneousHierarchy(self, address)
+    def is_singular_idname(self, value):
+        return value in self.singular_idnames
 
-    def __getattr__(self, item):
-        return HeterogeneousHierarchy(self, Address()).__getattr__(item)
+    def is_plural_idname(self, value):
+        return value in self.plural_idnames
 
+    def is_plural_factor(self, value):
+        return value in self.plural_factors
 
-class Indexable:
-    def __init__(self, data: Data, address: Address):
-        self.data = data
-        self.address = address
-
-    def index_by_hierarchy_name(self, hierarchy_name):
-        raise NotImplementedError
-
-    def index_by_address(self, address):
-        return HeterogeneousHierarchy(self.data, self.address & address)
+    def is_singular_factor(self, value):
+        return value in self.singular_factors
 
     def plural_name(self, singular_name):
-        if singular_name in self.data.factors:
-            return singular_name+'s'
-        elif singular_name in self.data.hierarchies:
-            return self.data.hierarchies[singular_name].plural_name
+        if singular_name in self.singular_idnames:
+            return singular_name + 's'
         else:
-            raise KeyError(f"{singular_name} is not a valid singular name")
+            try:
+                return self.singular_factors[singular_name] + 's'
+            except KeyError:
+                return self.singular_hierarchies[singular_name].plural_name
 
     def singular_name(self, plural_name):
-        if plural_name in self.data.factors:
-            return plural_name[:-1]  # remove the 's'
-        elif plural_name in self.data.hierarchies:
-            return self.data.hierarchies[plural_name].__class__.__name__.lower()
+        if plural_name in self.plural_idnames:
+            return plural_name[:-1]
         else:
-            raise KeyError(f"{plural_name} is not a valid plural name")
+            try:
+                return self.plural_factors[plural_name]
+            except KeyError:
+                return self.plural_hierarchies[plural_name].singular_name
 
     def is_plural_name(self, name):
         """
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
-        try:
-            return self.plural_name(name) == name
-        except KeyError:
-            return self.singular_name(name) == name
+        return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
 
-    def node_expected_plural(self, name):
-        """
-        Returns True if the current hierarchy object expects name to be plural by looking at the
-        relation graph
-        """
-        raise NotImplementedError
+    def is_singular_name(self, name):
+        return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
 
-
-class HeterogeneousHierarchy(Indexable):
-    """
-	.<other> - data[Address(vph='green')].vph
-		- if <other> is in the address, returns other
-		- else raise IndexError
-	.<other>s - data.OBs
-		- returns HomogeneousStore
-	[Address()] - data[Address(vph='green')]
-		- Returns HeterogeneousStore filtered by the combined address
-	[key]
-		- Not implemented
-    """
     def __getitem__(self, address):
-        if isinstance(address, Address):
-            return self.index_by_address(address)
-        else:
-            raise NotImplementedError("Cannot index by an id over multiple heterogeneous hierarchies")
-
-    def node_expected_plural(self, name):
-        return True
-
-    def index_by_hierarchy_name(self, hierarchy_name):
-        try:
-            self.address[hierarchy_name]
-        except KeyError:
-            if not self.is_plural_name(hierarchy_name):
-                raise NotImplementedError(f"Can only index plural hierarchies in a heterogeneous address")
-            return HomogeneousHierarchy(self.data, self.address, hierarchy_name)
+        return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
 
     def __getattr__(self, item):
-        return self.index_by_hierarchy_name(item)
-
-
-class HomogeneousHierarchy(Indexable):
-    """
-	.<other> - OBs.OBspec
-		- returns Hierarchy/factor/id/file
-	.<other>s
-		- return HomogeneousStore (e.g. ob.l1.singles)
-	[Address()]
-		- return Hierarchy if address describes a unique object
-		- return HomogeneousStore if address contains some missing factors
-		- return HomogeneousStore  if not
-		- raise IndexError if address is incompatible
-	[key] - OBs[obid]
-		- if indexable by key, return Hierarchy
-    """
-    def __init__(self, data: Data, address: Address, nodetype: str):
-        super().__init__(data, address)
-        self.nodetype = nodetype
-
-    def node_expected_plural(self, name):
-        return self.data.node_implies_plurality_of(self.nodetype, name)
-
-    def index_by_id(self, id_value):
-        nodename = f'f{self.nodetype.capitalize()}({id_value})'
-        return  self.nodetype(id_value)
-
-    def __getitem__(self, item):
-        if isinstance(item, Address):
-            return self.index_by_address(item)
-        else:
-            return self.index_by_id(item)
-
+        return HeterogeneousHierarchy(self, BasicQuery()).__getattr__(item)
 
 
 class OurData(Data):

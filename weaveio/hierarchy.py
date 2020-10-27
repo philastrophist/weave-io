@@ -1,14 +1,19 @@
-from pathlib import Path
-from typing import Union, Any
+import inspect
+from typing import Tuple, Dict, Type, Union, List
 
 import networkx as nx
-from astropy.io import fits
-from astropy.table import Table
+import xxhash
 from graphviz import Source
+from tqdm import tqdm
 
 from .config_tables import progtemp_config
-from .graph import Graph
+from .graph import Graph, Node, Relationship, ContextError, Unwind
+from .utilities import Varname
 
+
+def chunker(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
 def graph2pdf(graph, ftitle):
     dot = nx.nx_pydot.to_pydot(graph)
@@ -38,13 +43,25 @@ l1file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightblue, 'shap
 l2file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightgreen, 'shape': 'box', 'edgecolor': lightgreen}
 rawfile_attrs = l1file_attrs
 
+FORBIDDEN_LABELS = []
+FORBIDDEN_PROPERTY_NAMES = []
+FORBIDDEN_LABEL_PREFIXES = ['_']
+FORBIDDEN_PROPERTY_PREFIXES = ['_']
+
+
+class RuleBreakingException(Exception):
+    pass
+
 
 class Multiple:
     def __init__(self, node, minnumber=1, maxnumber=None):
         self.node = node
         self.minnumber = minnumber
         self.maxnumber = maxnumber
-        self.name = node.__name__.lower()+'s'
+        self.name = node.plural_name
+        self.singular_name = node.singular_name
+        self.plural_name = node.plural_name
+        self.idname = self.node.idname
         try:
             self.factors =  self.node.factors
         except AttributeError:
@@ -58,296 +75,318 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
-class Graphable:
-    idname = None
+class GraphableMeta(type):
+    def __new__(meta, name: str, bases, dct):
+        if dct.get('plural_name', None) is None:
+            dct['plural_name'] = name.lower() + 's'
+        dct['singular_name'] = name.lower()
+        dct['plural_name'] = dct['plural_name'].lower()
+        dct['singular_name'] = dct['singular_name'].lower()
+        if not isinstance(dct.get('idname', ''), str):
+            raise RuleBreakingException(f"{name}.idname must be a string")
+        if name[0] != name.capitalize()[0] or '_' in name:
+            raise RuleBreakingException(f"{name} must have `CamelCaseName` style name")
+        for factor in dct.get('factors', []) + ['idname'] + [dct['singular_name'], dct['plural_name']]:
+            if factor != factor.lower():
+                raise RuleBreakingException(f"{name}.{factor} must have `lower_snake_case` style name")
+            if factor in FORBIDDEN_PROPERTY_NAMES:
+                raise RuleBreakingException(f"The name {factor} is not allowed for class {name}")
+            if any(factor.startswith(p) for p in FORBIDDEN_PROPERTY_PREFIXES):
+                raise RuleBreakingException(f"The name {factor} may not start with any of {FORBIDDEN_PROPERTY_PREFIXES} for {name}")
+        r = super(GraphableMeta, meta).__new__(meta, name, bases, dct)
+        return r
+
+
+class Graphable(metaclass=GraphableMeta):
+    idname = 'id'
     name = None
     identifier = None
-    indexers = []
+    indexer = None
     type_graph_attrs = {}
+    plural_name = None
+    singular_name = None
+    parents = []
+    uses_tables = False
+    factors = []
+    data = None
+    query = None
 
-    def __init__(self, **nodes):
-        graph = Graph.get_context()  # type: Graph
-        graph.add_node(self.__class__.__name__, peripheries=2, **self.type_graph_attrs)
-        idname = self.idname
-        if self.idname is not None:
-            idname = self.idname.lower()
-        graph.add_node(self.name, idname=idname, identifier=self.identifier, **self.type_graph_attrs)
-        color = graph.nodes[self.name]['edgecolor']
-        graph.add_edge(self.name, self.__class__.__name__, color=color, type='is_a', label='is_a')
-        for k, node_list in nodes.items():
-            for node in node_list:
-                if k in [i.lower() for i in self.indexers]:
+    @classmethod
+    def requirement_names(cls):
+        l = []
+        for p in cls.parents:
+            if isinstance(p, type):
+                if issubclass(p, Graphable):
+                    l.append(p.singular_name)
+            else:
+                if isinstance(p, Multiple):
+                    l.append(p.plural_name)
+                else:
+                    raise RuleBreakingException(f"The parent list of a Hierarchy must contain "
+                                                f"only other Hierarchies or Multiple(Hierarchy)")
+        return l
+
+    def add_parent_data(self, data):
+        self.data = data
+
+    def add_parent_query(self, query):
+        self.query = query
+
+    def __getattr__(self, item):
+        if self.query is not None:
+            return getattr(self.query, item)
+        raise AttributeError(f"Query not added to {self}, cannot search for {self}.{item}")
+
+    @property
+    def neotypes(self):
+        clses = [i.__name__ for i in inspect.getmro(self.__class__)]
+        clses = clses[:clses.index('Graphable')]
+        return clses[::-1]
+
+    @property
+    def neoproperties(self):
+        if self.identifier is None:
+            d = {self.idname: 'None'}
+            d['id'] = 'None'
+        else:
+            d = {self.idname: self.identifier}
+            d['id'] = self.identifier
+        for f in self.factors:
+                d[f.lower()] = getattr(self, f.lower())
+        return d
+
+    def __init__(self, **predecessors):
+        self.predecessors = predecessors
+        self.data = None
+        try:
+            graph = Graph.get_context()  # type: Graph
+            self.node = graph.add_node(*self.neotypes, **self.neoproperties)
+            for k, node_list in predecessors.items():
+                if self.indexer is None:
+                    type = 'is_required_by'
+                if k in self.indexer.lower():
                     type = 'indexes'
-                    label = type
                 else:
                     type = 'is_required_by'
-                    label = ''
-                graph.add_edge(node.name, self.name, type=type, label=label,
-                               color=graph.nodes[self.name]['edgecolor'])
-
-
-class Factor(Graphable):
-    type_graph_attrs = factor_attrs
-
-    def __init__(self, name, value):
-        self.idname = name
-        self.identifier = value
-        self.name = f"{self.idname}({self.identifier})"
-        super(Factor, self).__init__()
-        graph = Graph.get_context()  # type: Graph
-        graph.add_node(self.idname, peripheries=2, **self.type_graph_attrs)
-        graph.add_edge(self.idname, self.name)
-
-
-    def __repr__(self):
-        return f"<Factor({self.idname}={self.identifier})>"
+                if isinstance(node_list, (list, tuple)):
+                    for inode, node in enumerate(node_list):
+                        graph.add_relationship(node.node, self.node, type, order=inode)
+                else:
+                    graph.add_relationship(node_list.node, self.node, type, order=None)
+        except ContextError:
+            pass
 
 
 class Hierarchy(Graphable):
-    idname = None
+    identifier_builder = []
     parents = []
     factors = []
-    indexers = []
+    indexer = None
     type_graph_attrs = hierarchy_attrs
 
     def __repr__(self):
         return self.name
 
-    def __init__(self, **kwargs):
+    def generate_identifier(self):
+        """
+        if `idname` is set, then return the identifier set at instantiation
+        otherwise, make an identifier by stitching together identifiers of its input
+        """
+        if self.identifier is not None:
+            return self.identifier
+        elif len(self.identifier_builder):
+            strings = []
+            identifiers = []
+            for i in self.identifier_builder:
+                obj = getattr(self, i)  # type: Union[List[Union[Hierarchy, str]], Hierarchy, str]
+                if not isinstance(obj, (list, tuple)):
+                    obj = [obj]
+                for o in obj:
+                    if isinstance(o, Hierarchy):
+                        identifiers.append(o.identifier)
+                    else:
+                        identifiers.append(o)
+            for i in identifiers:
+                if isinstance(i, (Unwind, Varname)):
+                    s = str(i)
+                    strings += ['+', s, '+']
+                else:
+                    s = str(i)
+                    strings.append(f"+'{s}'+")
+            final = ''.join(strings).strip('+').replace('++', '+').replace("''", "")
+            return Varname(final)
+        else:
+            return None
+
+    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str]]:
+        """
+        Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
+        """
         parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
-        if self.idname is not None:
-            self.identifier = kwargs.pop(self.idname.lower())
-            setattr(self, self.idname, self.identifier)
+        return specification, factors
 
+    def __init__(self, tables=None, **kwargs):
+        self.uses_tables = False
+        if tables is None:
+            for value in kwargs.values():
+                if isinstance(value, Unwind):
+                    self.uses_tables = True
+                elif isinstance(value, Hierarchy):
+                    self.uses_tables = value.uses_tables
+        else:
+            self.uses_tables = True
+        if self.idname not in kwargs:
+            self.identifier = None
+        else:
+            self.identifier = kwargs.pop(self.idname)
+        specification, factors = self.make_specification()
+        # add any data held in a neo4j unwind table
+        for k, v in specification.items():
+            if k not in kwargs:
+                if tables is not None:
+                    if k in tables:
+                        kwargs[k] = tables[k]
+        self._kwargs = kwargs.copy()
+        # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
         for name, nodetype in specification.items():
             value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
                 if not isinstance(value, (tuple, list)):
-                    raise TypeError(f"{name} expects multiple elements")
-                if name in factors:
-                    value = [Factor(name, val) for val in value]
-            elif name in factors:
-                value = [Factor(name, value)]
+                    if isinstance(value, Graphable):
+                        if not getattr(value, 'uses_tables', False):
+                            raise TypeError(f"{name} expects multiple elements")
             else:
                 value = [value]
-            predecessors[name] = value
+            if name not in factors:
+                predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
-        if self.idname is not None:
-            self.name = f"{self.__class__.__name__}({self.idname.lower()}={self.identifier})"
-        else:
-            name = ''
-            for predecessor_list in predecessors.values():
-                for predecessor in predecessor_list:
-                    name += predecessor.name
-            name = '#' + str(hash(name))  # TODO: urgently needs replacing with a reliable hash
-            self.identifier = name
-            self.name = f"{self.__class__.__name__}({name})"
+        self.predecessors = predecessors
+        if self.identifier is None:
+            self.identifier = self.generate_identifier()
+        setattr(self, self.idname, self.identifier)
+        self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
 
 
-class File(Graphable):
-    idname = 'fname'
-    constructed_from = []
-    type_graph_attrs = l1file_attrs
-
-    def __init__(self, fname: Union[Path, str]):
-        self.fname = Path(fname)
-        self.identifier = str(self.fname)
-        self.name = f'{self.__class__.__name__}({self.fname})'
-        self.predecessors = self.read()
-        super(File, self).__init__(**self.predecessors)
-
-    def match(self, directory: Path):
-        raise NotImplementedError
-
-
-    @property
-    def graph_name(self):
-        return f"File({self.fname})"
-
-    def read(self):
-        raise NotImplementedError
-
-
 class ArmConfig(Hierarchy):
-    factors = ['Resolution', 'VPH', 'Camera']
+    factors = ['resolution', 'vph', 'camera', 'colour']
+    idname = 'armcode'
+    identifier_builder = ['resolution', 'vph', 'camera']
+
+    def __init__(self, tables=None, **kwargs):
+        if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
+            kwargs['colour'] = 'green'
+        else:
+            kwargs['colour'] = kwargs['camera']
+        super().__init__(tables, **kwargs)
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
         config = progtemp_config.loc[progtemp_code[0]]
-        red = cls(resolution=config.resolution, vph=config.red_vph, camera='red')
-        blue = cls(resolution=config.resolution, vph=config.blue_vph, camera='blue')
+        red = cls(resolution=str(config.resolution), vph=int(config.red_vph), camera='red')
+        blue = cls(resolution=str(config.resolution), vph=int(config.blue_vph), camera='blue')
         return red, blue
 
 
 class ObsTemp(Hierarchy):
-    factors = ['MaxSeeing', 'MinTrans', 'MinElev', 'MinMoon', 'MaxSky']
+    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
+    idname = 'obstemp_code'
 
     @classmethod
     def from_header(cls, header):
         names = [f.lower() for f in cls.factors]
-        return cls(**{n: v for v, n in zip(list(header['OBSTEMP']), names)})
+        obstemp_code = list(header['OBSTEMP'])
+        return cls(obstemp_code=''.join(obstemp_code), **{n: v for v, n in zip(obstemp_code, names)})
 
 
-class Target(Hierarchy):
-    idname = 'CNAME'
-    factors = ['RA', 'DEC']
-
-    @classmethod
-    def from_fibinfo_row(cls, row):
-        return Target(cname=row['CNAME'], ra=row['FIBRERA'], dec=row['FIBREDEC'])
+class Survey(Hierarchy):
+    idname = 'surveyname'
 
 
-class TargetSet(Hierarchy):
-    parents = [Multiple(Target)]
+class WeaveTarget(Hierarchy):
+    idname = 'cname'
+    factors = []
+    parents = [Multiple(Survey)]
 
-    @classmethod
-    def from_fibinfo(cls, fibinfo):
-        targets = [Target.from_fibinfo_row(row) for row in fibinfo]
-        return cls(targets=targets)
+
+class Fibre(Hierarchy):
+    idname = 'fibreid'
+
+
+class FibreAssignment(Hierarchy):
+    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition', 'orientat', 'retries']
+    parents = [Fibre, WeaveTarget]
+    identifier_builder = ['fibre', 'weavetarget', 'status', 'xposition', 'yposition']
+
+
+class OBSpecTarget(Hierarchy):
+    factors = ['obid', 'targid', 'targname', 'targra', 'targdec', 'targx', 'targy', 'targepoch', 'targcat',
+               'targpmra', 'targpmdec', 'targparal', 'targuse', 'targprog', 'targprio',
+               'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
+               'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
+    identifier_builder = ['obid', 'targid', 'targname', 'targprog', 'targuse', 'targx', 'targy']
+
+
+class FibreTarget(Hierarchy):
+    parents = [FibreAssignment, OBSpecTarget]
+    identifier_builder = ['fibreassignment', 'obspectarget']
+
+
+class FibreSet(Hierarchy):
+    idname = 'obid'
+    parents = [Multiple(FibreTarget)]
+
+
+class InstrumentConfiguration(Hierarchy):
+    factors = ['mode', 'binning']
+    parents = [Multiple(ArmConfig, 2, 2)]
+    identifier_builder = ['mode', 'binning', 'armconfigs']
 
 
 class ProgTemp(Hierarchy):
-    factors = ['Mode', 'Binning']
-    parents = [Multiple(ArmConfig, 2, 2)]
+    parents = [InstrumentConfiguration]
+    factors = ['length', 'exposure_code']
+    idname = 'progtemp_code'
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
-        progtemp_code = list(map(int, progtemp_code))
-        configs = ArmConfig.from_progtemp_code(progtemp_code)
-        mode = progtemp_config.loc[progtemp_code[0]]['mode']
-        binning = progtemp_code[3]
-        return cls(mode=mode, binning=binning, armconfigs=configs)
+        progtemp_code = progtemp_code.split('.')[0]
+        progtemp_code_list = list(map(int, progtemp_code))
+        configs = ArmConfig.from_progtemp_code(progtemp_code_list)
+        mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
+        binning = progtemp_code_list[3]
+        config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
+        exposure_code = progtemp_code[2:4]
+        length = progtemp_code_list[1]
+        return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
+                   instrumentconfiguration=config)
 
 
 class OBSpec(Hierarchy):
-    factors = ['OBTitle']
-    parents = [ObsTemp, TargetSet, ProgTemp]
+    idname = 'catname'
+    factors = ['obtitle']
+    parents = [ObsTemp, FibreSet, ProgTemp]
 
 
 class OBRealisation(Hierarchy):
-    idname = 'OBID'
-    factors = ['OBStartMJD']
+    idname = 'obid'
+    factors = ['obstartmjd']
     parents = [OBSpec]
 
 
 class Exposure(Hierarchy):
     parents = [OBRealisation]
-    factors = ['ExpMJD']
+    factors = ['expmjd']
+    identifier_builder = ['expmjd']
 
 
 class Run(Hierarchy):
-    idname = 'RunID'
-    parents = [Exposure]
-    factors = ['Camera']
-    indexers = ['Camera']
-
-
-class HeaderFibinfoFile(File):
-    fibinfo_i = -1
-
-    def read(self):
-        header = fits.open(self.fname)[0].header
-        runid = header['RUN']
-        camera = header['CAMERA'].lower()[len('WEAVE'):]
-        expmjd = header['MJD-OBS']
-        res = header['VPH']
-        obstart = header['OBSTART']
-        obtitle = header['OBTITLE']
-        obid = header['OBID']
-
-        fibinfo = Table(fits.open(self.fname)[self.fibinfo_i].data)
-        progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
-        vph = progtemp_config[(progtemp_config['mode'] == progtemp.mode)
-                              & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0]
-        armconfig = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
-        obstemp = ObsTemp.from_header(header)
-        targetset = TargetSet.from_fibinfo(fibinfo)
-        obspec = OBSpec(targetset=targetset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
-        obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
-        exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
-        run = Run(runid=runid, camera=camera, exposure=exposure)
-        return {'run': [run]}
-
-
-class Raw(HeaderFibinfoFile):
-    parents = [Run]
-    fibinfo_i = 3
-
-    @classmethod
-    def match(cls, directory: Path):
-        return directory.glob('r*.fit')
-
-
-class L1Single(HeaderFibinfoFile):
-    parents = [Run]
-    constructed_from = [Raw]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('single_*.fit')
-
-
-class L1Stack(HeaderFibinfoFile):
-    parents = [OBRealisation]
-    factors = ['VPH']
-    constructed_from = [L1Single]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('stacked_*.fit')
-
-
-class L1SuperStack(File):
-    parents = [OBSpec]
-    factors = ['VPH']
-    constructed_from = [L1Single]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('superstacked_*.fit')
-
-
-class L1SuperTarget(File):
-    parents = [ArmConfig, Target]
-    factors = ['Binning', 'Mode']
-    constructed_from = [L1Single]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('[Lm]?WVE_*.fit')
-
-
-class L2Single(File):
-    parents = [Exposure]
-    constructed_from = [Multiple(L1Single, 2, 2)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('single_*_aps.fit')
-
-
-class L2Stack(File):
-    parents = [Multiple(ArmConfig, 1, 3), TargetSet]
-    factors = ['Binning', 'Mode']
-    constructed_from = [Multiple(L1Stack, 0, 3), Multiple(L1SuperStack, 0, 3)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('(super)?stacked_*_aps.fit')
-
-
-class L2SuperTarget(File):
-    parents = [Multiple(ArmConfig, 1, 3), Target]
-    factors = ['Mode', 'Binning']
-    constructed_from = [Multiple(L1SuperTarget, 2, 3)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('[Lm]?WVE_*_aps.fit')
+    idname = 'runid'
+    parents = [ArmConfig, Exposure]
+    indexer = 'armconfig'

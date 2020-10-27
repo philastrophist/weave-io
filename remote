@@ -2,6 +2,10 @@
 Requirements: 
 	1. Able to index local files and return indexed data products
 	2. Able to index remote files and cache data products locally
+	3. Able to index queries with logical arrays
+		data.OBs[data.OBs.ids > 2]  # could be done "in graph"
+		data.singles[propagate(data.singles.spectra()) < 5]  # data downloaded first and then indexed
+		
 
 Remote server may be updated at any time
 Queries return {partial_file, }
@@ -29,7 +33,7 @@ Local mode
 	3. Make query using query language
 	4. Submit query to local graph
 	5. Return `file[hdu][subindex]` or `Hierarchy object`
-	6. If query returns file for which only has partial references, request remote access
+	6. If query returns file for which it only has partial references, request remote access
 
 
 
@@ -44,3 +48,50 @@ Remote mode
 		  Essentially, this tells the local graph that there is more to the file 
     7. Stitch any partial files together
 
+
+
+
+When do we run the query?
+
+data[address][key].file.product[index]
+
+`data[address]` gives a query object
+`ob = data[address]()` returns a Solid Hierarchy object
+is ob.runs returned?
+
+.factor(), returns value
+.factors(), returns list(values)
+
+.run/s(), returns the branch of factors/hierarchies related to these but not the physical data
+
+.singles(), returns the branch and the files
+
+.spectra(), returns product (and partial files)
+
+.single.header[xxx], returns value
+.singles.header[xxx], returns list(values)
+
+"""
+>>> singles = data[Address(camera='red')].singles
+cypher(
+	(:Factor:Camera {'name': red}))-[*]->(f:File:Single)
+)
+>>> data.superstacks[singles]
+cypher(
+	(:Factor:Camera {'name': red})-[*]->(:File:Single)-[:constructs]->(f:File:Superstack)
+)
+
+>>> data[Address(camera='red', )]
+
+"""
+
+
+
+
+
+Steps:
+	* Transform input from networkx to neo4j
+		- (Add constraints on uniqueness to all nodes)
+		- Differentiate indexing/is_a/has_a links for querying 
+	* Add query language []/.  -> cypher
+	* Add local server response, {hierarchy, }
