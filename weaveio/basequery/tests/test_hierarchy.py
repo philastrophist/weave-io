@@ -2,7 +2,7 @@ import pytest
 from weaveio.basequery.hierarchy import HomogeneousHierarchyFrozenQuery, SingleHierarchyFrozenQuery, \
     HeterogeneousHierarchyFrozenQuery
 from weaveio.basequery.query import Condition
-from weaveio.basequery.tests.example_structures import HierarchyA, MyData
+from weaveio.basequery.tests.example_structures.one2one import HierarchyA, MyData
 
 
 def test_begin_with_heterogeneous():
@@ -26,7 +26,7 @@ def test_get_homogeneous_from_data():
 
 def test_index_by_single_identifier():
     data = MyData('.')
-    single = data.hierarchyas['idname']
+    single = data.hierarchyas['1']
     query = single.query
     assert isinstance(single, SingleHierarchyFrozenQuery)
     assert single._hierarchy is HierarchyA
@@ -34,4 +34,4 @@ def test_index_by_single_identifier():
     assert not query.returns
     assert not query.exist_branches
     assert len(query.matches) == 1 and query.matches[0].nodes[-1].name == 'hierarchya0'
-    assert query.conditions == Condition(query.matches[0].nodes[-1].id, '=', 'idname')
+    assert query.conditions == Condition(query.matches[0].nodes[-1].id, '=', '1')

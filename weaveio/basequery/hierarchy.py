@@ -15,6 +15,21 @@ class HierarchyFrozenQuery(FrozenQuery):
     def __getattr__(self, item):
         raise NotImplementedError
 
+    def _prepare_query(self, query):
+        raise NotImplementedError
+
+    def _execute_query(self):
+        query = self._prepare_query(copy(self.query))
+        cypher = query.to_neo4j()
+        return self._post_process(self.data.graph.execute(cypher))
+
+    def _post_process(self, result):
+        raise NotImplementedError
+
+    def __call__(self):
+        result = self._execute_query()
+        return self._post_process(result)
+
 
 class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
     def __getattr__(self, item):
@@ -40,6 +55,10 @@ class SingleHierarchyFrozenQuery(HierarchyFrozenQuery):
         self._hierarchy = hierarchy
         self._identifier = identifier
 
+    def _prepare_query(self, query):
+        query.returns.append(self.query.current_node)
+        return query
+
 
 class HomogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
     def __init__(self, handler, query: FullQuery, hierarchy: Hierarchy, parent: 'FrozenQuery'):
@@ -60,7 +79,7 @@ class HomogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _filter_by_identifier(self, identifier: Union[str,int,float]) -> SingleHierarchyFrozenQuery:
         query = copy(self.query)
-        condition = Condition(query.current_node, '==', quote(identifier))
+        condition = Condition(query.current_node.id, '=', identifier)
         if query.conditions is not None:
             query.conditions = query.conditions & condition
         else:

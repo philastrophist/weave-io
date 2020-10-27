@@ -64,7 +64,8 @@ class File(Graphable):
         super(File, self).__init__(**self.predecessors)
         self.product_data = {}
 
-    def match(self, directory: Path):
+    @classmethod
+    def match(cls, directory: Path):
         raise NotImplementedError
 
     @property

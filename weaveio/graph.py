@@ -235,6 +235,9 @@ class Graph(metaclass=ContextMeta):
         self.counter = defaultdict(int)
         return self.tx
 
+    def execute(self, cypher, **parameters):
+        return self.neograph.run(cypher, parameters)
+
     def string_properties(self, properties):
         properties = {k: Varname(v.get()) if isinstance(v, Unwind) else v for k, v in properties.items()}
         return ', '.join(f'{k}: {quote(v)}' for k, v in properties.items())
@@ -310,13 +313,16 @@ class Graph(metaclass=ContextMeta):
         return self.tx.commit()
 
     def clean_up_statement(self):
-        splits = 'WITH *\n'.join(self.split_contexts.values())
-        return splits
+        if len(self.split_contexts):
+            splits = 'WITH *\n'.join(self.split_contexts.values())
+            return splits
+        return
 
     def execute_cleanup(self):
         statement = self.clean_up_statement()
-        tx = self.neograph.auto()
-        tx.evaluate(statement)
+        if statement is not None:
+            tx = self.neograph.auto()
+            tx.evaluate(statement)
 
     def create_unique_constraint(self, label, key):
         try:

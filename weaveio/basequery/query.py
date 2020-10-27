@@ -226,11 +226,11 @@ class FullQuery(Predicate):
         super(FullQuery, self).__init__(matches, conditions, exist_branches, returns)
         self.predicates = [] if predicates is None else predicates
 
-    def to_neo4j(self, generator, mentioned_nodes=None):
+    def to_neo4j(self, mentioned_nodes=None):
         mentioned_nodes = [] if mentioned_nodes is None else mentioned_nodes
         predicate_statements = []
         for predicate in self.predicates:
-            predicate_statements.append(predicate.to_neo4j(generator, mentioned_nodes))
+            predicate_statements.append(predicate.to_neo4j(mentioned_nodes))
         predicates = '\n\n'.join(predicate_statements)
         main = '\n'.join([f'MATCH {p.stringify(mentioned_nodes)}' for p in self.matches])
         if self.conditions:
