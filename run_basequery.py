@@ -1,19 +1,23 @@
-from weaveio.basequery.handler import Handler, Node, Path, Generator, Predicate, FullQuery, Branch
+from weaveio.basequery.query import Node, Path, Generator, Branch, Predicate, FullQuery
 
-# g = Generator()
-#
-# run0 = g.node('Run')
-# config0 = g.node('ArmConfig')
-#
-# p = Predicate(
-#     Path(run0, '<--', config0),
-#     exist_branches=[
-#       Branch(Path(g.node('WeaveTarget', cname="WVE_02174085-0324395"), '-[*]->', run0)), '&',
-#       Branch(Path(g.node('WeaveTarget', cname="WVE_02180982-0332433"), '-[*]->', run0)), '&',
-#       Branch(Path(g.node('ArmConfig', camera='red'), '-->', run0)),
-#     ],
-#     return_properties=[(config0, 'vph')]
-# )
-# print(p.make_neo4j_statement(g))
 
-Handler
+# data.runs[runid].exposure.runs.vphs
+
+query = FullQuery()
+gen = Generator()
+
+
+
+query = query.append_to_root('<--', Path(gen.node('Run')))  # data.runs
+query = query.identify_in_root('1002813')  # data.runs[runid]
+query = query.append_to_root('<--', Path(gen.node('Exposure')))  # data.runs[runid].exposure
+query = FullQuery(Path(gen.node('Run')), exist_branches=query.to_branches())
+
+query = query.merge_into_branches(Path(query.root.nodes[-2], '<-', gen.node('InstrumentConfiguration')))
+
+
+# query = query.return_property(query.root.nodes[-2], 'runid')
+query = query.return_property(gen.node('InstrumentConfiguration', 'instrumentconfiguration0'), 'vph')
+# query = query.return_node(query.root.nodes[-2])
+print(query.to_neo4j(gen))
+

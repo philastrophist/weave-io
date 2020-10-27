@@ -1,7 +1,7 @@
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Union, Tuple
+from typing import Union, Tuple, Dict
 
 import pandas as pd
 from astropy.io import fits
@@ -71,7 +71,7 @@ class File(Graphable):
     def graph_name(self):
         return f"File({self.fname})"
 
-    def read(self):
+    def read(self) -> Tuple[Dict[str, 'Hierarchy']]:
         raise NotImplementedError
 
     def build_index(self) -> None:
