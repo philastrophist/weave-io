@@ -11,6 +11,10 @@ class FrozenQuery:
         self.query = query
         self.parent = parent
 
+    @property
+    def data(self):
+        return self.handler.data
+
     def _traverse_frozenquery_stages(self):
         query = self
         yield query

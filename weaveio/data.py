@@ -13,6 +13,8 @@ import py2neo
 from tqdm import tqdm
 
 from weaveio.address import Address
+from weaveio.basequery.handler import Handler
+from weaveio.basequery.hierarchy import HeterogeneousHierarchyFrozenQuery
 from weaveio.graph import Graph, Unwind
 from weaveio.hierarchy import Multiple
 from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
@@ -70,7 +72,10 @@ class Data:
     filetypes = []
 
     def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002):
-        self.graph = Graph(host=host, port=port)
+        self.handler = Handler(self)
+        self.host = host
+        self.port = port
+        self._graph = None
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.address = Address()
@@ -94,6 +99,12 @@ class Data:
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
         self.make_relation_graph()
+
+    @property
+    def graph(self):
+        if self._graph is None:
+            self._graph = Graph(host=self.host, port=self.port)
+        return self._graph
 
     def make_relation_graph(self):
         self.relation_graph = nx.DiGraph()
@@ -274,10 +285,12 @@ class Data:
         return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
 
     def __getitem__(self, address):
-        return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
+        return self.handler.begin_with_heterogeneous().__getitem__(address)
+        # return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
 
     def __getattr__(self, item):
-        return HeterogeneousHierarchy(self, BasicQuery()).__getattr__(item)
+        return self.handler.begin_with_heterogeneous().__getattr__(item)
+        # return HeterogeneousHierarchy(self, BasicQuery()).__getattr__(item)
 
 
 class OurData(Data):

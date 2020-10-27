@@ -206,8 +206,6 @@ class FullQuery(Predicate):
         props = dict(props)
         return f"<root={self.root} exist={len(self.exist_branches)} predicates={len(self.predicates)} properties={props}>"
 
-    def to_branches(self):
-
 
     def return_node(self, node):
         query = copy(self)
