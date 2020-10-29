@@ -18,6 +18,15 @@ def test_matches_must_overlap():
         FullQuery([path1, path2])
 
 
+def test_current_node():
+    g = Generator()
+    a, b, c = g.nodes('A', 'B', 'C')
+    path1 = Path(a, '->', b)
+    path2 = Path(b, '->', c)
+    query = FullQuery([path1, path2])
+    assert query.current_node == c
+
+
 def test_matches_only():
     g = Generator()
     a, b, c = g.nodes('A', 'B', 'C')

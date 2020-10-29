@@ -120,6 +120,10 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
     def __getitem__(self, item):
         return self._filter_by_identifier(item)
 
+    def _get_singular_hierarchy(self, name):
+        plural = self.data.plural_name(name)
+        raise AmbiguousPathError(f"You have requested an ambiguous single {name}. Use .{plural}")
+
     def _filter_by_identifier(self, identifier: Union[str,int,float]) -> SingleHierarchyFrozenQuery:
         query = copy(self.query)
         condition = Condition(query.current_node.id, '=', identifier)

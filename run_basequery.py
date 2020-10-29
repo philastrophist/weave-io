@@ -6,7 +6,7 @@ from weaveio.basequery.query import Node, Path, Generator, Branch, Predicate, Fu
 from weaveio.data import OurData
 
 data = OurData('data')
-thing = data.runs['1002813'].exposures.runs
+thing = data.runs['1002813'].exposure
 print(thing)
 print(thing.query.to_neo4j())
 # multiplicity, direction, path = data.node_implies_plurality_of('run', 'weavetarget')
