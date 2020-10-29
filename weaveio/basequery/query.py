@@ -1,12 +1,12 @@
 from collections import defaultdict
 from typing import List, Union, Tuple, Any
-from copy import deepcopy as copy
+from copy import copy
 
 from weaveio.utilities import quote
 
 
 class Node:
-    def __init__(self, label, name=None, **properties):
+    def __init__(self, label=None, name=None, **properties):
         self.label = label
         self.properties = properties
         self.name = name
@@ -22,12 +22,13 @@ class Node:
 
     def __repr__(self):
         name = '' if self.name is None else self.name
+        label = '' if self.label is None else f':{self.label}'
         if self.properties:
             properties = ''
             for k, v in self.properties.items():
                 properties += f'{k}: {quote(v)}'
-            return f"({name}:{self.label} {{{properties}}})"
-        return f"({name}:{self.label})"
+            return f"({name}{label} {{{properties}}})"
+        return f"({name}{label})"
 
     def __eq__(self, other):
         return (self.label == other.label) and \
@@ -88,17 +89,17 @@ class Path:
         return len(self.nodes)
 
 
+
 class Generator:
     def __init__(self):
         self.node_counter = defaultdict(int)
         self.property_name_counter = defaultdict(int)
 
-    def node(self, label, name=None, **properties):
+    def node(self, label=None, name=None, **properties):
         if name is None:
-            self.node_counter[label] += 1
-            return Node(label, ''.join([label.lower(), str(self.node_counter[label] - 1)]), **properties)
-        else:
-            return Node(label, name, **properties)
+            self.node_counter[str(label)] += 1
+            name = ''.join([str(label).lower(), str(self.node_counter[str(label)] - 1)])
+        return Node(label, name, **properties)
 
     def nodes(self, *labels):
         return [self.node(l) for l in labels]
@@ -142,8 +143,9 @@ class Exists:
 
 class BaseQuery:
     """A Query which consists of a root path, where conditions"""
-    def __init__(self, matches: List[Path] = None, conditions: Condition = None):
+    def __init__(self, matches: List[Path] = None, branches: List[Path] = None, conditions: Condition = None):
         self.matches = [] if matches is None else matches
+        self.branches = [] if branches is None else branches
         self.conditions = conditions
         for i, path in enumerate(self.matches):
             if i > 0:
@@ -175,7 +177,6 @@ class BaseQuery:
         return self.matches[-1].nodes[-1]
 
 
-
 class Branch(BaseQuery):
         """
         Branches are paths which are attached to other queries in the WHERE EXISTS {...} clause.
@@ -189,11 +190,12 @@ class Predicate(BaseQuery):
     They are run before the main query and return collected unordered distinct node properties.
     Predicates cannot return nodes
     """
-    def __init__(self, matches: Path = None,
-                 conditions:  Condition = None,
+    def __init__(self, matches: List[Path] = None,
+                 branches: List[Path] = None,
+                 conditions: Condition = None,
                  exist_branches: Exists = None,
                  returns: List[Union[Node, NodeProperty]] = None):
-        super(Predicate, self).__init__(matches, conditions)
+        super(Predicate, self).__init__(matches, branches, conditions)
         self.returns = [] if returns is None else returns
         for node in self.returns:
             if isinstance(node, NodeProperty):
@@ -219,12 +221,17 @@ class FullQuery(Predicate):
         return_properties: The pairs of (node, property_name) to return
     """
     def __init__(self, matches: List[Path] = None,
+                 branches: List[Path] = None,
                  conditions: Condition = None,
                  exist_branches: Exists = None,
                  predicates: List[Union[List[Union[str, Predicate]], str, Predicate]]  = None,
                  returns: List[Union[Node, NodeProperty]] = None):
-        super(FullQuery, self).__init__(matches, conditions, exist_branches, returns)
+        super(FullQuery, self).__init__(matches, branches, conditions, exist_branches, returns)
         self.predicates = [] if predicates is None else predicates
+
+    def copy(self):
+        return self.__class__(copy(self.matches), copy(self.branches), self.conditions, self.exist_branches,
+                              copy(self.predicates), copy(self.returns))
 
     def to_neo4j(self, mentioned_nodes=None):
         mentioned_nodes = [] if mentioned_nodes is None else mentioned_nodes
@@ -237,8 +244,11 @@ class FullQuery(Predicate):
             wheres = f'\nWHERE {self.conditions}'
         else:
             wheres = ''
+        optionals = '\n'.join([f"OPTIONAL MATCH {p.stringify(mentioned_nodes)}" for p in self.branches])
+        if optionals:
+            optionals = '\n' + optionals
         returns = ', '.join([i.name for i in self.returns])
-        return f'{predicates}\n\n{main}{wheres}\nRETURN {returns}'.strip().strip(',')
+        return f'{predicates}\n\n{main}{wheres}{optionals}\nRETURN {returns}'.strip().strip(',')
 
 
 

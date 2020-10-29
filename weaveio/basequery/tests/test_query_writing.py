@@ -73,6 +73,6 @@ def test_condition_on_property():
     path1 = Path(a, '->', b)
     path2 = Path(b, '->', c)
     condition = Condition(a.id, '=', 'idvalue')
-    query = FullQuery([path1, path2], condition)
+    query = FullQuery([path1, path2], conditions=condition)
     q = query.to_neo4j()
     assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nWHERE (a0.id = \'idvalue\')\nRETURN'

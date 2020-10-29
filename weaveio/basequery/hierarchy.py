@@ -1,10 +1,14 @@
+from collections import defaultdict
 from copy import copy
 from typing import List, Tuple, Union, Any
+
+import py2neo
 
 from .query import AmbiguousPathError, FullQuery, Node, Path, Condition
 from ..address import Address
 from .common import NotYetImplementedError, FrozenQuery
-from ..hierarchy import Hierarchy
+from ..hierarchy import Hierarchy, Multiple
+from ..neo4j import parse_apoc_tree
 from ..utilities import quote
 
 
@@ -15,23 +19,10 @@ class HierarchyFrozenQuery(FrozenQuery):
     def __getattr__(self, item):
         raise NotImplementedError
 
-    def _prepare_query(self, query):
-        raise NotImplementedError
-
-    def _execute_query(self):
-        query = self._prepare_query(copy(self.query))
-        cypher = query.to_neo4j()
-        return self._post_process(self.data.graph.execute(cypher))
-
-    def _post_process(self, result):
-        raise NotImplementedError
-
-    def __call__(self):
-        result = self._execute_query()
-        return self._post_process(result)
-
 
 class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
+    executable = False
+
     def __getattr__(self, item):
         if item in self.data.factors:
             return self._get_set_of_factors()
@@ -50,9 +41,44 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
 
 class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
-    def _prepare_query(self, query):
-        query.returns.append(self.query.current_node)
+    def __init__(self, handler, query: FullQuery, hierarchy: Hierarchy, parent: 'FrozenQuery'):
+        super().__init__(handler, query, parent)
+        self._hierarchy = hierarchy
+
+    def _prepare_query(self):
+        query = super(DefiniteHierarchyFrozenQuery, self)._prepare_query()
+        indexer = self.handler.generator.node()
+        query.branches.append(Path(self.query.current_node, '<-[:INDEXES]-', indexer))
+        query.returns += [self.query.current_node, indexer]
         return query
+
+    def _process_result_row(self, row, nodetype):
+        node, indexer = row
+        inputs = {}
+        for f in nodetype.factors:
+            inputs[f] = node[f]
+        inputs[nodetype.idname] = node[nodetype.idname]
+        base_query = getattr(self, nodetype.plural_name)[node['id']]
+        for p in nodetype.parents:
+            if p.singular_name == nodetype.indexer:
+                inputs[p.singular_name] = self._process_result_row([indexer, {}], p)
+            elif isinstance(p, Multiple):
+                inputs[p.plural_name] = getattr(base_query, p.plural_name)
+            else:
+                inputs[p.singular_name] = getattr(base_query, p.singular_name)
+        h = nodetype(**inputs)
+        h.add_parent_query(base_query)
+        return h
+
+    def _post_process(self, result: py2neo.Cursor):
+        result = result.to_table()
+        if len(result) == 1 and result[0] is None:
+            return []
+        results = []
+        for row in result:
+            h = self._process_result_row(row, self._hierarchy)
+            results.append(h)
+        return results
 
     def __getattr__(self, item):
         if item in self.data.singular_factors:
@@ -96,10 +122,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
 class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
     def __init__(self, handler, query: FullQuery, hierarchy: Hierarchy, identifier: Any, parent: 'FrozenQuery'):
-        super().__init__(handler, query, parent)
-        self._hierarchy = hierarchy
+        super().__init__(handler, query, hierarchy, parent)
         self._identifier = identifier
-
 
     def _get_singular_hierarchy(self, name):
         query = copy(self.query)
@@ -111,12 +135,23 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         h = self.handler.data.singular_hierarchies[name]
         return SingleHierarchyFrozenQuery(self.handler, query, h, None, self)
 
+    def _post_process(self, result: py2neo.Cursor):
+        rows = super()._post_process(result)
+        if len(rows) != 1:
+            idents = defaultdict(list)
+            for frozen in self._traverse_frozenquery_stages():
+                if isinstance(frozen, SingleHierarchyFrozenQuery):
+                    idents[frozen._hierarchy.idname].append(frozen._identifier)
+                elif isinstance(frozen, IdentifiedHomogeneousHierarchyFrozenQuery):
+                    idents[frozen._hierarchy.idname] += frozen._identifiers
+            if idents:
+                d = {k: [i for i in v if i is not None] for k,v in idents.items()}
+                d = {k: v for k, v in d.items() if len(v)}
+                raise KeyError(f"One or more identifiers in {d} are not present in the database")
+        return rows[0]
+
 
 class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
-    def __init__(self, handler, query: FullQuery, hierarchy: Hierarchy, parent: 'FrozenQuery'):
-        super().__init__(handler, query, parent)
-        self._hierarchy = hierarchy
-
     def __getitem__(self, item):
         return self._filter_by_identifier(item)
 
@@ -132,3 +167,9 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         else:
             query.conditions = condition
         return SingleHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifier, self)
+
+
+class IdentifiedHomogeneousHierarchyFrozenQuery(HomogeneousHierarchyFrozenQuery):
+    def __init__(self, handler, query: FullQuery, hierarchy: Hierarchy, identifiers: List[Any], parent: 'FrozenQuery'):
+        super().__init__(handler, query, hierarchy, parent)
+        self._identifiers = identifiers
