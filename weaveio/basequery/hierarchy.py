@@ -1,5 +1,5 @@
 from collections import defaultdict
-from copy import copy
+from copy import deepcopy
 from typing import List, Tuple, Union, Any
 
 import py2neo
@@ -112,7 +112,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         return multiplicity, path
 
     def _get_plural_hierarchy(self, name):
-        query = copy(self.query)
+        query = deepcopy(self.query)
         multiplicity, path = self.node_implies_plurality_of(name)
         # dont check for multiplicity here, since plural is requested anyway
         query.matches.append(path)
@@ -126,7 +126,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         self._identifier = identifier
 
     def _get_singular_hierarchy(self, name):
-        query = copy(self.query)
+        query = deepcopy(self.query)
         multiplicity, path = self.node_implies_plurality_of(name)
         if multiplicity:
             plural = self.data.plural_name(name)
@@ -153,14 +153,27 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
 
 class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
     def __getitem__(self, item):
+        if isinstance(item, (list, tuple)):
+            return self._filter_by_identifiers(item)
         return self._filter_by_identifier(item)
 
     def _get_singular_hierarchy(self, name):
         plural = self.data.plural_name(name)
         raise AmbiguousPathError(f"You have requested an ambiguous single {name}. Use .{plural}")
 
+    def _filter_by_identifiers(self, identifiers: List[Union[str,int,float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
+        query = deepcopy(self.query)
+        ids = self.handler.generator.data(identifiers)
+        query.matches.insert(-1, ids)  # give the query the data before the last match
+        condition = Condition(query.current_node.id, '=', ids)
+        if query.conditions is not None:
+            query.conditions = query.conditions & condition
+        else:
+            query.conditions = condition
+        return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifiers, self)
+
     def _filter_by_identifier(self, identifier: Union[str,int,float]) -> SingleHierarchyFrozenQuery:
-        query = copy(self.query)
+        query = deepcopy(self.query)
         condition = Condition(query.current_node.id, '=', identifier)
         if query.conditions is not None:
             query.conditions = query.conditions & condition
@@ -170,6 +183,19 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
 
 
 class IdentifiedHomogeneousHierarchyFrozenQuery(HomogeneousHierarchyFrozenQuery):
+    """
+    An ordered duplicated list of hierarchies each identified by an id
+    If an id appears more than once, it will be duplicated appropriately
+    The list is ordered by id input order
+    """
     def __init__(self, handler, query: FullQuery, hierarchy: Hierarchy, identifiers: List[Any], parent: 'FrozenQuery'):
         super().__init__(handler, query, hierarchy, parent)
         self._identifiers = identifiers
+
+    def _post_process(self, result: py2neo.Cursor):
+        r = super(IdentifiedHomogeneousHierarchyFrozenQuery, self)._post_process(result)
+        ids = set(i.identifier for i in r)
+        missing = [i for i in self._identifiers if i not in ids]
+        if any(missing):
+            raise KeyError(f"{self._hierarchy.idname} {missing} not found")
+        return r

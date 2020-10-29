@@ -2,7 +2,7 @@ from copy import copy
 
 import pytest
 from weaveio.basequery.hierarchy import HomogeneousHierarchyFrozenQuery, SingleHierarchyFrozenQuery, \
-    HeterogeneousHierarchyFrozenQuery
+    HeterogeneousHierarchyFrozenQuery, IdentifiedHomogeneousHierarchyFrozenQuery
 from weaveio.basequery.query import Condition, Generator, AmbiguousPathError, Node
 from weaveio.basequery.tests.example_structures.one2one import HierarchyA, MyData
 
@@ -62,3 +62,9 @@ def test_get_single_from_single_ascending(data):
     single = data.hierarchyas['1'].hierarchyb
     assert isinstance(single, SingleHierarchyFrozenQuery)
 
+
+def test_index_by_multiple_identifiers(data):
+    names = ['2.fits', '1.fits']
+    multi = data.hierarchyas[names]
+    assert isinstance(multi, IdentifiedHomogeneousHierarchyFrozenQuery)
+    assert multi._identifiers == ['2.fits', '1.fits']

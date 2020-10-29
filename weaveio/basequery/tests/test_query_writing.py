@@ -33,7 +33,7 @@ def test_matches_only():
     path1 = Path(a, '->', b)
     path2 = Path(b, '->', c)
     query = FullQuery([path1, path2])
-    q = query.to_neo4j()
+    q, _ = query.to_neo4j()
     assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nRETURN'
 
 
@@ -43,7 +43,7 @@ def test_return_nodes():
     path1 = Path(a, '->', b)
     path2 = Path(b, '->', c)
     query = FullQuery([path1, path2], returns=[c, a])
-    q = query.to_neo4j()
+    q, _ = query.to_neo4j()
     assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nRETURN c0, a0'
 
 
@@ -53,7 +53,7 @@ def test_return_properties():
     path1 = Path(a, '->', b)
     path2 = Path(b, '->', c)
     query = FullQuery([path1, path2], returns=[c.property_c, a.property_a])
-    q = query.to_neo4j()
+    q, _ = query.to_neo4j()
     assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nRETURN c0.property_c, a0.property_a'
 
 
@@ -63,7 +63,7 @@ def test_return_nodes_properties():
     path1 = Path(a, '->', b)
     path2 = Path(b, '->', c)
     query = FullQuery([path1, path2], returns=[c.property_c, a.property_a, b, c])
-    q = query.to_neo4j()
+    q, _ = query.to_neo4j()
     assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nRETURN c0.property_c, a0.property_a, b0, c0'
 
 
@@ -74,5 +74,5 @@ def test_condition_on_property():
     path2 = Path(b, '->', c)
     condition = Condition(a.id, '=', 'idvalue')
     query = FullQuery([path1, path2], conditions=condition)
-    q = query.to_neo4j()
+    q, _ = query.to_neo4j()
     assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nWHERE (a0.id = \'idvalue\')\nRETURN'

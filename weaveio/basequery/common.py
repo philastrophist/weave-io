@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 from weaveio.basequery.query import FullQuery
 from weaveio.neo4j import parse_apoc_tree
 
@@ -26,14 +28,14 @@ class FrozenQuery:
             yield query
 
     def _prepare_query(self):
-        return self.query.copy()
+        return deepcopy(self.query)
 
     def _execute_query(self):
         if not self.executable:
             raise TypeError(f"{self.__class__} may not be executed as queries in their own right")
         query = self._prepare_query()
-        cypher = query.to_neo4j()
-        return self.data.graph.execute(cypher)
+        cypher, payload = query.to_neo4j()
+        return self.data.graph.execute(cypher, **payload)
 
     def _post_process(self, result):
         raise NotImplementedError

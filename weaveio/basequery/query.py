@@ -1,11 +1,20 @@
 from collections import defaultdict
-from typing import List, Union, Tuple, Any
-from copy import copy
+from typing import List, Union, Tuple, Any, Dict
+from copy import copy, deepcopy
 
 from weaveio.utilities import quote
 
+class Copyable:
+    def __deepcopy__(self, memo):
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            setattr(result, k, deepcopy(v, memo))
+        return result
 
-class Node:
+
+class Node(Copyable):
     def __init__(self, label=None, name=None, **properties):
         self.label = label
         self.properties = properties
@@ -31,15 +40,19 @@ class Node:
         return f"({name}{label})"
 
     def __eq__(self, other):
+        if not isinstance(other, self.__class__):
+            return False
         return (self.label == other.label) and \
                ((self.name == other.name) or (self.name is None and other.name is None)) and \
                list(self.properties.items()) == list(other.properties.items())
 
     def __getattr__(self, item):
+        if item.startswith('__'):
+            raise AttributeError(f"{self} has no attribute {item}")
         return NodeProperty(self, item)
 
 
-class NodeProperty:
+class NodeProperty(Copyable):
     def __init__(self, node, property_name):
         self.node = node
         self.property_name = property_name
@@ -53,7 +66,7 @@ class NodeProperty:
         return f"{self.stringify([])}"
 
 
-class Path:
+class Path(Copyable):
     def __init__(self, *path: Union[Node, str]):
         if len(path) == 1:
             self.nodes = path
@@ -89,6 +102,22 @@ class Path:
         return len(self.nodes)
 
 
+class Unwind(Copyable):
+    def __init__(self, name, data):
+        self.name = name
+        self.data = data
+
+    def stringify(self, mentioned_nodes):
+        if self in mentioned_nodes:
+            return self.name
+        mentioned_nodes.append(self.name)
+        return f"${self.name} as {self.name}"
+
+    def __eq__(self, other):
+        if not isinstance(other, self.__class__):
+            return False
+        return (self.name == other.name)
+
 
 class Generator:
     def __init__(self):
@@ -101,6 +130,12 @@ class Generator:
             name = ''.join([str(label).lower(), str(self.node_counter[str(label)] - 1)])
         return Node(label, name, **properties)
 
+    def data(self, values: List) -> Unwind:
+        label = 'user_data'
+        name = label + str(self.node_counter[str(label)])
+        self.node_counter[str(label)] += 1
+        return Unwind(name, values)
+
     def nodes(self, *labels):
         return [self.node(l) for l in labels]
 
@@ -109,7 +144,7 @@ class Generator:
         return ''.join([property_name, str(self.property_name_counter[property_name] - 1)])
 
 
-class Condition:
+class Condition(Copyable):
     def __init__(self, a, comparison, b):
         self.a = a
         self.comparison = comparison
@@ -136,20 +171,21 @@ class Condition:
         return Condition(self, '<>', other)
 
 
-class Exists:
+class Exists(Copyable):
     def __init__(self, path: Path):
         self.path = path
 
 
 class BaseQuery:
     """A Query which consists of a root path, where conditions"""
-    def __init__(self, matches: List[Path] = None, branches: List[Path] = None, conditions: Condition = None):
+    def __init__(self, matches: List[Union[Path, Unwind]] = None, branches: List[Path] = None, conditions: Condition = None):
         self.matches = [] if matches is None else matches
         self.branches = [] if branches is None else branches
         self.conditions = conditions
-        for i, path in enumerate(self.matches):
+        matches_only = [i for i in self.matches if not isinstance(i, Unwind)]
+        for i, path in enumerate(matches_only):
             if i > 0:
-                if not any(n in self.matches[i-1].nodes for n in path.nodes):
+                if not any(n in matches_only[i-1].nodes for n in path.nodes):
                     raise ValueError(f"A list of matches must have overlapping nodes")
 
     @property
@@ -158,8 +194,8 @@ class BaseQuery:
 
     @matches.setter
     def matches(self, value):
-        if not all(isinstance(i, Path) for i in value) and value is not None:
-            raise TypeError("matches must be a list of paths")
+        if not all(isinstance(i, (Path, Unwind)) for i in value) and value is not None:
+            raise TypeError("matches must be a list of paths or unwind data")
         self._matches = value
 
     @property
@@ -190,7 +226,7 @@ class Predicate(BaseQuery):
     They are run before the main query and return collected unordered distinct node properties.
     Predicates cannot return nodes
     """
-    def __init__(self, matches: List[Path] = None,
+    def __init__(self, matches: List[Union[Path, Unwind]] = None,
                  branches: List[Path] = None,
                  conditions: Condition = None,
                  exist_branches: Exists = None,
@@ -220,7 +256,7 @@ class FullQuery(Predicate):
         return_nodes: The nodes to return from the query
         return_properties: The pairs of (node, property_name) to return
     """
-    def __init__(self, matches: List[Path] = None,
+    def __init__(self, matches: List[Union[Path, Unwind]] = None,
                  branches: List[Path] = None,
                  conditions: Condition = None,
                  exist_branches: Exists = None,
@@ -229,17 +265,14 @@ class FullQuery(Predicate):
         super(FullQuery, self).__init__(matches, branches, conditions, exist_branches, returns)
         self.predicates = [] if predicates is None else predicates
 
-    def copy(self):
-        return self.__class__(copy(self.matches), copy(self.branches), self.conditions, self.exist_branches,
-                              copy(self.predicates), copy(self.returns))
-
-    def to_neo4j(self, mentioned_nodes=None):
+    def to_neo4j(self, mentioned_nodes=None) -> Tuple[str, Dict]:
         mentioned_nodes = [] if mentioned_nodes is None else mentioned_nodes
         predicate_statements = []
         for predicate in self.predicates:
             predicate_statements.append(predicate.to_neo4j(mentioned_nodes))
         predicates = '\n\n'.join(predicate_statements)
-        main = '\n'.join([f'MATCH {p.stringify(mentioned_nodes)}' for p in self.matches])
+        statements = {Path: 'MATCH', Unwind: 'UNWIND'}
+        main = '\n'.join([f'{statements[p.__class__]} {p.stringify(mentioned_nodes)}' for p in self.matches])
         if self.conditions:
             wheres = f'\nWHERE {self.conditions}'
         else:
@@ -248,7 +281,8 @@ class FullQuery(Predicate):
         if optionals:
             optionals = '\n' + optionals
         returns = ', '.join([i.name for i in self.returns])
-        return f'{predicates}\n\n{main}{wheres}{optionals}\nRETURN {returns}'.strip().strip(',')
+        payload = {i.name: i.data for i in self.matches if isinstance(i, Unwind)}
+        return f'{predicates}\n\n{main}{wheres}{optionals}\nRETURN {returns}'.strip().strip(','), payload
 
 
 

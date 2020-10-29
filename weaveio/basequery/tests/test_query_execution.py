@@ -23,3 +23,21 @@ def test_return_single(database):
 def test_empty_id_raise_keyerror(database):
     with pytest.raises(KeyError, match="nonexistent_id"):
         database.hierarchyas['nonexistent_id'].hierarchyb()
+
+
+def test_uchained_queries(database):
+    first = database.hierarchyas
+    second = first.hierarchybs
+    first()
+    second()
+
+
+def test_multiple_ids(database):
+    names = ['1.fits', '2.fits', '1.fits']
+    a = database.hierarchyas[names]()
+    assert [i.id for i in a] == names
+
+def test_multiple_ids_keyerror(database):
+    names = ['1.fits', '2.fits', 'nan']
+    with pytest.raises(KeyError, match='nan'):
+        database.hierarchyas[names]()
