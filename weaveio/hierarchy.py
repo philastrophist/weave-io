@@ -47,6 +47,7 @@ FORBIDDEN_LABELS = []
 FORBIDDEN_PROPERTY_NAMES = []
 FORBIDDEN_LABEL_PREFIXES = ['_']
 FORBIDDEN_PROPERTY_PREFIXES = ['_']
+FORBIDDEN_IDNAMES = ['idname']
 
 
 class RuleBreakingException(Exception):
@@ -82,6 +83,8 @@ class GraphableMeta(type):
         dct['singular_name'] = name.lower()
         dct['plural_name'] = dct['plural_name'].lower()
         dct['singular_name'] = dct['singular_name'].lower()
+        if dct.get('idname', '') in FORBIDDEN_IDNAMES:
+            raise RuleBreakingException(f"You may not name an id as one of {FORBIDDEN_IDNAMES}")
         if not isinstance(dct.get('idname', ''), str):
             raise RuleBreakingException(f"{name}.idname must be a string")
         if name[0] != name.capitalize()[0] or '_' in name:
@@ -146,8 +149,7 @@ class Graphable(metaclass=GraphableMeta):
     @property
     def neoproperties(self):
         if self.identifier is None:
-            d = {self.idname: 'None'}
-            d['id'] = 'None'
+            raise ValueError(f"{self} must have an identifier")
         else:
             d = {self.idname: self.identifier}
             d['id'] = self.identifier
@@ -164,7 +166,7 @@ class Graphable(metaclass=GraphableMeta):
             for k, node_list in predecessors.items():
                 if self.indexer is None:
                     type = 'is_required_by'
-                if k in self.indexer.lower():
+                elif k in self.indexer.lower():
                     type = 'indexes'
                 else:
                     type = 'is_required_by'
