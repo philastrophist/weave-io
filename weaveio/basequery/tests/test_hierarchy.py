@@ -1,5 +1,3 @@
-from copy import copy
-
 import pytest
 from weaveio.basequery.hierarchy import HomogeneousHierarchyFrozenQuery, SingleHierarchyFrozenQuery, \
     HeterogeneousHierarchyFrozenQuery, IdentifiedHomogeneousHierarchyFrozenQuery
@@ -45,6 +43,15 @@ def test_index_by_single_identifier(data):
     assert not query.exist_branches
     assert len(query.matches) == 1 and query.matches[0].nodes[-1].name == 'hierarchya0'
     assert query.conditions == Condition(query.matches[0].nodes[-1].id, '=', '1')
+
+
+def test_index_a_plural_by_single_identifier_fails(data):
+    with pytest.raises(AmbiguousPathError):
+        data.hierarchyas.hierarchybs['1']
+
+
+def test_index_a_plural_by_list_of_identifiers_succeeds(data):
+    data.hierarchyas.hierarchybs[['1', '2']]
 
 
 def test_get_homogeneous_from_homogeneous(data):

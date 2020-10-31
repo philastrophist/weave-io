@@ -1,4 +1,6 @@
+import py2neo
 import pytest
+from py2neo.wiring import WireError
 
 from weaveio.basequery.query import Path
 from weaveio.basequery.tests.example_structures.one2one import MyData
@@ -21,9 +23,13 @@ def data(workdir):
 
 @pytest.fixture(scope='session')
 def database(workdir):
-    data = MyData(workdir, port=7687)
-    assert data.graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"
-    data.graph.neograph.run('MATCH (n) DETACH DELETE n')
-    data.directory_to_neo4j()
-    data.validate()
-    return data
+    try:
+        data = MyData(workdir, port=7687)
+        assert data.graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"
+        data.graph.neograph.run('MATCH (n) DETACH DELETE n')
+    except (AssertionError, WireError):
+        pytest.xfail("unsupported configuration of testing database")
+    else:
+        data.directory_to_neo4j()
+        data.validate()
+        return data

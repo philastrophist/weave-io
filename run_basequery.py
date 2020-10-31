@@ -10,7 +10,5 @@ from weaveio.basequery.query import NodeProperty
 from weaveio.data import OurData
 
 data = OurData('data', port=11007)
-thing = data.runs.exposures.runs['1002813', '1002813']
-exposures = thing.exposures
-print(thing())
-print(exposures())
+thing = data.runs['1002813'].expmjds
+print(thing.query.to_neo4j()[0])

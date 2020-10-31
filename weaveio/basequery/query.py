@@ -65,6 +65,9 @@ class NodeProperty(Copyable):
     def __repr__(self):
         return f"{self.stringify([])}"
 
+    def __eq__(self, other):
+        return self.node == other.node and self.property_name == other.property_name
+
 
 class Path(Copyable):
     def __init__(self, *path: Union[Node, str]):

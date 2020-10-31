@@ -10,7 +10,7 @@ File1<-HierarchyA<-HierarchyB
 """
 
 class HierarchyB(Hierarchy):
-    factors = []
+    factors = ['b_factor_b']
     idname = 'otherid'
 
 
@@ -25,7 +25,7 @@ class File1(File):
 
     def read(self) -> Tuple[Dict[str, 'Hierarchy'], dict]:
         fname = str(self.fname).split('/')[-1]
-        hierarchyb = HierarchyB(otherid=fname)
+        hierarchyb = HierarchyB(otherid=fname, b_factor_b='b')
         return {'hierarchya': HierarchyA(id=fname, hierarchyb=hierarchyb, a_factor_a='a', a_factor_b='b')}, {}
 
     @classmethod
