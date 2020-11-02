@@ -67,3 +67,11 @@ def test_identified_homogeneous_hierarchy_indirect_plural_factor(data):
     assert isinstance(single, ColumnFactorFrozenQuery)
     assert query.returns[0] == NodeProperty(Node(label='HierarchyB', name='hierarchyb0'), 'b_factor_b')
     assert len(query.returns) == 1   # b_factor_b and no indexer
+
+
+def test_heterogeneous_plural_factor(data):
+    factors = data.b_factor_bs
+    query = factors.query
+    assert isinstance(factors, ColumnFactorFrozenQuery)
+    assert query.returns[0] == NodeProperty(Node(label='HierarchyB', name='hierarchyb0'), 'b_factor_b')
+    assert len(query.returns) == 1  # b_factor_b and no indexer

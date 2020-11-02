@@ -1,16 +1,33 @@
-from weaveio.basequery.common import FrozenQuery
+import py2neo
+from astropy.table import Table
+
+from weaveio.basequery.common import FrozenQuery, UnexpectedResult
 
 
 class FactorFrozenQuery(FrozenQuery):
-    pass
+
+    def _post_process(self, result: py2neo.Cursor):
+        result = result.to_ndarray()
+        return result
 
 
 class SingleFactorFrozenQuery(FactorFrozenQuery):
     """A single factor of a single hierarchy instance"""
 
+    def _post_process(self, result: py2neo.Cursor):
+        array = super()._post_process(result)
+        if array.shape != (1, 1):
+            raise UnexpectedResult(f"Query raised a shape of {array.shape} instead of (1, 1)")
+        return array[0, 0]
+
 
 class ColumnFactorFrozenQuery(FactorFrozenQuery):
     """A list of the same factor values for different hierarchy instances"""
+    def _post_process(self, result: py2neo.Cursor):
+        array = super()._post_process(result)
+        if array.shape[1] != 1:
+            raise UnexpectedResult(f"Query raised {array.shape} instead of (..., 1)")
+        return array[:, 0]
 
 
 class RowFactorFrozenQuery(FactorFrozenQuery):

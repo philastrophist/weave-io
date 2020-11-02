@@ -29,7 +29,7 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def __getattr__(self, item):
         if item in self.data.plural_factors:
-            return self._get_set_of_factors()
+            return self._get_plural_factor(item)
         elif item in self.data.singular_factors:
             raise IndexError(f"Cannot return a single factor from a heterogeneous dataset")
         elif item in self.data.singular_hierarchies:
@@ -38,7 +38,7 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
             name = self.data.singular_name(item)
             return self._get_plural_hierarchy(name)
 
-    def _get_plural_hierarchy(self, hierarchy_name):
+    def _get_plural_hierarchy(self, hierarchy_name) -> 'HomogeneousHierarchyFrozenQuery':
         hier = self.data.singular_hierarchies[hierarchy_name]
         label = hier.__name__
         start = self.handler.generator.node(label)
@@ -46,7 +46,9 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
         return HomogeneousHierarchyFrozenQuery(self.handler, FullQuery(root), hier, self)
 
     def _get_plural_factor(self, factor_name):
-        hierarchy_name = self.data.get_factor_hierarchy(factor_name).single_name.lower()
+        factor_name = self.data.plural_factors.get(factor_name, factor_name)  # singular_name
+        hierarchy_name = self.handler.hierarchy_of_factor(factor_name)
+        return self._get_plural_hierarchy(hierarchy_name)._get_plural_factor(factor_name)
 
 
 
@@ -68,7 +70,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         for f in nodetype.factors:
             inputs[f] = node[f]
         inputs[nodetype.idname] = node[nodetype.idname]
-        base_query = getattr(self, nodetype.plural_name)[node['id']]
+        base_query = getattr(self.handler.begin_with_heterogeneous(), nodetype.plural_name)[node['id']]
         for p in nodetype.parents:
             if p.singular_name == nodetype.indexer:
                 inputs[p.singular_name] = self._process_result_row([indexer, {}], p)
@@ -133,14 +135,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             query.returns.append(query.current_node.__getattr__(name))
             multiplicity = False
         else:
-            hierarchy_names = self.data.factor_hierarchies[name]
-            if len(hierarchy_names) > 1:
-                raise AmbiguousPathError(f"The factor {name} is ambiguous when starting from {self}. "
-                                         f"{name} has {len(hierarchy_names)} parents: {hierarchy_names}."
-                                         f"Be explicit and choose one of them. "
-                                         f"E.g. {self}.{hierarchy_names[0]}.{name}")
-            else:
-                hierarchy_name = hierarchy_names[0].singular_name.lower()
+            hierarchy_name = self.handler.hierarchy_of_factor(name)
             multiplicity, path = self.node_implies_plurality_of(hierarchy_name)
             query.branches.append(path)
             query.returns.append(path.nodes[-1].__getattr__(name))
@@ -228,7 +223,8 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
             query.conditions = condition
         return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifiers, self)
 
-    def _filter_by_identifier(self, identifier: Union[str,int,float]) -> SingleHierarchyFrozenQuery:
+
+    def _filter_by_identifier(self, identifier: Union[str,int,float]):
         query = deepcopy(self.query)
         condition = Condition(query.current_node.id, '=', identifier)
         if query.conditions is not None:

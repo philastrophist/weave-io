@@ -16,7 +16,15 @@ class Handler:
         return HeterogeneousHierarchyFrozenQuery(self, FullQuery())
 
     def hierarchy_of_factor(self, factor_name: str) -> str:
-        raise NotImplementedError
+        factor_name = self.data.plural_factors.get(factor_name, factor_name)  # singular_name
+        hierarchy_names = self.data.factor_hierarchies[factor_name]
+        if len(hierarchy_names) > 1:
+            raise AmbiguousPathError(f"The factor {factor_name} is ambiguous when starting from {self}. "
+                                     f"{factor_name} has {len(hierarchy_names)} parents: {hierarchy_names}."
+                                     f"Be explicit and choose one of them. "
+                                     f"E.g. {self}.{hierarchy_names[0]}.{factor_name}")
+        else:
+            return hierarchy_names[0].singular_name.lower()
 
     def path(self, start, end) -> Path:
         raise NotImplementedError
