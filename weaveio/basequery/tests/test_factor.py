@@ -1,6 +1,6 @@
 import pytest
 
-from weaveio.basequery.factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery
+from weaveio.basequery.factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery
 from weaveio.basequery.query import NodeProperty, Node
 
 
@@ -75,3 +75,31 @@ def test_heterogeneous_plural_factor(data):
     assert isinstance(factors, ColumnFactorFrozenQuery)
     assert query.returns[0] == NodeProperty(Node(label='HierarchyB', name='hierarchyb0'), 'b_factor_b')
     assert len(query.returns) == 1  # b_factor_b and no indexer
+
+
+@pytest.mark.parametrize('typ', [tuple, list])
+@pytest.mark.parametrize('hiers', [['a'], ['b'], ['a', 'b']])
+def test_single_hierarchy_row_of_factors(data, typ, hiers):
+    items, hiers = zip(*[(item, h) for h in hiers for item in [f'{h}_factor_{i}' for i in 'ab']])
+    row = data.hierarchyas.__getitem__(typ(items))
+    assert isinstance(row, RowFactorFrozenQuery)
+    for i, (item, hier) in enumerate(zip(items, hiers)):
+        prop = row.query.returns[i]
+        assert prop.property_name == item
+        assert prop.node.label == f'Hierarchy{hier.upper()}'
+    if typ is list:
+        assert row.return_keys == items
+    elif typ is tuple:
+        assert row.return_keys is None
+    else:
+        assert False, "Bad arguments"
+
+
+def test_homogeneous_hierarchy_table_of_factors(data):
+    assert False
+
+def test_single_hierarchy_direct_single_factor_by_getitem(data):
+    assert False
+
+def test_single_hierarchy_direct_plural_factor_by_getitem(data):
+    assert False
