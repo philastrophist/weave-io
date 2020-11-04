@@ -1,7 +1,9 @@
 import pytest
 
-from weaveio.basequery.factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery
+from weaveio.basequery.factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery, TableFactorFrozenQuery
+from weaveio.basequery.hierarchy import HomogeneousHierarchyFrozenQuery
 from weaveio.basequery.query import NodeProperty, Node
+from weaveio.utilities import quote
 
 
 def test_single_hierarchy_direct_single_factor(data):
@@ -96,11 +98,61 @@ def test_single_hierarchy_row_of_factors(data, typ, hiers):
         assert False, "Bad arguments"
 
 
-def test_homogeneous_hierarchy_table_of_factors(data):
-    assert False
+@pytest.mark.parametrize('hiers', [['a'], ['b'], ['a', 'b']])
+@pytest.mark.parametrize('factor_intype', [tuple, list])
+@pytest.mark.parametrize('factor_names', [['a'], ['b'], ['a', 'b']], ids=lambda x: str(x))
+@pytest.mark.parametrize('idfilter', ['1', ['1', '2'], ('1', '2'), None],
+ids=lambda v: f'hierarchies[{quote(v)}]'.replace('(', '').replace(')', '') if v is not None else 'hierarchies')
+def test_tablelike_factors_by_getitem(data, factor_intype, hiers, factor_names, idfilter):
+    items, hiers = zip(*[(item, h) for h in hiers for item in [f'{h}_factor_{i}' for i in factor_names]])
+    items = factor_intype(items)
 
-def test_single_hierarchy_direct_single_factor_by_getitem(data):
-    assert False
+    structure = data.hierarchyas
+    if idfilter is not None:
+        structure = structure.__getitem__(idfilter)
 
-def test_single_hierarchy_direct_plural_factor_by_getitem(data):
-    assert False
+    if isinstance(idfilter, (list, tuple)) or idfilter is None:
+        if isinstance(items, (list, tuple)):
+            querytype = TableFactorFrozenQuery
+        else:
+            querytype = ColumnFactorFrozenQuery
+    else:  # scalar, therefore a single
+        if isinstance(items, (list, tuple)):
+            querytype = RowFactorFrozenQuery
+        else:
+            assert False, "bad arguments"  # this is never reached in this test
+
+    table = structure.__getitem__(items)
+    assert isinstance(table, querytype), f"data.hierarchyas[{idfilter}][{items}]"
+
+    zippable_items = [items] if not isinstance(items, (tuple, list)) else items
+    for i, (item, hier) in enumerate(zip(zippable_items, hiers)):
+        prop = table.query.returns[i]
+        assert prop.property_name == item
+        assert prop.node.label == f'Hierarchy{hier.upper()}'
+    if isinstance(items, list):
+        assert table.return_keys == items
+    elif isinstance(items, tuple):
+        assert table.return_keys is None
+    elif isinstance(items, str):
+        pass
+    else:
+        assert False, "Bad arguments"
+
+
+@pytest.mark.parametrize('hier', ['a', 'b'])
+@pytest.mark.parametrize('idfilter', ['1', ['1', '2'], ('1', '2'), None],
+ids=lambda v: f'hierarchies[{quote(v)}]'.replace('(', '').replace(')', '') if v is not None else 'hierarchies')
+def test_direct_single_factors_by_getitem(data, idfilter, hier):
+    structure = data.hierarchyas.__getitem__(idfilter)
+    if isinstance(idfilter, (list, tuple)) or idfilter is None:
+        querytype = ColumnFactorFrozenQuery
+    else:  # scalar, therefore a single
+        querytype = SingleFactorFrozenQuery
+    factor_name = f'{hier}_factor_a'
+    result = structure[factor_name]
+    assert isinstance(result, querytype)
+    prop = result.query.returns[0]
+    assert prop.property_name == factor_name
+    assert len(result.query.returns) == 1
+    assert prop.node.label == f'Hierarchy{hier.upper()}'

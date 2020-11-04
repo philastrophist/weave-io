@@ -8,7 +8,7 @@ from weaveio.basequery.common import FrozenQuery, UnexpectedResult, NotYetImplem
 
 class FactorFrozenQuery(FrozenQuery):
 
-    def _post_process(self, result):
+    def _post_process(self, result: py2neo.Cursor):
         return result.to_data_frame()
 
 
@@ -31,7 +31,6 @@ class ColumnFactorFrozenQuery(FactorFrozenQuery):
         return df.iloc[:, 0].tolist()
 
 
-
 class TableFactorFrozenQuery(FactorFrozenQuery):
     """
     A matrix of different factors against different hierarchy instances
@@ -43,9 +42,13 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
 
     def _post_process(self, result):
         df = super(TableFactorFrozenQuery, self)._post_process(result)
+        df.columns = self.return_keys
         if self.return_keys is None:
             return df.values
-        return Table.from_pandas(df)
+        t = Table.from_pandas(df)
+        return t
+
+
 
     def __getattr__(self, item):
         raise NotYetImplementedError

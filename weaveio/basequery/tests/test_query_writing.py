@@ -34,7 +34,7 @@ def test_matches_only():
     path2 = Path(b, '->', c)
     query = FullQuery([path1, path2])
     q, _ = query.to_neo4j()
-    assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nRETURN'
+    assert q == f'MATCH (a0:A)->(b0:B)\nMATCH (b0)->(c0:C)\nWITH b0, c0\nRETURN'
 
 
 def test_return_nodes():

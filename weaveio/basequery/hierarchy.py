@@ -57,7 +57,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
     def _prepare_query(self):
         query = super(DefiniteHierarchyFrozenQuery, self)._prepare_query()
         indexer = self.handler.generator.node()
-        query.branches.append(Path(self.query.current_node, '<-[:INDEXES]-', indexer))
+        query.branches[Path(self.query.current_node, '<-[:INDEXES]-', indexer)].append(indexer)
         query.returns += [self.query.current_node, indexer]
         return query
 
@@ -169,7 +169,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         returns query and the labels (if any) for the table
         """
         if isinstance(item, tuple):  # return without headers
-            return_keys = item
+            return_keys = None
             keys = list(item)
         elif isinstance(item, list):
             keys = item
@@ -184,7 +184,10 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def __getitem__(self, item):
         if isinstance(item, str):
-            item = (item, )
+            if not self.data.is_plural_name(item):
+                plural = self.data.plural_name(item)
+                raise AmbiguousPathError(f"{self} has multiple {plural}, use [{quote(plural)}] instead")
+            self._get_plural_factor(item)
         return self._get_factor_table_query(item)
 
 
@@ -192,6 +195,12 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
     def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], identifier: Any, parent: 'FrozenQuery'):
         super().__init__(handler, query, hierarchy, parent)
         self._identifier = identifier
+
+    def __getitem__(self, item):
+        if isinstance(item, str):
+            if self.data.is_singular_name(item):
+                return self._get_singular_factor(item)
+        return super().__getitem__(item)
 
     def __getattr__(self, item):
         if item in self.data.singular_factors or item in self.data.singular_idnames:
