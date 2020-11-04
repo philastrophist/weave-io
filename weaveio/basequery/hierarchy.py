@@ -6,7 +6,7 @@ import py2neo
 
 from .common import FrozenQuery
 from .factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery, TableFactorFrozenQuery
-from .query import AmbiguousPathError, FullQuery, Path, Condition
+from .query import AmbiguousPathError, FullQuery, Path, Condition, Collection
 from ..hierarchy import Hierarchy, Multiple
 from ..utilities import quote
 
@@ -91,8 +91,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def __getattr__(self, item):
         if item in self.data.plural_factors or item in self.data.plural_idnames:
-            name = self.data.singular_name(item)
-            return self._get_plural_factor(name)
+            return self._get_plural_factor(item)
         elif item in self.data.singular_hierarchies:
             return self._get_singular_hierarchy(item)
         elif item in self.data.plural_hierarchies:
@@ -130,14 +129,25 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         query = deepcopy(self.query)
         multiplicities = []
         for name in names:
-            if name in self._hierarchy.factors or name == self._hierarchy.idname:
-                query.returns.append(query.current_node.__getattr__(name))
+            is_singular_name = self.data.is_singular_name(name)
+            singular_name = self.data.singular_name(name)
+            if singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname:
+                prop = query.current_node.__getattr__(singular_name)
+                prop.alias = name
                 multiplicity = False
+                if not is_singular_name:
+                    prop = Collection(prop, name)
             else:
-                hierarchy_name = self.handler.hierarchy_of_factor(name)
+                hierarchy_name = self.handler.hierarchy_of_factor(singular_name)
                 multiplicity, path = self.node_implies_plurality_of(hierarchy_name)
-                query.branches.append(path)
-                query.returns.append(path.nodes[-1].__getattr__(name))
+                prop = path.nodes[-1].__getattr__(singular_name)
+                if not is_singular_name:
+                    prop = Collection(prop, name)
+                query.branches[path].append(prop)
+            query.returns.append(prop)
+            if multiplicity and is_singular_name:
+                plural = self.data.plural_name(singular_name)
+                raise AmbiguousPathError(f"{self} has multiple {plural}, use `{plural}` instead of `{singular_name}`")
             multiplicities.append(multiplicity)
         return query, multiplicities
 
@@ -158,21 +168,24 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         returns query and the labels (if any) for the table
         """
         if isinstance(item, tuple):  # return without headers
-            return_keys = None
+            return_keys = item
             keys = list(item)
         elif isinstance(item, list):
             keys = item
             return_keys = item
-        elif item in self.data.singular_factors or item in self.data.singular_idnames:
-                return self._get_singular_factor(item)
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
-        singular_keys = [self.data.singular_name(k) for k in keys]
-        query, multiplicities = self._get_factor_query(singular_keys)
-        expected_multi = [k for m, k, sk in zip(multiplicities, keys, singular_keys) if (k == sk and m)]
-        if expected_multi:
-            raise AmbiguousPathError(f"{self} has multiple {expected_multi}, you need to explicitly pluralise them.")
+        # singular_keys = [self.data.singular_name(k) for k in keys]
+        query, multiplicities = self._get_factor_query(*keys)
+        # expected_multi = [k for m, k, sk in zip(multiplicities, keys, singular_keys) if (k == sk and m)]
+        # if expected_multi:
+        #     raise AmbiguousPathError(f"{self} has multiple {expected_multi}, you need to explicitly pluralise them.")
         return query, return_keys
+
+    def __getitem__(self, item):
+        if isinstance(item, str):
+            item = (item, )
+        return self._get_factor_table_query(item)
 
 
 class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
@@ -185,8 +198,8 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
             return self._get_singular_factor(item)
         return super().__getattr__(item)
 
-    def __getitem__(self, item):
-        query, headers = self._get_factor_table_query(item)
+    def _get_factor_table_query(self, item):
+        query, headers =  super()._get_factor_table_query(item)
         return RowFactorFrozenQuery(self.handler, query, headers, self)
 
     def __repr__(self):
@@ -208,7 +221,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         query, multiplicities = self._get_factor_query(name)
         if multiplicities[0]:
             plural = self.data.plural_name(name)
-            raise AmbiguousPathError(f"{self} has multiple {name}s. Use .{plural} instead")
+            raise AmbiguousPathError(f"{self} has multiple {name}s. Use {plural} instead")
         return SingleFactorFrozenQuery(self.handler, query, self)
 
     def _post_process(self, result: py2neo.Cursor):
@@ -231,15 +244,23 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
     def __repr__(self):
         return f'{self.parent}.{self._hierarchy.plural_name}'
 
+    def _get_factor_table_query(self, item):
+        query, headers =  super()._get_factor_table_query(item)
+        return TableFactorFrozenQuery(self.handler, query, headers, self)
+
     def __getitem__(self, item):
         """
         Returns a table of factor values or (if that fails) a filter by identifiers
         """
         try:
-            query, headers = self._get_factor_table_query(item)
-            return TableFactorFrozenQuery(self.handler, query, headers, self)
+            return super(HomogeneousHierarchyFrozenQuery, self).__getitem__(item)
         except KeyError:
             if isinstance(item, (list, tuple)):
+                disallowed_factors = [i for i in item if self.data.is_factor_name(i)]
+                if disallowed_factors:
+                    ids = list(set(item) - set(disallowed_factors))
+                    raise SyntaxError(f"You cannot index factors and hierarchies at the same time. "
+                                      f"Separate your queries for {ids} and `{disallowed_factors}`")
                 return self._filter_by_identifiers(item)
             return self._filter_by_identifier(item)
 

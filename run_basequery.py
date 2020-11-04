@@ -10,7 +10,6 @@ from weaveio.basequery.query import NodeProperty
 from weaveio.data import OurData
 
 data = OurData('data', port=11007)
-thing = data.runs['1002813'].expmjd
+thing = data.exposures.runs.exposures.runs['runids', 'expmjd', 'cnames']
 print(thing.query.to_neo4j()[0])
-
-print(thing())
+# print(thing())

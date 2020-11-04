@@ -97,6 +97,7 @@ class Data:
         for h in self.hierarchies:
             for f in getattr(h, 'factors', []):
                 self.factor_hierarchies[f.lower()].append(h)
+            self.factor_hierarchies[h.idname].append(h)
         self.factor_hierarchies = dict(self.factor_hierarchies)  # make sure we always get keyerrors when necessary!
         self.factors = set(self.factor_hierarchies.keys())
         self.plural_factors =  {f.lower() + 's': f.lower() for f in self.factors}
@@ -252,6 +253,10 @@ class Data:
             multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
         return multiplicity, direction, path
 
+    def is_factor_name(self, name):
+        name = self.singular_name(name)
+        return self.is_singular_factor(name) or self.is_singular_idname(name)
+
     def is_singular_idname(self, value):
         return value in self.singular_idnames
 
@@ -274,6 +279,8 @@ class Data:
                 return self.singular_hierarchies[singular_name].plural_name
 
     def singular_name(self, plural_name):
+        if self.is_singular_name(plural_name):
+            return plural_name
         if plural_name in self.plural_idnames:
             return plural_name[:-1]
         else:
