@@ -254,8 +254,11 @@ class Data:
         return multiplicity, direction, path
 
     def is_factor_name(self, name):
-        name = self.singular_name(name)
-        return self.is_singular_factor(name) or self.is_singular_idname(name)
+        try:
+            name = self.singular_name(name)
+            return self.is_singular_factor(name) or self.is_singular_idname(name)
+        except KeyError:
+            return False
 
     def is_singular_idname(self, value):
         return value in self.singular_idnames

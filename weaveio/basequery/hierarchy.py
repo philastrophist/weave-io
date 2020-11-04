@@ -145,14 +145,15 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
                     prop = Collection(prop, name)
                 query.branches[path].append(prop)
             query.returns.append(prop)
-            if multiplicity and is_singular_name:
-                plural = self.data.plural_name(singular_name)
-                raise AmbiguousPathError(f"{self} has multiple {plural}, use `{plural}` instead of `{singular_name}`")
             multiplicities.append(multiplicity)
         return query, multiplicities
 
     def _get_plural_factor(self, name):
-        query, multiplicities = self._get_factor_query(name)
+        singular_name = self.data.singular_name(name)
+        query, multiplicities = self._get_factor_query(singular_name)
+        if singular_name == name and multiplicities[0]:
+            plural = self.data.plural_name(singular_name)
+            raise AmbiguousPathError(f"{self} has multiple {plural}, you need to explicitly pluralise them.")
         return ColumnFactorFrozenQuery(self.handler, query, self)
 
     def _get_factor_table_query(self, item):
@@ -175,11 +176,10 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             return_keys = item
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
-        # singular_keys = [self.data.singular_name(k) for k in keys]
         query, multiplicities = self._get_factor_query(*keys)
-        # expected_multi = [k for m, k, sk in zip(multiplicities, keys, singular_keys) if (k == sk and m)]
-        # if expected_multi:
-        #     raise AmbiguousPathError(f"{self} has multiple {expected_multi}, you need to explicitly pluralise them.")
+        expected_multi = [k for m, k in zip(multiplicities, keys) if self.data.is_singular_name(k) and m]
+        if expected_multi:
+            raise AmbiguousPathError(f"{self} has multiple {expected_multi}, you need to explicitly pluralise them.")
         return query, return_keys
 
     def __getitem__(self, item):
@@ -295,7 +295,8 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
             return SingleHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifier, self)
         else:
             raise AmbiguousPathError(f"`{self.parent}` is plural, to identify `{self}` by id, you must use "
-                                     f"`{self}[[{quote(identifier)}]]` instead.")
+                                     f"`{self}[[{quote(identifier)}]]` instead of "
+                                     f"`{self}[{quote(identifier)}]`.")
 
 
 class IdentifiedHomogeneousHierarchyFrozenQuery(HomogeneousHierarchyFrozenQuery):

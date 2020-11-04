@@ -319,7 +319,7 @@ class FullQuery(Predicate):
         returns_from_branches = [node for nodes in self.branches.values() for node in nodes]
         returns_from_matches = [r for r in self.returns if r not in returns_from_branches]
         initial_aliases = [f'{nodelike.name} as {nodelike.alias_name}' for nodelike in returns_from_matches]
-        carry_nodes = [node[-1].name for node in self.matches]  # nodes that need to be used later
+        carry_nodes = [node[-1].name for node in self.matches if not isinstance(node, Unwind)]  # nodes that need to be used later
         context_statements = ['WITH ' + ', '.join(carry_nodes+initial_aliases)]
 
         withs = carry_nodes
