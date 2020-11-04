@@ -4,9 +4,21 @@ import py2neo
 from astropy.table import Table
 
 from weaveio.basequery.common import FrozenQuery, UnexpectedResult, NotYetImplementedError
+from weaveio.basequery.query import FullQuery
+from weaveio.utilities import quote
 
 
 class FactorFrozenQuery(FrozenQuery):
+    def __init__(self, handler, query: FullQuery, factors, parent: 'FrozenQuery' = None):
+        super().__init__(handler, query, parent)
+        self.factors = factors
+
+    def __repr__(self):
+        if isinstance(self.factors, tuple):
+            factors = f'{self.factors}'
+        else:
+            factors = f'[{self.factors}]'
+        return f'{self.parent}{factors}'
 
     def _post_process(self, result: py2neo.Cursor):
         return result.to_data_frame()
@@ -36,8 +48,8 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
     A matrix of different factors against different hierarchy instances
     This is only possible if the hierarchies each have only one of the factors
     """
-    def __init__(self, handler, query, return_keys: List[str] = None, parent: 'FrozenQuery' = None):
-        super().__init__(handler, query, parent)
+    def __init__(self, handler, query, factors, return_keys: List[str] = None, parent: 'FrozenQuery' = None):
+        super().__init__(handler, query, factors, parent)
         self.return_keys = return_keys
 
     def _post_process(self, result):

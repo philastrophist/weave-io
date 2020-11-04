@@ -144,14 +144,17 @@ def test_tablelike_factors_by_getitem(data, factor_intype, hiers, factor_names, 
 @pytest.mark.parametrize('idfilter', ['1', ['1', '2'], ('1', '2'), None],
 ids=lambda v: f'hierarchies[{quote(v)}]'.replace('(', '').replace(')', '') if v is not None else 'hierarchies')
 def test_direct_single_factors_by_getitem(data, idfilter, hier):
-    structure = data.hierarchyas.__getitem__(idfilter)
+    if idfilter is not None:
+        structure = data.hierarchyas.__getitem__(idfilter)
+    else:
+        structure = data.hierarchyas
     if isinstance(idfilter, (list, tuple)) or idfilter is None:
         querytype = ColumnFactorFrozenQuery
     else:  # scalar, therefore a single
         querytype = SingleFactorFrozenQuery
     factor_name = f'{hier}_factor_a'
     result = structure[factor_name]
-    assert isinstance(result, querytype)
+    assert isinstance(result, querytype), str(result)
     prop = result.query.returns[0]
     assert prop.property_name == factor_name
     assert len(result.query.returns) == 1

@@ -51,3 +51,5 @@ def test_single_factor_is_scalar(database):
 
 def test_column_factor_is_vector(database):
     np.testing.assert_array_equal(database.hierarchyas['1.fits', '2.fits'].a_factor_as(), ['a', 'a'])
+
+

@@ -187,7 +187,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if not self.data.is_plural_name(item):
                 plural = self.data.plural_name(item)
                 raise AmbiguousPathError(f"{self} has multiple {plural}, use [{quote(plural)}] instead")
-            self._get_plural_factor(item)
+            return self._get_plural_factor(item)
         return self._get_factor_table_query(item)
 
 
@@ -209,7 +209,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
 
     def _get_factor_table_query(self, item):
         query, headers =  super()._get_factor_table_query(item)
-        return RowFactorFrozenQuery(self.handler, query, headers, self)
+        return RowFactorFrozenQuery(self.handler, query, item, headers, self)
 
     def __repr__(self):
         if self._identifier is None:
@@ -231,7 +231,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         if multiplicities[0]:
             plural = self.data.plural_name(name)
             raise AmbiguousPathError(f"{self} has multiple {name}s. Use {plural} instead")
-        return SingleFactorFrozenQuery(self.handler, query, self)
+        return SingleFactorFrozenQuery(self.handler, query, name, self)
 
     def _post_process(self, result: py2neo.Cursor):
         rows = super()._post_process(result)
@@ -255,7 +255,7 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
 
     def _get_factor_table_query(self, item):
         query, headers =  super()._get_factor_table_query(item)
-        return TableFactorFrozenQuery(self.handler, query, headers, self)
+        return TableFactorFrozenQuery(self.handler, query, item, headers, self)
 
     def __getitem__(self, item):
         """
@@ -317,6 +317,16 @@ class IdentifiedHomogeneousHierarchyFrozenQuery(HomogeneousHierarchyFrozenQuery)
     def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], identifiers: List[Any], parent: 'FrozenQuery'):
         super().__init__(handler, query, hierarchy, parent)
         self._identifiers = identifiers
+
+    # def __getitem__(self, item):
+    #     if isinstance(item, str):
+    #         if self.data.is_plural_name(item):
+    #             return self._get_plural_factor(item)
+    #         elif self.data.is_singular_name(item):
+    #             return self._get_singular_factor(item)
+    #         else:
+    #
+    #     return super().__getitem__(item)
 
     def __repr__(self):
         return f'{self.parent}.{self._hierarchy.plural_name}[{self._identifiers}]'
