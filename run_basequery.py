@@ -11,7 +11,8 @@ from weaveio.data import OurData
 
 data = OurData('data', port=11007)
 # thing = data.exposures.runs.exposures.runs[['1002814']]['runids', 'expmjd', 'cnames']
-thing = data.runs['1002814']['runids']#['runids', 'expmjd', 'cnames']
+thing = data.exposures.runs.exposures.runs[['1002814']][['runid']]
 print(thing)
 print(thing.query.to_neo4j()[0])
 print(thing())
+
