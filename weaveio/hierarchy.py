@@ -1,5 +1,6 @@
 import inspect
 from typing import Tuple, Dict, Type, Union, List
+from warnings import warn
 
 import networkx as nx
 import xxhash
@@ -137,7 +138,10 @@ class Graphable(metaclass=GraphableMeta):
 
     def __getattr__(self, item):
         if self.query is not None:
-            return getattr(self.query, item)
+            warn('Lazily loading a hierarchy attribute can be costly. Consider using a more flexible query.')
+            attribute = getattr(self.query, item)()
+            setattr(self, item, attribute)
+            return attribute
         raise AttributeError(f"Query not added to {self}, cannot search for {self}.{item}")
 
     @property
