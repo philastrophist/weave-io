@@ -44,8 +44,7 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
         return HomogeneousHierarchyFrozenQuery(self.handler, FullQuery(root), hier, self)
 
     def _get_plural_factor(self, factor_name):
-        factor_name = self.data.plural_factors.get(factor_name, factor_name)  # singular_name
-        hierarchy_name = self.handler.hierarchy_of_factor(factor_name)
+        hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(factor_name)
         return self._get_plural_hierarchy(hierarchy_name)._get_plural_factor(factor_name)
 
 
@@ -121,15 +120,15 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         multiplicities = []
         for name in names:
             is_singular_name = self.data.is_singular_name(name)
-            singular_name = self.data.singular_name(name)
-            if singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname:
+            hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(name, self._hierarchy)
+            if hierarchy_name == self._hierarchy.name and \
+                    (singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname):
                 prop = query.current_node.__getattr__(singular_name)
                 prop.alias = name
                 multiplicity = False
                 if not is_singular_name:
                     prop = Collection(prop, name)
             else:
-                hierarchy_name = self.handler.hierarchy_of_factor(singular_name)
                 multiplicity, path = self.node_implies_plurality_of(hierarchy_name)
                 prop = path.nodes[-1].__getattr__(singular_name)
                 if not is_singular_name:
@@ -142,7 +141,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
     def _get_plural_factor(self, name):
         singular_name = self.data.singular_name(name)
         query, multiplicities = self._get_factor_query(singular_name)
-        if singular_name == name and multiplicities[0]:
+        if self.data.is_singular_name(name) and multiplicities[0]:
             plural = self.data.plural_name(singular_name)
             raise AmbiguousPathError(f"{self} has multiple {plural}, you need to explicitly pluralise them.")
         return ColumnFactorFrozenQuery(self.handler, query, [name], self)
@@ -189,7 +188,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         return self._get_factor_table_query(item)
 
     def __getattr__(self, item):
-        if item in self.data.plural_factors or item in self.data.plural_idnames:
+        if self.data.is_plural_name(item) and self.data.is_factor_name(item):
             return self._get_plural_factor(item)
         elif item in self.data.singular_hierarchies:
             return self._get_singular_hierarchy(item)
@@ -208,7 +207,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         self._identifier = identifier
 
     def __getattr__(self, item):
-        if item in self.data.singular_factors or item in self.data.singular_idnames:
+        if self.data.is_singular_name(item) and self.data.is_factor_name(item):
             return self._get_singular_factor(item)
         return super().__getattr__(item)
 
@@ -284,7 +283,7 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         if item in self.data.singular_hierarchies:
             plural = self.data.plural_name(item)
             raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead")
-        if item in self.data.singular_factors or item in self.data.singular_idnames:
+        if self.data.is_singular_name(item) and self.data.is_factor_name(item):
             plural = self.data.plural_name(item)
             raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead.")
         return super(HomogeneousHierarchyFrozenQuery, self).__getattr__(item)

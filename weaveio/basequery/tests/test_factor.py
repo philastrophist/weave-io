@@ -235,7 +235,29 @@ def test_tablelike_factors_by_getitem_raise_when_one_has_wrong_plurality(data, a
 
     if not c_factor_plural:
         with pytest.raises(AmbiguousPathError, match="multiple `c_factor_as`"):
-            data.hierarchyas[items]
+            var = data.hierarchyas[items]
     else:
         assert isinstance(data.hierarchyas[items], TableFactorFrozenQuery)
 
+
+def test_ambiguous_factor_name_raises_error_on_getitem(data):
+    with pytest.raises(AmbiguousPathError):
+        var = data.hierarchyas['shared_factor_name']
+
+
+def test_disambiguated_factor_name_on_getitem(data):
+    var = data.hierarchyas['hierarchyd.shared_factor_name']
+    var = data.hierarchyas['hierarchyc.shared_factor_names']
+    with pytest.raises(AmbiguousPathError):
+        var = data.hierarchyas['hierarchyc.shared_factor_name']
+
+def test_ambiguous_factor_name_raises_error_on_getattr(data):
+    with pytest.raises(AmbiguousPathError):
+        var = data.hierarchyas.shared_factor_name
+
+
+def test_disambiguated_factor_name_on_getattr(data):
+    var = data.hierarchyas.hierarchyds.shared_factor_names
+    var = data.hierarchyas.hierarchycs.shared_factor_names
+    with pytest.raises(AmbiguousPathError):
+        var = data.hierarchyas.hierarchycs.shared_factor_names
