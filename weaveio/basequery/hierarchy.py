@@ -165,6 +165,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         elif isinstance(item, list):
             keys = item
             return_keys = item
+        elif item is None:
+            raise TypeError("item must be of type list, tuple, or str")
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
         query, multiplicities = self._get_factor_query(*keys)

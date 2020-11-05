@@ -25,7 +25,10 @@ class Aliasable(Copyable):
 
     @property
     def context_string(self):
+        if self.name == self.alias or self.alias is None:
+            return self.name
         return f"{self.name} as {self.alias}"
+
 
 
 class Node(Aliasable):
@@ -273,10 +276,9 @@ class Predicate(BaseQuery):
         super(Predicate, self).__init__(matches, branches, conditions)
         self.returns = [] if returns is None else returns
         for node in self.returns:
-            if isinstance(node, NodeProperty):
-                node = node.node
-                if not any(node in path.nodes for path in self.matches):
-                    raise ValueError(f"A return {node} references a node that does not exist in the root")
+            node = node.node
+            if not any(node == path.nodes[-1] for path in self.matches+list(self.branches.keys())):
+                raise KeyError(f"A return {node} references a node that does not exist in the root")
         if not self.matches and self.returns:
             raise ValueError('There must be a root to return things from')
         self.exist_branches = exist_branches
@@ -300,7 +302,7 @@ class FullQuery(Predicate):
                  conditions: Condition = None,
                  exist_branches: Exists = None,
                  predicates: List[Union[List[Union[str, Predicate]], str, Predicate]]  = None,
-                 returns: List[Union[Node, NodeProperty]] = None):
+                 returns: List[Union[Node, NodeProperty, Collection]] = None):
         super(FullQuery, self).__init__(matches, branches, conditions, exist_branches, returns)
         self.predicates = [] if predicates is None else predicates
 
@@ -318,18 +320,18 @@ class FullQuery(Predicate):
             wheres = ''
         returns_from_branches = [node for nodes in self.branches.values() for node in nodes]
         returns_from_matches = [r for r in self.returns if r not in returns_from_branches]
-        initial_aliases = [f'{nodelike.name} as {nodelike.alias_name}' for nodelike in returns_from_matches]
         carry_nodes = [node[-1].name for node in self.matches if not isinstance(node, Unwind)]  # nodes that need to be used later
+        initial_aliases = [nodelike.context_string for nodelike in returns_from_matches if nodelike.context_string not in carry_nodes]
         context_statements = ['WITH ' + ', '.join(carry_nodes+initial_aliases)]
 
         withs = carry_nodes
-        withs += [nodelike.alias_name for nodelike in returns_from_matches]
+        withs += [nodelike.alias_name for nodelike in returns_from_matches if nodelike.alias_name not in withs]
         for path, nodelikes in self.branches.items():
             optional = f"OPTIONAL MATCH {path.stringify(mentioned_nodes)}"
-            aggregations = [f'{nodelike.name} as {nodelike.alias_name}' for nodelike in nodelikes]
+            aggregations = [f'{nodelike.name} as {nodelike.alias_name}' for nodelike in nodelikes if nodelike.alias_name not in withs]
             context_statements.append(optional)
             context_statements.append(f'WITH ' + ', '.join(withs + aggregations))
-            withs += [f'{nodelike.alias_name}' for nodelike in nodelikes]
+            withs += [nodelike.alias_name for nodelike in nodelikes if nodelike.alias_name not in withs]
         if context_statements:
             context_statements = '\n' + '\n'.join(context_statements)
 

@@ -54,13 +54,11 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
 
     def _post_process(self, result):
         df = super(TableFactorFrozenQuery, self)._post_process(result)
-        df.columns = self.return_keys
+        df.columns = self.factors
         if self.return_keys is None:
             return df.values
         t = Table.from_pandas(df)
         return t
-
-
 
     def __getattr__(self, item):
         raise NotYetImplementedError
