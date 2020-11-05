@@ -219,3 +219,23 @@ def test_direct_single_factors_by_getitem(data, idfilter, hier):
     assert prop.property_name == factor_name
     assert len(result.query.returns) == 1
     assert prop.node.label == f'Hierarchy{hier.upper()}'
+
+
+@pytest.mark.parametrize('a_factor_plural', [True, False])
+@pytest.mark.parametrize('c_factor_plural', [True, False])
+def test_tablelike_factors_by_getitem_raise_when_one_has_wrong_plurality(data, a_factor_plural, c_factor_plural):
+    if a_factor_plural:
+        items = ['a_factor_as']
+    else:
+        items = ['a_factor_a']
+    if c_factor_plural:
+        items.append('c_factor_as')
+    else:
+        items.append('c_factor_a')
+
+    if not c_factor_plural:
+        with pytest.raises(AmbiguousPathError, match="multiple `c_factor_as`"):
+            data.hierarchyas[items]
+    else:
+        assert isinstance(data.hierarchyas[items], TableFactorFrozenQuery)
+

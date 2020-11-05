@@ -170,13 +170,15 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         query, multiplicities = self._get_factor_query(*keys)
         expected_multi = [k for m, k in zip(multiplicities, keys) if self.data.is_singular_name(k) and m]
         if expected_multi:
-            raise AmbiguousPathError(f"Each {self._hierarchy} in {self} has multiple {expected_multi}, you need to explicitly pluralise them.")
+            plurals = [self.data.plural_name(i) for i in expected_multi]
+            raise AmbiguousPathError(f"Each {self._hierarchy} in {self} has multiple `{', '.join(plurals)}`, you need to explicitly pluralise them.")
         return query, return_keys
 
     def _get_single_factor_query(self, item):
         query, multiplicities = self._get_factor_query(item)
         if multiplicities[0] and self.data.is_singular_name(item):
-            raise AmbiguousPathError(f"Each {self._hierarchy} in {self} has multiple {item}, you need to explicitly pluralise them.")
+            plural = self.data.plural_name(item)
+            raise AmbiguousPathError(f"Each `{self._hierarchy.singular_name}` in `{self}` has multiple `{plural}`, you need to explicitly use `{plural}`.")
         return self.single_factor_return_type(self.handler, query, [item], self)
 
     def __getitem__(self, item):
