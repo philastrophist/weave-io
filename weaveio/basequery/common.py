@@ -8,6 +8,10 @@ class NotYetImplementedError(NotImplementedError):
     pass
 
 
+class UnexpectedResult(Exception):
+    pass
+
+
 class FrozenQuery:
     executable = True
 

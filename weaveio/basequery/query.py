@@ -14,11 +14,32 @@ class Copyable:
         return result
 
 
-class Node(Copyable):
-    def __init__(self, label=None, name=None, **properties):
+class Aliasable(Copyable):
+    def __init__(self, name, alias=None):
+        self.name = name
+        self.alias = alias
+
+    @property
+    def alias_name(self):
+        return self.name if self.alias is None else self.alias
+
+    @property
+    def context_string(self):
+        if self.name == self.alias or self.alias is None:
+            return self.name
+        return f"{self.name} as {self.alias}"
+
+
+
+class Node(Aliasable):
+    def __init__(self, label=None, name=None, alias=None, **properties):
+        super(Node, self).__init__(name, alias)
         self.label = label
         self.properties = properties
-        self.name = name
+
+    @property
+    def node(self):
+        return self
 
     def identify(self, idvalue):
         self.properties['id'] = idvalue
@@ -28,6 +49,9 @@ class Node(Copyable):
             return f'({self.name})'
         mentioned_nodes.append(self)
         return str(self)
+
+    def __hash__(self):
+        return hash(''.join(map(str, [self.label, self.name, self.alias, self.properties])))
 
     def __repr__(self):
         name = '' if self.name is None else self.name
@@ -52,18 +76,31 @@ class Node(Copyable):
         return NodeProperty(self, item)
 
 
-class NodeProperty(Copyable):
-    def __init__(self, node, property_name):
+class NodeProperty(Aliasable):
+    def __init__(self, node, property_name, alias=None):
+        if alias is None:
+            alias = f'{node.name}_{property_name}'
+        super(NodeProperty, self).__init__(f"{node.name}.{property_name}", alias)
         self.node = node
         self.property_name = property_name
-        self.name = f"{node.name}.{property_name}"
 
     def stringify(self, mentioned_nodes):
         n = self.node.stringify(mentioned_nodes)
-        return f"{n}.{self.property_name}"
+        s = f"{n}.{self.property_name}"
+        return s
 
     def __repr__(self):
         return f"{self.stringify([])}"
+
+    def __eq__(self, other):
+        return self.node == other.node and self.property_name == other.property_name
+
+
+class Collection(Aliasable):
+    def __init__(self, obj: Union[Node, NodeProperty], alias: str):
+        super().__init__(f'collect({obj.name})', alias)
+        self.obj = obj
+        self.node = obj.node
 
 
 class Path(Copyable):
@@ -178,9 +215,14 @@ class Exists(Copyable):
 
 class BaseQuery:
     """A Query which consists of a root path, where conditions"""
-    def __init__(self, matches: List[Union[Path, Unwind]] = None, branches: List[Path] = None, conditions: Condition = None):
+    def __init__(self, matches: List[Union[Path, Unwind]] = None,
+                 branches: Dict[Path, List[Union[Node, NodeProperty]]] = None,
+                 conditions: Condition = None):
         self.matches = [] if matches is None else matches
-        self.branches = [] if branches is None else branches
+        self.branches = defaultdict(list)
+        if branches is not None:
+            for path, nodelikes in branches.items():
+                self.branches[path] += nodelikes
         self.conditions = conditions
         matches_only = [i for i in self.matches if not isinstance(i, Unwind)]
         for i, path in enumerate(matches_only):
@@ -227,17 +269,16 @@ class Predicate(BaseQuery):
     Predicates cannot return nodes
     """
     def __init__(self, matches: List[Union[Path, Unwind]] = None,
-                 branches: List[Path] = None,
+                 branches: Dict[Path, List[Union[Node, NodeProperty]]] = None,
                  conditions: Condition = None,
                  exist_branches: Exists = None,
                  returns: List[Union[Node, NodeProperty]] = None):
         super(Predicate, self).__init__(matches, branches, conditions)
         self.returns = [] if returns is None else returns
         for node in self.returns:
-            if isinstance(node, NodeProperty):
-                node = node.node
-                if not any(node in path.nodes for path in self.matches):
-                    raise ValueError(f"A return {node} references a node that does not exist in the root")
+            node = node.node
+            if not any(node == path.nodes[-1] for path in self.matches+list(self.branches.keys())):
+                raise KeyError(f"A return {node} references a node that does not exist in the root")
         if not self.matches and self.returns:
             raise ValueError('There must be a root to return things from')
         self.exist_branches = exist_branches
@@ -257,11 +298,11 @@ class FullQuery(Predicate):
         return_properties: The pairs of (node, property_name) to return
     """
     def __init__(self, matches: List[Union[Path, Unwind]] = None,
-                 branches: List[Path] = None,
+                 branches: Dict[Path, List[Union[Node, NodeProperty]]] = None,
                  conditions: Condition = None,
                  exist_branches: Exists = None,
                  predicates: List[Union[List[Union[str, Predicate]], str, Predicate]]  = None,
-                 returns: List[Union[Node, NodeProperty]] = None):
+                 returns: List[Union[Node, NodeProperty, Collection]] = None):
         super(FullQuery, self).__init__(matches, branches, conditions, exist_branches, returns)
         self.predicates = [] if predicates is None else predicates
 
@@ -277,12 +318,26 @@ class FullQuery(Predicate):
             wheres = f'\nWHERE {self.conditions}'
         else:
             wheres = ''
-        optionals = '\n'.join([f"OPTIONAL MATCH {p.stringify(mentioned_nodes)}" for p in self.branches])
-        if optionals:
-            optionals = '\n' + optionals
-        returns = ', '.join([i.name for i in self.returns])
+        returns_from_branches = [node for nodes in self.branches.values() for node in nodes]
+        returns_from_matches = [r for r in self.returns if r not in returns_from_branches]
+        carry_nodes = [node[-1].name for node in self.matches if not isinstance(node, Unwind)]  # nodes that need to be used later
+        initial_aliases = [nodelike.context_string for nodelike in returns_from_matches if nodelike.context_string not in carry_nodes]
+        context_statements = ['WITH ' + ', '.join(carry_nodes+initial_aliases)]
+
+        withs = carry_nodes
+        withs += [nodelike.alias_name for nodelike in returns_from_matches if nodelike.alias_name not in withs]
+        for path, nodelikes in self.branches.items():
+            optional = f"OPTIONAL MATCH {path.stringify(mentioned_nodes)}"
+            aggregations = [f'{nodelike.name} as {nodelike.alias_name}' for nodelike in nodelikes if nodelike.alias_name not in withs]
+            context_statements.append(optional)
+            context_statements.append(f'WITH ' + ', '.join(withs + aggregations))
+            withs += [nodelike.alias_name for nodelike in nodelikes if nodelike.alias_name not in withs]
+        if context_statements:
+            context_statements = '\n' + '\n'.join(context_statements)
+
+        returns = ', '.join([f'{i.alias_name}' for i in self.returns])
         payload = {i.name: i.data for i in self.matches if isinstance(i, Unwind)}
-        return f'{predicates}\n\n{main}{wheres}{optionals}\nRETURN {returns}'.strip().strip(','), payload
+        return f'{predicates}\n\n{main}{wheres}{context_statements}\nRETURN {returns}'.strip().strip(','), payload
 
 
 
