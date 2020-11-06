@@ -199,27 +199,6 @@ class Data:
             print(bads)
         print(f"There are {len(bads)} potential violations of expected relationship number")
 
-    def traversal_path(self, start, end):
-        multiplicity, direction, path = self.node_implies_plurality_of(start, end)
-        a, b = path[:-1], path[1:]
-        if direction == 'above':
-            b, a = a, b
-            plurals = [self.relation_graph.edges[(n1, n2)]['multiplicity'] for n1, n2 in zip(a, b)]
-            names = [self.plural_name(other) if is_plural else other for other, is_plural in zip(path[1:], plurals)]
-        else:
-            names = [self.plural_name(p) for p in path[1:]]
-        if start in self.singular_factors or start in self.singular_idnames:
-            if self.is_singular_name(names[0]):
-                names.insert(0, start)
-            else:
-                names.insert(0, self.plural_name(start))
-        if end in self.singular_factors or end in self.singular_idnames:
-            if self.is_singular_name(names[-1]):
-                names.append(end)
-            else:
-                names.append(self.plural_name(end))
-        return names
-
     def node_implies_plurality_of(self, start_node, implication_node):
         start_factor, implication_factor = None, None
         if start_node in self.singular_factors or start_node in self.singular_idnames:
@@ -310,11 +289,9 @@ class Data:
 
     def __getitem__(self, address):
         return self.handler.begin_with_heterogeneous().__getitem__(address)
-        # return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
 
     def __getattr__(self, item):
         return self.handler.begin_with_heterogeneous().__getattr__(item)
-        # return HeterogeneousHierarchy(self, BasicQuery()).__getattr__(item)
 
 
 class OurData(Data):

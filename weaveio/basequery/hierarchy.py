@@ -121,19 +121,20 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         for name in names:
             is_singular_name = self.data.is_singular_name(name)
             hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(name, self._hierarchy)
+            friendly_name = '_'.join(name.split('.'))
             if hierarchy_name == self._hierarchy.name:
                 if not (singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname):
                     raise KeyError(f"{self} does not have factor {singular_name}")
                 prop = query.current_node.__getattr__(singular_name)
-                prop.alias = name
+                prop.alias = friendly_name
                 multiplicity = False
                 if not is_singular_name:
-                    prop = Collection(prop, name)
+                    prop = Collection(prop, friendly_name)
             else:
                 multiplicity, path = self.node_implies_plurality_of(hierarchy_name)
                 prop = path.nodes[-1].__getattr__(singular_name)
                 if not is_singular_name:
-                    prop = Collection(prop, name)
+                    prop = Collection(prop, friendly_name)
                 query.branches[path].append(prop)
             query.returns.append(prop)
             multiplicities.append(multiplicity)
