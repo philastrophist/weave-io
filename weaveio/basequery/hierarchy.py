@@ -29,9 +29,9 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
         if item in self.data.plural_factors:
             return self._get_plural_factor(item)
         elif item in self.data.singular_factors:
-            raise IndexError(f"Cannot return a single factor from a heterogeneous dataset")
+            raise AmbiguousPathError(f"Cannot return a single factor from a heterogeneous dataset")
         elif item in self.data.singular_hierarchies:
-            raise IndexError(f"Cannot return a singular hierarchy without filtering first")
+            raise AmbiguousPathError(f"Cannot return a singular hierarchy without filtering first")
         else:
             name = self.data.singular_name(item)
             return self._get_plural_hierarchy(name)
@@ -121,8 +121,9 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         for name in names:
             is_singular_name = self.data.is_singular_name(name)
             hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(name, self._hierarchy)
-            if hierarchy_name == self._hierarchy.name and \
-                    (singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname):
+            if hierarchy_name == self._hierarchy.name:
+                if not (singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname):
+                    raise KeyError(f"{self} does not have factor {singular_name}")
                 prop = query.current_node.__getattr__(singular_name)
                 prop.alias = name
                 multiplicity = False

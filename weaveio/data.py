@@ -261,45 +261,51 @@ class Data:
             return False
 
     def is_singular_idname(self, value):
-        return value in self.singular_idnames
+        return value.split('.')[-1] in self.singular_idnames
 
     def is_plural_idname(self, value):
-        return value in self.plural_idnames
+        return value.split('.')[-1] in self.plural_idnames
 
     def is_plural_factor(self, value):
-        return value in self.plural_factors
+        return value.split('.')[-1] in self.plural_factors
 
     def is_singular_factor(self, value):
-        return value in self.singular_factors
+        return value.split('.')[-1] in self.singular_factors
 
     def plural_name(self, singular_name):
+        split = singular_name.split('.')
+        before, singular_name = '.'.join(split[:-1]), split[-1]
         if singular_name in self.singular_idnames:
             return singular_name + 's'
         else:
             try:
-                return self.singular_factors[singular_name] + 's'
+                return before + self.singular_factors[singular_name] + 's'
             except KeyError:
-                return self.singular_hierarchies[singular_name].plural_name
+                return before + self.singular_hierarchies[singular_name].plural_name
 
     def singular_name(self, plural_name):
+        split = plural_name.split('.')
+        before, plural_name = '.'.join(split[:-1]), split[-1]
         if self.is_singular_name(plural_name):
             return plural_name
         if plural_name in self.plural_idnames:
             return plural_name[:-1]
         else:
             try:
-                return self.plural_factors[plural_name]
+                return before + self.plural_factors[plural_name]
             except KeyError:
-                return self.plural_hierarchies[plural_name].singular_name
+                return before + self.plural_hierarchies[plural_name].singular_name
 
     def is_plural_name(self, name):
         """
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
+        name = name.split('.')[-1]
         return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
 
     def is_singular_name(self, name):
+        name = name.split('.')[-1]
         return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
 
     def __getitem__(self, address):
