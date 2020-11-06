@@ -75,3 +75,7 @@ def test_index_by_multiple_identifiers(data):
     multi = data.hierarchyas[names]
     assert isinstance(multi, IdentifiedHomogeneousHierarchyFrozenQuery)
     assert multi._identifiers == ['2.fits', '1.fits']
+
+
+def test_ambiguous_hierarchy_names_must_be_explicit(data):
+    pass

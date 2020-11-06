@@ -239,7 +239,7 @@ class Executable(Indexable):
         else:
             name = factor_name
             plural_requested = False
-        plural, direction, path = self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
+        plural, direction, path, number = self.data.node_implies_plurality_of(self.nodetype.singular_name, name)
         if plural and self.data.is_singular_name(factor_name):
             plural_name = self.data.plural_name(factor_name)
             raise KeyError(f"{self} has several possible {plural_name}. Please use `.{plural_name}` instead")
@@ -319,10 +319,10 @@ class SingleHierarchy(ExecutableHierarchy):
 
     def index_by_hierarchy_name(self, hierarchy_name):
         if self.data.is_plural_name(hierarchy_name):
-            multiplicity, direction = self.implied_plurality_direction_of_node(hierarchy_name)
+            multiplicity, direction, number = self.implied_plurality_direction_of_node(hierarchy_name)
             return self.index_by_plural_hierarchy(hierarchy_name, direction)
         elif self.data.is_singular_name(hierarchy_name):
-            multiplicity, direction = self.implied_plurality_direction_of_node(hierarchy_name)
+            multiplicity, direction, number = self.implied_plurality_direction_of_node(hierarchy_name)
             if multiplicity:
                 plural = self.data.plural_name(hierarchy_name)
                 raise KeyError(f"{self} has several possible {plural}. Please use `.{plural}` instead")

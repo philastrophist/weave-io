@@ -54,13 +54,25 @@ def test_column_factor_is_vector(database):
     np.testing.assert_array_equal(database.hierarchyas['1.fits', '2.fits'].a_factor_as(), ['a', 'a'])
 
 
-@pytest.mark.parametrize('columns,plural,colshape',
-                         (['c_factor_as', True, (2, )], [['c_factor_as'], True, (1, 2)],
-                          ['a_factor_a', False, tuple()], [['a_factor_a'], False, (1, )]),
-                         ids=["['c_factor_as']", "[['c_factor_as']]", "['a_factor_a']", "[['a_factor_a']]"])
+def convert_object_array_of_lists2_array(array):
+    if array.dtype == object and not isinstance(array.ravel()[0], str):
+        shape = array.shape
+        return np.reshape([np.asarray(i) for i in array.ravel()], shape + (-1,))
+    else:
+        return array
+
+@pytest.mark.parametrize('columns,colshape,is_unstructured',
+                         (
+                                 ['c_factor_as', (2, ), False], [['c_factor_as'], (2, ), False],
+                                 ['a_factor_a', tuple(), False], [['a_factor_a'], tuple(), False],
+                                 ['f_factor_as', (1, ), True], [['f_factor_as'], (1, ), True]
+                         ),
+                          ids=["['c_factor_as']", "[['c_factor_as']]",
+                               "['a_factor_a']", "[['a_factor_a']]",
+                               "['f_factor_as']", "[['f_factor_as']]"])
 @pytest.mark.parametrize('idfilter,idshape', ([None, (5,)], [('1.fits', ), (1, )], [['1.fits'], (1,)]),
                          ids=["", "['1.fits']", "[['1.fits']]"])
-def test_table_return_type(database, columns, idfilter, plural, idshape, colshape):
+def test_table_return_shape(database, columns, is_unstructured, idfilter, idshape, colshape):
     """
     Test that [[colname]] type getitems always return astropy tables with the correct shape,
     plural colnames should make a list structure within it.
@@ -72,10 +84,12 @@ def test_table_return_type(database, columns, idfilter, plural, idshape, colshap
     result = structure()
     if isinstance(columns, list):
         assert isinstance(result, Table)
-        result = result.to_pandas().values.tolist()
+        result = result[result.colnames[0]].data
     else:
-        assert isinstance(result, list)
-    result = np.asarray(result)
+        assert isinstance(result, np.ndarray)
+    if is_unstructured:
+        assert isinstance(result[0], list)
+    result = convert_object_array_of_lists2_array(result)
     expected = np.empty(idshape + colshape, dtype=str)
     expected[:] = 'a'
     np.testing.assert_array_equal(result, expected)

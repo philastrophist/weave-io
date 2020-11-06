@@ -128,9 +128,16 @@ class Data:
                                          factors=h.factors+[h.idname], idname=h.idname)
             for parent in h.parents:
                 multiplicity = isinstance(parent, Multiple)
+                if multiplicity:
+                    if parent.maxnumber == parent.minnumber:
+                        number = parent.maxnumber
+                    else:
+                        number = None
+                else:
+                    number = 1
                 self.relation_graph.add_node(parent.singular_name, is_file=is_file,
                                              factors=parent.factors+[h.idname], idname=h.idname)
-                self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity)
+                self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity, number=number)
                 d.append(parent)
 
     def make_constraints(self):
@@ -222,7 +229,7 @@ class Data:
             raise networkx.exception.NodeNotFound(f'{start_node} or {implication_node} not found')
         path, direction = paths[0]
         if len(path) == 1:
-            return False, 'above', path
+            return False, 'above', path, 1
         if direction == 'below':
             if self.relation_graph.nodes[path[-1]]['is_file']:
                 multiplicity = False
@@ -230,7 +237,12 @@ class Data:
                 multiplicity = True
         else:
             multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
-        return multiplicity, direction, path
+        numbers = [self.relation_graph.edges[(n2, n1)]['number'] for n1, n2 in zip(path[:-1], path[1:])]
+        if any(n is None for n in numbers):
+            number = None
+        else:
+            number = int(np.product(numbers))
+        return multiplicity, direction, path, number
 
     def is_factor_name(self, name):
         try:
