@@ -199,27 +199,6 @@ class Data:
             print(bads)
         print(f"There are {len(bads)} potential violations of expected relationship number")
 
-    def traversal_path(self, start, end):
-        multiplicity, direction, path = self.node_implies_plurality_of(start, end)
-        a, b = path[:-1], path[1:]
-        if direction == 'above':
-            b, a = a, b
-            plurals = [self.relation_graph.edges[(n1, n2)]['multiplicity'] for n1, n2 in zip(a, b)]
-            names = [self.plural_name(other) if is_plural else other for other, is_plural in zip(path[1:], plurals)]
-        else:
-            names = [self.plural_name(p) for p in path[1:]]
-        if start in self.singular_factors or start in self.singular_idnames:
-            if self.is_singular_name(names[0]):
-                names.insert(0, start)
-            else:
-                names.insert(0, self.plural_name(start))
-        if end in self.singular_factors or end in self.singular_idnames:
-            if self.is_singular_name(names[-1]):
-                names.append(end)
-            else:
-                names.append(self.plural_name(end))
-        return names
-
     def node_implies_plurality_of(self, start_node, implication_node):
         start_factor, implication_factor = None, None
         if start_node in self.singular_factors or start_node in self.singular_idnames:
@@ -261,54 +240,58 @@ class Data:
             return False
 
     def is_singular_idname(self, value):
-        return value in self.singular_idnames
+        return value.split('.')[-1] in self.singular_idnames
 
     def is_plural_idname(self, value):
-        return value in self.plural_idnames
+        return value.split('.')[-1] in self.plural_idnames
 
     def is_plural_factor(self, value):
-        return value in self.plural_factors
+        return value.split('.')[-1] in self.plural_factors
 
     def is_singular_factor(self, value):
-        return value in self.singular_factors
+        return value.split('.')[-1] in self.singular_factors
 
     def plural_name(self, singular_name):
+        split = singular_name.split('.')
+        before, singular_name = '.'.join(split[:-1]), split[-1]
         if singular_name in self.singular_idnames:
             return singular_name + 's'
         else:
             try:
-                return self.singular_factors[singular_name] + 's'
+                return before + self.singular_factors[singular_name] + 's'
             except KeyError:
-                return self.singular_hierarchies[singular_name].plural_name
+                return before + self.singular_hierarchies[singular_name].plural_name
 
     def singular_name(self, plural_name):
+        split = plural_name.split('.')
+        before, plural_name = '.'.join(split[:-1]), split[-1]
         if self.is_singular_name(plural_name):
             return plural_name
         if plural_name in self.plural_idnames:
             return plural_name[:-1]
         else:
             try:
-                return self.plural_factors[plural_name]
+                return before + self.plural_factors[plural_name]
             except KeyError:
-                return self.plural_hierarchies[plural_name].singular_name
+                return before + self.plural_hierarchies[plural_name].singular_name
 
     def is_plural_name(self, name):
         """
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
+        name = name.split('.')[-1]
         return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
 
     def is_singular_name(self, name):
+        name = name.split('.')[-1]
         return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
 
     def __getitem__(self, address):
         return self.handler.begin_with_heterogeneous().__getitem__(address)
-        # return HeterogeneousHierarchy(self, BasicQuery()).__getitem__(address)
 
     def __getattr__(self, item):
         return self.handler.begin_with_heterogeneous().__getattr__(item)
-        # return HeterogeneousHierarchy(self, BasicQuery()).__getattr__(item)
 
 
 class OurData(Data):

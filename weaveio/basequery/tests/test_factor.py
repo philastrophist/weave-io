@@ -235,7 +235,48 @@ def test_tablelike_factors_by_getitem_raise_when_one_has_wrong_plurality(data, a
 
     if not c_factor_plural:
         with pytest.raises(AmbiguousPathError, match="multiple `c_factor_as`"):
-            data.hierarchyas[items]
+            var = data.hierarchyas[items]
     else:
         assert isinstance(data.hierarchyas[items], TableFactorFrozenQuery)
 
+
+def test_ambiguous_factor_name_raises_error_on_getitem(data):
+    with pytest.raises(AmbiguousPathError):
+        var = data.hierarchyas['1']['shared_factor_name']
+
+
+def test_ambiguous_factor_name_raises_error_on_getattr(data):
+    with pytest.raises(AmbiguousPathError):
+        var = data.hierarchyas['1'].shared_factor_name
+
+
+def test_disambiguated_factor_name_on_getitem(data):
+    with pytest.raises(AmbiguousPathError):
+        # fails because there is more than one hierarchyc for a hierarchya.
+        var = data.hierarchyas['1']['hierarchyc.shared_factor_name']
+    var = data.hierarchyas['1']['hierarchyd.shared_factor_name']
+    var = data.hierarchyas['1']['hierarchyc.shared_factor_names']
+
+
+def test_disambiguated_factor_name_on_getattr(data):
+    """Removing ambiguouity from getattr calls is basically just
+    another normal getattr call with hierarchies"""
+    var = data.hierarchyas['1'].hierarchyds.shared_factor_names
+    var = data.hierarchyas['1'].hierarchycs.shared_factor_names
+    with pytest.raises(AmbiguousPathError):
+        # fails because there is more than one hierarchyc for a hierarchya.
+        var = data.hierarchyas['1'].hierarchycs.shared_factor_name
+
+
+def test_not_plural_raise_ambiguous_path_error(data):
+    with pytest.raises(AmbiguousPathError):
+        # hierarchyA has one factor
+        # but there are more than one of them, so plural is required
+        var = data.hierarchyas.a_factor_a
+    with pytest.raises(AmbiguousPathError):
+        # Requesting factors without hierarchies always requires plural
+        var = data.a_factor_a
+    with pytest.raises(AmbiguousPathError):
+        # hierarchyC has a_factor_a below it, but there is more than one,
+        # so it is plural
+        var = data.hierarchycs.a_factor_a
