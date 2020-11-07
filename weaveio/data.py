@@ -23,7 +23,6 @@ from weaveio.queries import BasicQuery, HeterogeneousHierarchy
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
 
-
 def process_neo4j_error(data: 'Data', file: File, msg):
     matches = CONSTRAINT_FAILURE.findall(msg)
     if not len(matches):
@@ -169,42 +168,76 @@ class Data:
             logging.info('Cleaning up...')
             self.graph.execute_cleanup()
 
-    def validate(self, *hierarchy_names):
-        bads = []
-        if len(hierarchy_names) == 0:
-            hierarchies = self.hierarchies
-        else:
-            hierarchies = [h for h in self.hierarchies if h.__name__ in hierarchy_names]
-        print(f'scanning {len(hierarchies)} hierarchies')
-        for hierarchy in tqdm(hierarchies):
-            for parent in hierarchy.parents:
-                if isinstance(parent, Multiple):
-                    lower, upper = parent.minnumber or 0, parent.maxnumber or np.inf
-                    parent_name = parent.node.__name__
-                else:
-                    lower, upper = 1, 1
-                    parent_name = parent.__name__
-                child_name = hierarchy.__name__
-                query = f"MATCH (parent: {parent_name}) MATCH (parent)-->(child: {child_name}) " \
-                        f"RETURN parent.id, child.id, '{child_name}' as child_label, '{parent_name}' as parent_label"
-                result = self.graph.neograph.run(query)
-                df = result.to_data_frame()
-                if len(df) == 0 and lower > 0:
-                    bad = pd.DataFrame({'child_label': child_name, 'child.id': np.nan,
-                                       'nrelationships': 0, 'parent_label': parent_name,
-                                       'expected': f'[{lower}, {upper}]'}, index=[0])
-                    bads.append(bad)
-                elif len(df):
-                    grouped = df.groupby(['child_label', 'child.id']).apply(len)
-                    grouped.name = 'nrelationships'
-                    bad = pd.DataFrame(grouped[(grouped < lower) | (grouped > upper)]).reset_index()
-                    bad['parent_name'] = parent_name
-                    bad['expected'] = f'[{lower}, {upper}]'
-                    bads.append(bad)
-        if len(bads):
-            bads = pd.concat(bads)
-            print(bads)
-        print(f"There are {len(bads)} potential violations of expected relationship number")
+
+    def _validate_one_required(self, hierarchy_name):
+        hierarchy = self.singular_hierarchies[hierarchy_name]
+        parents = [h for h in hierarchy.parents]
+        qs = []
+        for parent in parents:
+            if isinstance(parent, Multiple):
+                mn, mx = parent.minnumber, parent.maxnumber
+                b = parent.node.__name__
+            else:
+                mn, mx = 1, 1
+                b = parent.__name__
+            mn = 0 if mn is None else mn
+            mx = 9999999 if mx is None else mx
+            a = hierarchy.__name__
+            q = f"""
+            MATCH (n:{a})
+            WITH n, SIZE([(n)<-[]-(m:{b}) | m ])  AS nodeCount
+            WHERE NOT (nodeCount >= {mn} AND nodeCount <= {mx})
+            RETURN "{a}", "{b}", {mn} as mn, {mx} as mx, n.id, nodeCount
+            """
+            qs.append(q)
+        if not len(parents):
+            qs = [f"""
+            MATCH (n:{hierarchy.__name__})
+            WITH n, SIZE([(n)<-[:IS_REQUIRED_BY]-(m) | m ])  AS nodeCount
+            WHERE nodeCount > 0
+            RETURN "{hierarchy.__name__}", "none", 0 as mn, 0 as mx, n.id, nodeCount
+            """]
+        dfs = []
+        for q in qs:
+            dfs.append(self.graph.neograph.run(q).to_data_frame())
+        df = pd.concat(dfs)
+        return df
+
+    def _validate_no_duplicate_relation_ordering(self):
+        q = """
+        MATCH (a)-[r1]->(b)<-[r2]-(a)
+        WHERE TYPE(r1) = TYPE(r2) AND r1.order <> r2.order
+        WITH a, b, apoc.coll.union(COLLECT(r1), COLLECT(r2))[1..] AS rs
+        RETURN DISTINCT labels(a), a.id, labels(b), b.id, count(rs)+1
+        """
+        return self.graph.neograph.run(q).to_data_frame()
+
+    def _validate_no_duplicate_relationships(self):
+        q = """
+        MATCH (a)-[r1]->(b)<-[r2]-(a)
+        WHERE TYPE(r1) = TYPE(r2) AND PROPERTIES(r1) = PROPERTIES(r2)
+        WITH a, b, apoc.coll.union(COLLECT(r1), COLLECT(r2))[1..] AS rs
+        RETURN DISTINCT labels(a), a.id, labels(b), b.id, count(rs)+1
+        """
+        return self.graph.neograph.run(q).to_data_frame()
+
+    def validate(self):
+        duplicates = self._validate_no_duplicate_relationships()
+        print(f'There are {len(duplicates)} duplicate relations')
+        if len(duplicates):
+            print(duplicates)
+        duplicates = self._validate_no_duplicate_relation_ordering()
+        print(f'There are {len(duplicates)} relations with different orderings')
+        if len(duplicates):
+            print(duplicates)
+        schema_violations = []
+        for h in tqdm(list(self.singular_hierarchies.keys())):
+            schema_violations.append(self._validate_one_required(h))
+        schema_violations = pd.concat(schema_violations)
+        print(f'There are {len(schema_violations)} violations of expected relationship number')
+        if len(schema_violations):
+            print(schema_violations)
+        return duplicates, schema_violations
 
     def node_implies_plurality_of(self, start_node, implication_node):
         start_factor, implication_factor = None, None
