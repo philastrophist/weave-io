@@ -156,6 +156,19 @@ class Unwind(Copyable):
         return (self.name == other.name)
 
 
+class UserData:
+    def __init__(self, name, values):
+        self.name = name
+        self.values = values
+
+    def unwind(self):
+        return Unwind(self.name, self.values)
+
+    def stringify(self, mentioned_nodes):
+        return f"${self.name}"
+
+
+
 class Generator:
     def __init__(self):
         self.node_counter = defaultdict(int)
@@ -167,11 +180,11 @@ class Generator:
             name = ''.join([str(label).lower(), str(self.node_counter[str(label)] - 1)])
         return Node(label, name, **properties)
 
-    def data(self, values: List) -> Unwind:
+    def data(self, values: List):
         label = 'user_data'
         name = label + str(self.node_counter[str(label)])
         self.node_counter[str(label)] += 1
-        return Unwind(name, values)
+        return UserData(name, values)
 
     def nodes(self, *labels):
         return [self.node(l) for l in labels]
