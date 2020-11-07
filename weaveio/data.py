@@ -203,39 +203,40 @@ class Data:
         df = pd.concat(dfs)
         return df
 
-    def _validate_no_duplicates(self):
+    def _validate_no_duplicate_relation_ordering(self):
         q = """
-        MATCH (a)-->(b)<--(a)
-        RETURN DISTINCT labels(a), a.id, labels(b), b.id
+        MATCH (a)-[r1]->(b)<-[r2]-(a)
+        WHERE TYPE(r1) = TYPE(r2) AND r1.order <> r2.order
+        WITH a, b, apoc.coll.union(COLLECT(r1), COLLECT(r2))[1..] AS rs
+        RETURN DISTINCT labels(a), a.id, labels(b), b.id, count(rs)+1
         """
-        df = self.graph.neograph.run(q).to_data_frame()
-        return df
+        return self.graph.neograph.run(q).to_data_frame()
 
-    def delete_duplicate_relationships(self):
+    def _validate_no_duplicate_relationships(self):
         q = """
-        MATCH (a)-->(b)<--(a)  # identify where the duplication is present
-        USING JOIN ON b
-        WITH DISTINCT a, b
-        MATCH (a)-[r]->(b)  # get all duplicated paths themselves
-        WITH a, b, collect(r)[1..] as rs  # remove the first instance from the list
-        UNWIND rs as r
-        DELETE r"""
-        self.graph.neograph.run(q)
+        MATCH (a)-[r1]->(b)<-[r2]-(a)
+        WHERE TYPE(r1) = TYPE(r2) AND PROPERTIES(r1) = PROPERTIES(r2)
+        WITH a, b, apoc.coll.union(COLLECT(r1), COLLECT(r2))[1..] AS rs
+        RETURN DISTINCT labels(a), a.id, labels(b), b.id, count(rs)+1
+        """
+        return self.graph.neograph.run(q).to_data_frame()
 
     def validate(self):
-        duplicates = self._validate_no_duplicates()
+        duplicates = self._validate_no_duplicate_relationships()
+        print(f'There are {len(duplicates)} duplicate relations')
         if len(duplicates):
-            print(f'There are {len(duplicates)} duplicate relations')
+            print(duplicates)
+        duplicates = self._validate_no_duplicate_relation_ordering()
+        print(f'There are {len(duplicates)} relations with different orderings')
+        if len(duplicates):
             print(duplicates)
         schema_violations = []
         for h in tqdm(list(self.singular_hierarchies.keys())):
             schema_violations.append(self._validate_one_required(h))
         schema_violations = pd.concat(schema_violations)
+        print(f'There are {len(schema_violations)} violations of expected relationship number')
         if len(schema_violations):
-            print(f'There are {len(schema_violations)} violations of expected relationship number')
             print(schema_violations)
-        else:
-            print(f'There are no violations of expected relationship number')
         return duplicates, schema_violations
 
     def node_implies_plurality_of(self, start_node, implication_node):
