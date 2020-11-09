@@ -1,0 +1,6 @@
+site_name: WEAVE-IO
+theme: readthedocs
+nav:
+  - Outline: index.md
+  - Setup: setup.md
+  - Quickstart: quickstart.md
