@@ -81,7 +81,7 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
     def _post_process(self, result):
         t = super(TableFactorFrozenQuery, self)._post_process(result)
         if self.return_keys is None:
-            t = np.asarray([t[c].data for c in t.colnames]).T  # without column names
+            t = tuple(t[c].data for c in t.colnames)  # without column names
         return t
 
     def __getattr__(self, item):

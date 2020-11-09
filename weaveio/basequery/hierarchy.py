@@ -221,8 +221,9 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             else:
                 condition = Condition(return_list[0], '=', value)
             # we dont want to return anything here but we dont want an optional match
-            # therefore we use EXISTS{MATCH, WHERE}
-            copy.query.exist_branches[path].append(condition)
+            # therefore we MATCH and collect, which then doesn't affect the grouping
+            copy.query.exist_branches.append(path)
+            copy.query.conditions &= condition
         return copy
 
     def __getitem__(self, item):
