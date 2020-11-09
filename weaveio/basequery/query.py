@@ -194,36 +194,35 @@ class Generator:
         return ''.join([property_name, str(self.property_name_counter[property_name] - 1)])
 
 
-class Condition(Copyable):
-    def __init__(self, a, comparison, b):
+class EmptyCondition(Copyable):
+    def __and__(self, other: 'Condition'):
+        return other
+
+    def __or__(self, other):
+        return other
+
+
+class Condition(EmptyCondition):
+    def __init__(self, a, comparison='', b=''):
         self.a = a
         self.comparison = comparison
         self.b = b
 
     def stringify(self):
-        a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'name', quote(str(self.a)))
-        b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'name', quote(str(self.b)))
-        return f"({a} {self.comparison} {b})"
+        a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'alias', quote(str(self.a)))
+        b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'alias', quote(str(self.b)))
+        return f"({a} {self.comparison} {b})".strip()
 
     def __repr__(self):
         return self.stringify()
 
     def __and__(self, other):
-        return Condition(self, 'and', other)
+        return Condition(self, 'AND', other)
 
     def __or__(self, other):
-        return Condition(self, 'or', other)
-
-    def __eq__(self, other):
-        return Condition(self, '==', other)
-
-    def __ne__(self, other):
-        return Condition(self, '<>', other)
+        return Condition(self, 'OR', other)
 
 
-class Exists(Copyable):
-    def __init__(self, path: Path):
-        self.path = path
 
 
 class BaseQuery:
@@ -236,7 +235,7 @@ class BaseQuery:
         if branches is not None:
             for path, nodelikes in branches.items():
                 self.branches[path] += nodelikes
-        self.conditions = conditions
+        self.conditions = EmptyCondition() if conditions is None else conditions
         matches_only = [i for i in self.matches if not isinstance(i, Unwind)]
         for i, path in enumerate(matches_only):
             if i > 0:
@@ -268,13 +267,6 @@ class BaseQuery:
         return self.matches[-1].nodes[-1]
 
 
-class Branch(BaseQuery):
-        """
-        Branches are paths which are attached to other queries in the WHERE EXISTS {...} clause.
-        They have no effect on the return value/node since they dont return anything themselves.
-        """
-
-
 class Predicate(BaseQuery):
     """
     Predicates are parts of a query which act like sub-queries.
@@ -284,7 +276,7 @@ class Predicate(BaseQuery):
     def __init__(self, matches: List[Union[Path, Unwind]] = None,
                  branches: Dict[Path, List[Union[Node, NodeProperty]]] = None,
                  conditions: Condition = None,
-                 exist_branches: Exists = None,
+                 exist_branches: List = None,
                  returns: List[Union[Node, NodeProperty]] = None):
         super(Predicate, self).__init__(matches, branches, conditions)
         self.returns = [] if returns is None else returns
@@ -294,7 +286,7 @@ class Predicate(BaseQuery):
                 raise KeyError(f"A return {node} references a node that does not exist in the root")
         if not self.matches and self.returns:
             raise ValueError('There must be a root to return things from')
-        self.exist_branches = exist_branches
+        self.exist_branches = [] if exist_branches is None else exist_branches
 
 
 class FullQuery(Predicate):
@@ -313,7 +305,7 @@ class FullQuery(Predicate):
     def __init__(self, matches: List[Union[Path, Unwind]] = None,
                  branches: Dict[Path, List[Union[Node, NodeProperty]]] = None,
                  conditions: Condition = None,
-                 exist_branches: Exists = None,
+                 exist_branches: List = None,
                  predicates: List[Union[List[Union[str, Predicate]], str, Predicate]]  = None,
                  returns: List[Union[Node, NodeProperty, Collection]] = None):
         super(FullQuery, self).__init__(matches, branches, conditions, exist_branches, returns)

@@ -270,7 +270,8 @@ class Data:
                 multiplicity = True
         else:
             multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
-        numbers = [self.relation_graph.edges[(n2, n1)]['number'] for n1, n2 in zip(path[:-1], path[1:])]
+        undirected = self.relation_graph.to_undirected()
+        numbers = [undirected.edges[(n2, n1)]['number'] for n1, n2 in zip(path[:-1], path[1:])]
         if any(n is None for n in numbers):
             number = None
         else:
