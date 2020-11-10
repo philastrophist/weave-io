@@ -1,9 +1,13 @@
 # Quickstart
 
 ## Object orientation
+WEAVE-IO makes everything an object. 
+So questions like "How many exposures were taken last night?" and "What other targets were observed with the same fibre as this target?" both make sense when written
+using dot-notation syntax: `len(data.exposures[Address(expmjd=$yesternight)])` and `data.targets[target.fibre]`.
 
 
 ## WEAVE-IO hierarchical structure
+
 
 
 ## Plurality
@@ -15,7 +19,7 @@ WEAVE-IO will reject any query that is not phrased correctly.
 For instance,
 
 * `exposure.runs` is correct because an `exposure` can have more than 1 `run` (and usually does). 
-It is still correct even if the database only contains 1 `run` because an `exposure` *is able* to have more than one `run`.
+It is still correct even if the database only contains 1 `run` because an `exposure` *is designed* to have more than one `run`.
 ```python
 >>> exposure.runs()
 [Run(runid=1002814), Run(runid=1002815)]
@@ -54,4 +58,5 @@ Exposure(expmjd=57659.145637)
 Executing a singular will return one object, executing a plural will return a list.
 
 
-## 
+## Traversing the database
+All queries must start with a `data` object. 

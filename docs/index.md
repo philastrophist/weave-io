@@ -41,12 +41,13 @@ are downloaded.
 
 ## Object orientation and DB structure
 The WEAVE-IO database is hierarchical and object-oriented. 
-What this means is that each object that has some meaning in the world of WEAVE is represented in the database. 
+What this means is that each concept that has some meaning in the world of WEAVE is represented in the database. 
 You can access child objects that belong to parent objects (e.g. a `run` is a child of an `exposure`) by using 
 Python's dot-attribute syntax. 
 
-* An `exposure` contains `runs`: `exposure.runs`
-* An observing block `OB` contains  
+* `exposure.runs`: An `exposure` has `runs` 
+* `ob.exposures`: An observing block `OB` has exposures
+* `run.l1single`: A `run` has a `l1single` file
 
 
 For example, each Observing Block (`ob`)
