@@ -99,4 +99,4 @@ def test_names_with_dots_resolve_correctly(database):
     # cypher doesn't allow dots in its names, but we want the dots in our table
     table = database.hierarchyas[['hierarchyd.shared_factor_name']]()
     assert table.colnames == ['hierarchyd.shared_factor_name']
-
+    assert all(table['hierarchyd.shared_factor_name'] == 'shared_d')
