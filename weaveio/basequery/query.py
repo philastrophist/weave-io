@@ -201,6 +201,12 @@ class EmptyCondition(Copyable):
     def __or__(self, other):
         return other
 
+    def __bool__(self):
+        return False
+
+    def __eq__(self, other):
+        return isinstance(other, EmptyCondition)
+
 
 class Condition(EmptyCondition):
     def __init__(self, a, comparison='', b=''):
@@ -208,10 +214,16 @@ class Condition(EmptyCondition):
         self.comparison = comparison
         self.b = b
 
+    def __str__(self):
+        return self.stringify()
+
     def stringify(self):
-        a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'alias', quote(str(self.a)))
-        b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'alias', quote(str(self.b)))
+        a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'name', quote(str(self.a)))
+        b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'name', quote(str(self.b)))
         return f"({a} {self.comparison} {b})".strip()
+
+    def __bool__(self):
+        return True
 
     def __repr__(self):
         return self.stringify()
@@ -222,6 +234,8 @@ class Condition(EmptyCondition):
     def __or__(self, other):
         return Condition(self, 'OR', other)
 
+    def __eq__(self, other):
+        return self.a == other.a and self.comparison == other.comparison and self.b == other.b
 
 
 
@@ -258,7 +272,7 @@ class BaseQuery:
 
     @conditions.setter
     def conditions(self, value):
-        if not isinstance(value, Condition) and value is not None:
+        if not isinstance(value, EmptyCondition) and value is not None:
             raise TypeError(f"conditions must be of type Condition")
         self._conditions = value
 
