@@ -187,6 +187,18 @@ class Condition(Copyable):
         self.comparison = comparison
         self.b = b
 
+    @property
+    def nodes(self):
+        if isinstance(self.a, Condition):
+            yield from self.a.nodes
+        else:
+            yield getattr(self.a, 'node', self.a)
+        if isinstance(self.b, Condition):
+            yield from self.b.nodes
+        else:
+            yield getattr(self.a, 'node', self.a)
+
+
     def stringify(self):
         a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'name', quote(str(self.a)))
         b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'name', quote(str(self.b)))
