@@ -8,7 +8,8 @@ I.e.
 from textwrap import dedent
 
 import pytest
-from weaveio.basequery.query import FullQuery, Generator, Path, Condition, Collection
+from weaveio.basequery.query import FullQuery
+from weaveio.basequery.query_objects import Collection, Path, Generator, Condition
 
 
 @pytest.fixture(scope='function')

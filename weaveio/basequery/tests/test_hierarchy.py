@@ -1,7 +1,8 @@
 import pytest
 from weaveio.basequery.hierarchy import HomogeneousHierarchyFrozenQuery, SingleHierarchyFrozenQuery, \
     HeterogeneousHierarchyFrozenQuery, IdentifiedHomogeneousHierarchyFrozenQuery
-from weaveio.basequery.query import Condition, Generator, AmbiguousPathError, Node
+from weaveio.basequery.query import AmbiguousPathError
+from weaveio.basequery.query_objects import Node, Generator, Condition
 from weaveio.basequery.tests.example_structures.one2one import HierarchyA, MyData
 
 
