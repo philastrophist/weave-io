@@ -2,7 +2,8 @@ import pytest
 
 from weaveio.basequery.factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery, TableFactorFrozenQuery
 from weaveio.basequery.hierarchy import HomogeneousHierarchyFrozenQuery
-from weaveio.basequery.query import NodeProperty, Node, AmbiguousPathError
+from weaveio.basequery.query import AmbiguousPathError
+from weaveio.basequery.query_objects import Node, NodeProperty
 from weaveio.basequery.tests.example_structures.one2one import HierarchyA, HierarchyB, HierarchyC
 from weaveio.utilities import quote
 

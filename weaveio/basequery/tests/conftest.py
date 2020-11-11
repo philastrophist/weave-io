@@ -2,7 +2,7 @@ import py2neo
 import pytest
 from py2neo.wiring import WireError
 
-from weaveio.basequery.query import Path
+from weaveio.basequery.query_objects import Path
 from weaveio.basequery.tests.example_structures.one2one import MyData
 
 
