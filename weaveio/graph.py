@@ -7,7 +7,7 @@ from sys import modules
 from typing import Optional, Type, TypeVar, List, Union, Any, Dict
 
 import py2neo
-from py2neo import Graph as NeoGraph, Node, Relationship, Transaction
+from py2neo import Graph as NeoGraph, Transaction
 
 from weaveio.neo4jqueries import split_node_names
 from weaveio.utilities import quote, Varname, hash_pandas_dataframe
@@ -206,8 +206,26 @@ class Unwind:
 @contextmanager
 def unwind_context(graph: 'Graph', unwind: Unwind):
     graph.unwind_context = unwind.name
+    keys = graph.current_keys.copy()
     yield unwind
+    keys.append(graph.current_keys[-1])
+    graph.current_keys = keys
+    graph.simples.append(f"WITH {', '.join(graph.current_keys)}")
     graph.unwind_context = None
+
+
+class Node:
+    def __init__(self, *labels, **properties):
+        self.labels = labels
+        self.properties = properties
+
+
+class Relationship:
+    def __init__(self, parent, child, type, **properties):
+        self.parent = parent
+        self.child = child
+        self.type = type
+        self.properties = properties
 
 
 class Graph(metaclass=ContextMeta):
@@ -233,6 +251,7 @@ class Graph(metaclass=ContextMeta):
         self.unwinds = []
         self.data = {}
         self.counter = defaultdict(int)
+        self.current_keys = []
         return self.tx
 
     def execute(self, cypher, **parameters):
@@ -259,7 +278,8 @@ class Graph(metaclass=ContextMeta):
         key = f"{labels[-1]}{n}".lower()
         data = self.string_properties(properties)
         labels = self.string_labels(labels)
-        self.simples.append(f'MERGE ({key}:{labels} {{{data}}})')
+        self.simples.append(f'MERGE ({key}:{labels} {{{data}}})\n'
+                            f'    ON CREATE SET {key}.dbcreated = timestamp()')
         self.simples_index[key].append(len(self.simples))
         properties.pop('id')
         for k, v in properties.items():
@@ -268,6 +288,7 @@ class Graph(metaclass=ContextMeta):
                     for splitvar, splitdelimiter in v.splits:
                         if splitvar in v.columns:
                             self.add_split_context(labels, 'id', splitdelimiter, k)
+        self.current_keys.append(key)
         return key
 
     def add_relationship(self, a, b, *labels, **properties):
@@ -275,7 +296,10 @@ class Graph(metaclass=ContextMeta):
             properties['order'] = Varname(f"{self.unwind_context}._input_index")
         data = self.string_properties(properties)
         labels = self.string_labels([l.upper() for l in labels])
-        self.simples.append(f'MERGE ({a})-[:{labels} {{{data}}}]->({b})')
+        pi = self.counter['_path']
+        self.counter['_path'] += 1
+        self.simples.append(f'MERGE ({a})-[_path{pi}:{labels} {{{data}}}]->({b})\n'
+                            f'    ON CREATE SET _path{pi}.dbcreated = timestamp()')
         self.simples_index[a].append(len(self.simples))
         self.simples_index[b].append(len(self.simples))
 
@@ -285,15 +309,13 @@ class Graph(metaclass=ContextMeta):
         table.columns = [c.lower() for c in table.columns]
         table['_input_index'] = table.index.values
         table.set_index(index, drop=False, inplace=True)
-        self.unwinds.append(f"UNWIND ${name}s as {name}")
+        self.simples.append(f"WITH *\nUNWIND ${name}s as {name}")
         safe_df = table.where(pd.notnull(table), 'NaN')
         self.data[name+'s'] = [row.to_dict() for _, row in safe_df.iterrows()]
         return unwind_context(self, Unwind(table, name, splits=split))
 
     def make_statement(self):
-        unwinds = '\n'.join(self.unwinds)
-        simples = '\n'.join(self.simples)
-        return f'{unwinds}\n{simples}'
+        return '\n\n'.join(self.simples)
 
     def print_profiler(self):
         statement = self.make_statement()

@@ -1,15 +1,12 @@
 import inspect
-from typing import Tuple, Dict, Type, Union, List
+from typing import Tuple, Dict, Type
 from warnings import warn
 
 import networkx as nx
-import xxhash
 from graphviz import Source
-from tqdm import tqdm
 
 from .config_tables import progtemp_config
 from .graph import Graph, Node, Relationship, ContextError, Unwind
-from .utilities import Varname
 
 
 def chunker(lst, n):
@@ -56,7 +53,7 @@ class RuleBreakingException(Exception):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None):
+    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None):
         self.node = node
         self.minnumber = minnumber
         self.maxnumber = maxnumber
@@ -72,22 +69,29 @@ class Multiple:
             self.parents = self.node.parents
         except AttributeError:
             self.parents = []
+        self.constrain = [] if constrain is None else constrain
+
 
     def __repr__(self):
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
 class GraphableMeta(type):
-    def __new__(meta, name: str, bases, dct):
+    def __new__(meta, name: str, bases, _dct):
+        dct = {'is_template': False}
+        dct.update(_dct)
+        dct['aliases'] = dct.get('aliases', [])
+        dct['aliases'] += [a for base in bases for a in base.aliases]
         if dct.get('plural_name', None) is None:
             dct['plural_name'] = name.lower() + 's'
         dct['singular_name'] = name.lower()
         dct['plural_name'] = dct['plural_name'].lower()
         dct['singular_name'] = dct['singular_name'].lower()
-        if dct.get('idname', '') in FORBIDDEN_IDNAMES:
+        idname = dct.get('idname', None)
+        if idname in FORBIDDEN_IDNAMES:
             raise RuleBreakingException(f"You may not name an id as one of {FORBIDDEN_IDNAMES}")
-        if not isinstance(dct.get('idname', ''), str):
-            raise RuleBreakingException(f"{name}.idname must be a string")
+        if not (isinstance(idname, str) or idname is None):
+            raise RuleBreakingException(f"{name}.idname ({idname}) must be a string or None")
         if name[0] != name.capitalize()[0] or '_' in name:
             raise RuleBreakingException(f"{name} must have `CamelCaseName` style name")
         for factor in dct.get('factors', []) + ['idname'] + [dct['singular_name'], dct['plural_name']]:
@@ -102,7 +106,7 @@ class GraphableMeta(type):
 
 
 class Graphable(metaclass=GraphableMeta):
-    idname = 'id'
+    idname = None
     name = None
     identifier = None
     indexer = None
@@ -114,6 +118,8 @@ class Graphable(metaclass=GraphableMeta):
     factors = []
     data = None
     query = None
+    is_template = False
+    products = []
 
     @classmethod
     def requirement_names(cls):
@@ -152,39 +158,59 @@ class Graphable(metaclass=GraphableMeta):
 
     @property
     def neoproperties(self):
-        if self.identifier is None:
+        d = {}
+        if self.identifier is None and self.idname is not None:
             raise ValueError(f"{self} must have an identifier")
+        if self.idname is None and self.identifier is not None:
+            raise ValueError(f"{self} must have an idname to be given an identifier")
         else:
-            d = {self.idname: self.identifier}
+            d[self.idname] = self.identifier
             d['id'] = self.identifier
         for f in self.factors:
-                d[f.lower()] = getattr(self, f.lower())
+            value = getattr(self, f.lower())
+            if value is not None:
+                d[f.lower()] = value
+        if self.parents:
+            d['parents'] = self.parents
         return d
 
-    def __init__(self, **predecessors):
+    def __init__(self, _protect=None, **predecessors):
+        if _protect is None:
+            _protect = []
         self.predecessors = predecessors
         self.data = None
         try:
             graph = Graph.get_context()  # type: Graph
-            self.node = graph.add_node(*self.neotypes, **self.neoproperties)
-            for k, node_list in predecessors.items():
+            child = Node(*self.neotypes, **self.neoproperties)
+            relationships = []
+            for k, parent_list in predecessors.items():
                 if self.indexer is None:
                     type = 'is_required_by'
                 elif k in self.indexer.lower():
                     type = 'indexes'
                 else:
                     type = 'is_required_by'
-                if isinstance(node_list, (list, tuple)):
-                    for inode, node in enumerate(node_list):
-                        graph.add_relationship(node.node, self.node, type, order=inode)
+                if isinstance(parent_list, (list, tuple)):
+                    for iparent, parent in enumerate(parent_list):
+                        relationships.append(Relationship(parent.node, self.node, type, order=iparent))
                 else:
-                    graph.add_relationship(node_list.node, self.node, type, order=None)
+                    order = 0 if k in _protect else None
+                    parent = parent_list
+                    relationships.append(Relationship(parent.node, self.node, type, order=order))
+
+            self.node = child
+            if self.idname is not None:
+                graph.merge_node(child)
+                graph.merge_relationships(relationships)
+            else:
+                graph.merge_node_and_parent_relationships(child, relationships)
+
+
         except ContextError:
             pass
 
 
 class Hierarchy(Graphable):
-    identifier_builder = []
     parents = []
     factors = []
     indexer = None
@@ -192,37 +218,6 @@ class Hierarchy(Graphable):
 
     def __repr__(self):
         return self.name
-
-    def generate_identifier(self):
-        """
-        if `idname` is set, then return the identifier set at instantiation
-        otherwise, make an identifier by stitching together identifiers of its input
-        """
-        if self.identifier is not None:
-            return self.identifier
-        elif len(self.identifier_builder):
-            strings = []
-            identifiers = []
-            for i in self.identifier_builder:
-                obj = getattr(self, i)  # type: Union[List[Union[Hierarchy, str]], Hierarchy, str]
-                if not isinstance(obj, (list, tuple)):
-                    obj = [obj]
-                for o in obj:
-                    if isinstance(o, Hierarchy):
-                        identifiers.append(o.identifier)
-                    else:
-                        identifiers.append(o)
-            for i in identifiers:
-                if isinstance(i, (Unwind, Varname)):
-                    s = str(i)
-                    strings += ['+', s, '+']
-                else:
-                    s = str(i)
-                    strings.append(f"+'{s}'+")
-            final = ''.join(strings).strip('+').replace('++', '+').replace("''", "")
-            return Varname(final)
-        else:
-            return None
 
     def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str]]:
         """
@@ -235,6 +230,7 @@ class Hierarchy(Graphable):
         return specification, factors
 
     def __init__(self, tables=None, **kwargs):
+        _protect = kwargs.pop('_protect', [])
         self.uses_tables = False
         if tables is None:
             for value in kwargs.values():
@@ -244,10 +240,7 @@ class Hierarchy(Graphable):
                     self.uses_tables = value.uses_tables
         else:
             self.uses_tables = True
-        if self.idname not in kwargs:
-            self.identifier = None
-        else:
-            self.identifier = kwargs.pop(self.idname)
+        self.identifier = kwargs.pop(self.idname, None)
         specification, factors = self.make_specification()
         # add any data held in a neo4j unwind table
         for k, v in specification.items():
@@ -273,17 +266,13 @@ class Hierarchy(Graphable):
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors
-        if self.identifier is None:
-            self.identifier = self.generate_identifier()
         setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
-        super(Hierarchy, self).__init__(**predecessors)
+        super(Hierarchy, self).__init__(**predecessors, _protect=_protect)
 
 
 class ArmConfig(Hierarchy):
     factors = ['resolution', 'vph', 'camera', 'colour']
-    idname = 'armcode'
-    identifier_builder = ['resolution', 'vph', 'camera']
 
     def __init__(self, tables=None, **kwargs):
         if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
@@ -302,13 +291,12 @@ class ArmConfig(Hierarchy):
 
 class ObsTemp(Hierarchy):
     factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
-    idname = 'obstemp_code'
 
     @classmethod
     def from_header(cls, header):
         names = [f.lower() for f in cls.factors]
         obstemp_code = list(header['OBSTEMP'])
-        return cls(obstemp_code=''.join(obstemp_code), **{n: v for v, n in zip(obstemp_code, names)})
+        return cls(**{n: v for v, n in zip(obstemp_code, names)})
 
 
 class Survey(Hierarchy):
@@ -317,48 +305,59 @@ class Survey(Hierarchy):
 
 class WeaveTarget(Hierarchy):
     idname = 'cname'
-    factors = []
-    parents = [Multiple(Survey)]
 
 
 class Fibre(Hierarchy):
     idname = 'fibreid'
 
 
-class FibreAssignment(Hierarchy):
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition', 'orientat', 'retries']
-    parents = [Fibre, WeaveTarget]
-    identifier_builder = ['fibre', 'weavetarget', 'status', 'xposition', 'yposition']
+class SubProgramme(Hierarchy):
+    parents = [Multiple(Survey)]
+    factors = ['targprog']  # unique only to survey groups
 
 
-class OBSpecTarget(Hierarchy):
-    factors = ['obid', 'targid', 'targname', 'targra', 'targdec', 'targx', 'targy', 'targepoch', 'targcat',
-               'targpmra', 'targpmdec', 'targparal', 'targuse', 'targprog', 'targprio',
+class SurveyCatalogue(Hierarchy):
+    parents = [SubProgramme]
+    factors = ['targcat']  # unique only to subprogrammes
+
+
+class SurveyTarget(Hierarchy):
+    parents = [SurveyCatalogue, WeaveTarget]
+    # assume the worst case, that targids are not unique
+    factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch']
+
+
+class SurveyExpectations(Hierarchy):
+    parents = [SurveyTarget]
+    factors = ['targpmra', 'targpmdec', 'targparal',
                'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
                'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
-    identifier_builder = ['obid', 'targid', 'targname', 'targprog', 'targuse', 'targx', 'targy']
 
 
 class FibreTarget(Hierarchy):
-    parents = [FibreAssignment, OBSpecTarget]
-    identifier_builder = ['fibreassignment', 'obspectarget']
+    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
+               'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
+    parents = [Fibre, SurveyTarget, SurveyExpectations]
 
 
 class FibreSet(Hierarchy):
-    idname = 'obid'
+    # defined entirely by constituent fibretargets (unique only in this respect)
     parents = [Multiple(FibreTarget)]
+
+
+class CFG(Hierarchy):
+    parents = [ArmConfig]
+    factors = ['mode', 'binning']
 
 
 class InstrumentConfiguration(Hierarchy):
     factors = ['mode', 'binning']
     parents = [Multiple(ArmConfig, 2, 2)]
-    identifier_builder = ['mode', 'binning', 'armconfigs']
 
 
 class ProgTemp(Hierarchy):
     parents = [InstrumentConfiguration]
     factors = ['length', 'exposure_code']
-    idname = 'progtemp_code'
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -375,24 +374,65 @@ class ProgTemp(Hierarchy):
 
 
 class OBSpec(Hierarchy):
-    idname = 'catname'
+    # This is globally unique by xml cat name
+    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
     factors = ['obtitle']
     parents = [ObsTemp, FibreSet, ProgTemp]
 
 
-class OBRealisation(Hierarchy):
-    idname = 'obid'
+class OB(Hierarchy):
+    idname = 'obid'  # This is globally unique by obid
     factors = ['obstartmjd']
     parents = [OBSpec]
 
 
 class Exposure(Hierarchy):
-    parents = [OBRealisation]
-    factors = ['expmjd']
-    identifier_builder = ['expmjd']
+    idname = 'expmjd'
+    parents = [OB]
 
 
 class Run(Hierarchy):
     idname = 'runid'
     parents = [ArmConfig, Exposure]
     indexer = 'armconfig'
+
+
+class Spectrum(Hierarchy):
+    is_template = True
+    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar', 'fibinfo']
+
+
+class RawSpectrum(Spectrum):
+    parents = [Run]
+
+
+class L1SpectrumRow(Spectrum):
+    factors = ['findex']  # to index within a file
+    is_template = True
+
+
+class L1SingleSpectrum(L1SpectrumRow):
+    parents = [RawSpectrum, FibreTarget]
+
+
+class L1StackSpectrum(L1SpectrumRow):
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OB, ArmConfig])]
+
+
+class L1SuperStackSpectrum(L1SpectrumRow):
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OBSpec, ArmConfig])]
+
+
+class L1SuperTargetSpectrum(L1SpectrumRow):
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[CFG, WeaveTarget])]
+
+
+class L2(Hierarchy):
+    is_template = True
+
+
+class L2RowHDU(L2):
+    is_template = True
+    factors = ['findex']  # to index within a file
+    parents = [Multiple(L1SpectrumRow, 2, 3)]
+    products = []

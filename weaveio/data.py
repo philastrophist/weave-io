@@ -17,7 +17,7 @@ from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.basequery.hierarchy import HeterogeneousHierarchyFrozenQuery
 from weaveio.graph import Graph, Unwind
 from weaveio.hierarchy import Multiple
-from weaveio.file import Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget, File
+from weaveio.file import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile, L2File, File, L2SuperTargetFile
 from weaveio.queries import BasicQuery, HeterogeneousHierarchy
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
@@ -67,6 +67,16 @@ def process_neo4j_error(data: 'Data', file: File, msg):
     logging.exception(f"filenames: {fname}, {file.fname}")
 
 
+def get_all_subclasses(cls):
+    all_subclasses = []
+
+    for subclass in cls.__subclasses__():
+        all_subclasses.append(subclass)
+        all_subclasses.extend(get_all_subclasses(subclass))
+
+    return all_subclasses
+
+
 class Data:
     filetypes = []
 
@@ -82,12 +92,14 @@ class Data:
         todo = set(self.filetypes.copy())
         while len(todo):
             thing = todo.pop()
-            self.hierarchies.add(thing)
-            for hier in thing.parents:
-                if isinstance(hier, Multiple):
-                    todo.add(hier.node)
-                else:
-                    todo.add(hier)
+            if not thing.is_template:
+                self.hierarchies.add(thing)
+                for hier in thing.parents:
+                    if not thing.is_template:
+                        if isinstance(hier, Multiple):
+                            todo.add(hier.node)
+                        else:
+                            todo.add(hier)
         self.hierarchies |= set(self.filetypes)
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
@@ -96,7 +108,8 @@ class Data:
         for h in self.hierarchies:
             for f in getattr(h, 'factors', []):
                 self.factor_hierarchies[f.lower()].append(h)
-            self.factor_hierarchies[h.idname].append(h)
+            if h.idname is not None:
+                self.factor_hierarchies[h.idname].append(h)
         self.factor_hierarchies = dict(self.factor_hierarchies)  # make sure we always get keyerrors when necessary!
         self.factors = set(self.factor_hierarchies.keys())
         self.plural_factors =  {f.lower() + 's': f.lower() for f in self.factors}
@@ -130,14 +143,31 @@ class Data:
                 if multiplicity:
                     if parent.maxnumber == parent.minnumber:
                         number = parent.maxnumber
+                        numberlabel = f'={number}'
                     else:
                         number = None
+                        if (parent.minnumber is None or parent.minnumber == 0) and parent.maxnumber is None:
+                            numberlabel = 'any'
+                        elif (parent.minnumber is None or parent.minnumber == 0) and parent.maxnumber is not None:
+                            numberlabel = f'<= {parent.maxnumber}'
+                        elif (parent.minnumber is not None and parent.minnumber > 0) and parent.maxnumber is None:
+                            numberlabel = f'>={parent.minnumber}'
+                        else:
+                            numberlabel = f'{parent.minnumber} - {parent.maxnumber}'
+                    parent = parent.node
                 else:
                     number = 1
-                self.relation_graph.add_node(parent.singular_name, is_file=is_file,
-                                             factors=parent.factors+[h.idname], idname=h.idname)
-                self.relation_graph.add_edge(parent.singular_name, h.singular_name, multiplicity=multiplicity, number=number)
-                d.append(parent)
+                    numberlabel = f'={number}'
+                subclasses = [parent] + get_all_subclasses(parent)
+                for subclass in subclasses:
+                    if not subclass.is_template:
+                        self.relation_graph.add_node(subclass.singular_name, is_file=is_file,
+                                                     factors=subclass.factors+[subclass.idname],
+                                                     idname=subclass.idname)
+                        self.relation_graph.add_edge(subclass.singular_name, h.singular_name,
+                                                     multiplicity=multiplicity, number=number,
+                                                     label=numberlabel)
+                        d.append(subclass)
 
     def make_constraints(self):
         for hierarchy in self.hierarchies:
@@ -151,7 +181,7 @@ class Data:
         for filetype in self.filetypes:
             self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
-            self.make_constraints()
+            # self.make_constraints()
             for filetype, files in self.filelists.items():
                 if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
                     continue
@@ -338,6 +368,15 @@ class Data:
     def __getattr__(self, item):
         return self.handler.begin_with_heterogeneous().__getattr__(item)
 
+    def plot_relations(self, fname='relations.pdf'):
+        from networkx.drawing.nx_agraph import graphviz_layout, to_agraph
+        G = self.relation_graph
+        A = to_agraph(G)
+        A.layout('dot')
+        A.draw(fname)
+
+
 
 class OurData(Data):
-    filetypes = [Raw, L1Single, L1Stack, L1SuperStack, L1SuperTarget, L2Single, L2Stack, L2SuperTarget]
+    filetypes = [RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile,
+                 L2File, L2SuperTargetFile]
