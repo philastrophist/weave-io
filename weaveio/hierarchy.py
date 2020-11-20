@@ -71,7 +71,6 @@ class Multiple:
             self.parents = []
         self.constrain = [] if constrain is None else constrain
 
-
     def __repr__(self):
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
@@ -271,6 +270,22 @@ class Hierarchy(Graphable):
         super(Hierarchy, self).__init__(**predecessors, _protect=_protect)
 
 
+class CASU(Hierarchy):
+    idname = 'version'
+
+
+class APS(Hierarchy):
+    idname = 'version'
+
+
+class Simulator(Hierarchy):
+    factors = ['simvdate', 'simver', 'simmode']
+
+
+class Observer(Hierarchy):
+    factors = ['sysver']
+
+
 class ArmConfig(Hierarchy):
     factors = ['resolution', 'vph', 'camera', 'colour']
 
@@ -397,13 +412,18 @@ class Run(Hierarchy):
     indexer = 'armconfig'
 
 
+class Observation(Hierarchy):
+    # contains the observation header
+    parents = [Run, CASU, Observer, Simulator]
+
+
 class Spectrum(Hierarchy):
     is_template = True
     products = ['flux', 'ivar', 'noss_flux', 'noss_ivar', 'fibinfo']
 
 
 class RawSpectrum(Spectrum):
-    parents = [Run]
+    parents = [Observation]
 
 
 class L1SpectrumRow(Spectrum):
@@ -434,5 +454,5 @@ class L2(Hierarchy):
 class L2RowHDU(L2):
     is_template = True
     factors = ['findex']  # to index within a file
-    parents = [Multiple(L1SpectrumRow, 2, 3)]
+    parents = [Multiple(L1SpectrumRow, 2, 3), APS]
     products = []
