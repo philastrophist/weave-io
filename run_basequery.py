@@ -1,8 +1,10 @@
 from weaveio.data import OurData
 
-data = OurData('data', port=11007)
+data = OurData('data', port=11002)
 
-data.validate()
+data.plot_relations()
+# data.directory_to_neo4j('L1SingleFile')
+# data.validate()
 # thing = data.exposures.runs.exposures.runs[['1002814']]['runids', 'expmjd', 'cnames']
 # thing = data.runs[['expmjds', 'runid', 'cnames']]
 # print(thing)

@@ -1,108 +1,31 @@
-from collections import defaultdict
-from functools import lru_cache
 from pathlib import Path
-from typing import Union, Tuple, Dict
+from typing import Tuple
 
-import pandas as pd
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
 
 from weaveio.config_tables import progtemp_config
-from weaveio.graph import Graph, Unwind, ContextError
-from weaveio.hierarchy import Run, OBRealisation, OBSpec, ArmConfig, Exposure, \
-    Multiple, FibreSet, ProgTemp, ObsTemp, Graphable, l1file_attrs, Survey, Fibre, FibreAssignment, WeaveTarget, OBSpecTarget, FibreTarget
-from weaveio.product import Header, Array, Table
+from weaveio.graph import Graph
+from weaveio.hierarchy import Run, OB, OBSpec, ArmConfig, Exposure, \
+    FibreSet, ProgTemp, ObsTemp, Survey, Fibre, WeaveTarget, \
+    FibreTarget, SurveyCatalogue, SubProgramme, SurveyTarget, Hierarchy, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, Multiple
+from weaveio.oldproduct import Header, Array, Table
 
 
-class File(Graphable):
+class File(Hierarchy):
+    is_template = True
     idname = 'fname'
-    constructed_from = []
-    indexable_by = []
-    products = {}
-    factors = []
-    type_graph_attrs = l1file_attrs
-    concatenation_constant_names = {}
 
-    def __repr__(self):
-        return f'<{self.singular_name}(fname={self.fname})>'
-
-    def __init__(self, fname: Union[Path, str], **kwargs):
-        self.index = None
-        self.fname = Path(fname)
-        self.identifier = str(self.fname)
-        self.name = f'{self.__class__.__name__}({self.fname})'
-        if len(kwargs):
-            for k, v in kwargs.items():
-                setattr(self, k, v)
-            predecessors = kwargs
-        else:
-            try:
-                predecessors, factors = self.read()
-            except ContextError:
-                return
-        self.predecessors = {}
-        fs = {f: '...' for f in self.factors}
-        exception = TypeError(f"{self}.read() must return dict of {self.parents}, {fs}")
-        for p in self.parents:
-            if isinstance(p, Multiple):
-                thing = predecessors[p.plural_name]
-                if not isinstance(thing, (list, tuple)):
-                    raise exception
-                if not all(isinstance(pred, p.node) for pred in thing):
-                    raise exception
-                self.predecessors[p.plural_name] = thing
-            else:
-                thing = predecessors[p.singular_name]
-                if isinstance(thing, Unwind):
-                    self.predecessors[p.plural_name] = thing
-                else:
-                    self.predecessors[p.singular_name] = [thing]
-        for f in self.factors:
-            setattr(self, f, factors[f])
-        for p, v in self.predecessors.items():
-            setattr(self, p, v[0])
-        super(File, self).__init__(**self.predecessors)
-        self.product_data = {}
+    def __init__(self, fname, **kwargs):
+        super().__init__(tables=None, fname=str(fname), **kwargs)
 
     @classmethod
     def match(cls, directory: Path):
         raise NotImplementedError
 
-    @property
-    def graph_name(self):
-        return f"File({self.fname})"
-
-    def read(self) -> Tuple[Dict[str, 'Hierarchy']]:
+    @classmethod
+    def read(cls, directory: Path, fname: Path) -> 'File':
         raise NotImplementedError
-
-    def build_index(self) -> None:
-        if self.index is not None:
-            self.index['rowid'] = range(len(self.index))
-            self.index['fname'] = self.fname
-
-    def match_index(self, index) -> pd.DataFrame:
-        self.build_index()
-        keys = [i for i in index.columns if i not in ['fname', 'rowid']]
-        for i, k in enumerate(keys):
-            exists = index[k].isin(self.index[k])
-            if not exists.all():
-                raise KeyError(f"{index[~exists].values} are not found")
-            f = self.index[k].isin(index[k])
-            if i == 0:
-                filt = f
-            else:
-                filt &= f
-        return filt
-
-    def read_concatenation_constants(self, product_name) -> Tuple:
-        raise NotImplementedError
-
-    def is_concatenatable_with(self, other: 'File', product_name) -> bool:
-        if self.products[product_name] is not other.products[product_name]:
-            return False
-        self_values = self.read_concatenation_constants(product_name)
-        other_values = other.read_concatenation_constants(product_name)
-        return self_values == other_values
 
     def read_product(self, product_name):
         self.build_index()
@@ -110,6 +33,7 @@ class File(Graphable):
 
 
 class HeaderFibinfoFile(File):
+    is_template = True
     fibinfo_i = -1
     spectral_concatenation_constants = ['CRVAL1', 'CD1_1', 'NAXIS1']
     products = {'primary': Header, 'fluxes': Array, 'ivars': Array, 'fluxes_noss': Array,
@@ -130,15 +54,35 @@ class HeaderFibinfoFile(File):
         header = fits.open(self.fname)[self.hdus.index(product_name)].header
         return tuple(header[c] for c in self.concatenation_constant_names[product_name])
 
-    def read(self):
-        header = fits.open(self.fname)[0].header
+    @classmethod
+    def each_fibretarget(cls, row):
+        weavetargets = WeaveTarget(cname=row['cname'])
+        survey = Survey(surveyname=row['targsrvy'])
+        prog = SubProgramme(targprog=row['targprog'], surveys=survey, _protect=['surveys'])
+        catalogues = SurveyCatalogue(targcat=row['targcat'], subprogramme=prog, _protect=['subprogramme'])
+        surveytargets = SurveyTarget(tables=row, surveycatalogue=catalogues,
+                                     weavetarget=weavetargets,
+                                     _protect=['surveycatalogue', 'weavetarget'])
+        fibres = Fibre(fibreid=row['fibreid'])
+        fibretarget = FibreTarget(fibre=fibres, surveytarget=surveytargets, tables=row)
+        return fibretarget
+
+    @classmethod
+    def each_fibinfo_row(cls, fname):
+        fibinfo = AstropyTable(fits.open(fname)[cls.fibinfo_i].data).to_pandas()
+        return Graph.get_context().add_table(fibinfo, index='fibreid')
+
+    @classmethod
+    def read_hierarchy(cls, directory: Path, fname: Path):
+        fullpath = directory / fname
+        header = fits.open(fullpath)[0].header
         runid = str(header['RUN'])
         camera = str(header['CAMERA'].lower()[len('WEAVE'):])
         expmjd = str(header['MJD-OBS'])
         res = str(header['VPH']).rstrip('123')
         obstart = str(header['OBSTART'])
         obtitle = str(header['OBTITLE'])
-        catname = str(header['CAT-NAME'])
+        xml = str(header['CAT-NAME'])
         obid = str(header['OBID'])
 
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
@@ -147,27 +91,20 @@ class HeaderFibinfoFile(File):
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
 
-        graph = Graph.get_context()
-        fibinfo = self._read_fibtable().to_pandas()
-        fibinfo['TARGSRVY'] = fibinfo['TARGSRVY'].str.replace(' ', '')
-        with graph.add_table(fibinfo, index='fibreid', split=[('targsrvy', ',')]) as table:
-            surveys = Survey(surveyname=table['targsrvy'])
-            weavetargets = WeaveTarget(cname=table['cname'], surveys=surveys)
-            fibres = Fibre(fibreid=table['fibreid'])
-            fibreassignments = FibreAssignment(weavetarget=weavetargets, fibre=fibres, tables=table)
-            obspectargets = OBSpecTarget(obid=obid, tables=table)
-            fibretarget = FibreTarget(fibreassignment=fibreassignments, obspectarget=obspectargets)
-            fibreset = FibreSet(fibretargets=fibretarget, obid=obid)
-        obspec = OBSpec(catname=catname, fibreset=fibreset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
-        obrealisation = OBRealisation(obid=obid, obstartmjd=obstart, obspec=obspec)
+        with cls.each_fibinfo_row(fullpath) as row:
+            fibretarget = cls.each_fibretarget(row)
+            fibreset = FibreSet(fibretargets=fibretarget)
+        obspec = OBSpec(xml=xml, fibreset=fibreset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
+        obrealisation = OB(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
         run = Run(runid=runid, armconfig=arm, exposure=exposure)
-        return {'run': run, 'obrealisation': obrealisation, 'armconfig': arm}, {}
+        return {'run': run, 'obrealisation': obrealisation, 'obspec': obspec, 'armconfig': arm}
 
-    def build_index(self) -> None:
-        if self.index is None:
-            self.index = pd.DataFrame({'cname': [i.cname for i in self.weavetargets]})
-        super(HeaderFibinfoFile, self).build_index()
+
+    @classmethod
+    def read_l1single(cls, raw, fibrow):
+        fibretarget = cls.each_fibretarget(fibrow)
+        return L1SingleSpectrum(fibretarget=fibretarget, raw=raw, findex=fibrow['_input_index'])
 
     def read_primary(self):
         return Header(fits.open(self.fname)[0].header, self.index)
@@ -194,79 +131,129 @@ class HeaderFibinfoFile(File):
         return Table(self._read_fibtable(), self.index)
 
 
-class Raw(HeaderFibinfoFile):
-    parents = [Run]
+class RawFile(HeaderFibinfoFile):
+    parents = [RawSpectrum]
     fibinfo_i = 3
+
+    @classmethod
+    def read(cls, directory: Path, fname: Path):
+        hiers = cls.read_hierarchy(directory, fname)
+        raw = RawSpectrum(run=hiers['run'])
+        return  cls(fname=fname, raw=raw)
 
     @classmethod
     def match(cls, directory: Path):
         return directory.glob('r*.fit')
 
 
-class L1Single(HeaderFibinfoFile):
-    parents = [Run]
-    constructed_from = [Raw]
+class L1SingleFile(HeaderFibinfoFile):
+    parents = [Multiple(L1SingleSpectrum, constrain=[RawSpectrum])]
+
+    @classmethod
+    def read(cls, directory: Path, fname: Path):
+        """L1Single inherits all header data from raw so we can construct both when needed"""
+        hiers = cls.read_hierarchy(directory, fname)
+        inferred_raw_fname = fname.with_name(fname.name.replace('single', 'r'))
+        hiers['raw'] = raw = RawSpectrum(run=hiers['run'])
+        inferred_rawfile = RawFile(inferred_raw_fname, **hiers)
+        hiers['rawfile'] = inferred_rawfile
+        with cls.each_fibinfo_row(fname) as row:
+            single_spectra = cls.read_l1single(raw, row)
+        return cls(fname=fname, l1singlespectra=single_spectra)
 
     @classmethod
     def match(cls, directory):
         return directory.glob('single_*.fit')
 
 
-class L1Stack(HeaderFibinfoFile):
-    parents = [OBRealisation, ArmConfig]
-    constructed_from = [L1Single]
-    indexer = 'armconfig'
+class L1StackFile(HeaderFibinfoFile):
+    parents = [Multiple(L1StackSpectrum, constrain=[Exposure, ArmConfig])]
+    dependencies = [Run]
+
+    @classmethod
+    def make_spectra_from_single(cls, singles):
+        try:
+            spec_type = cls.parents[0].node
+        except AttributeError:
+            spec_type = cls.parents[0]
+        return {spec_type.singular_name: spec_type(l1singlespectra=singles)}
+
+    @classmethod
+    def read(cls, directory: Path, fname: Path):
+        """
+        L1Stack inherits everything from the lowest numbered single/raw files so we are missing data,
+        therefore we require that all the referenced Runs are present before loading in
+        """
+        fullpath = directory / fname
+        hiers = cls.read_hierarchy(directory, fname)
+        armconfig = hiers['armconfig']
+        header = fits.open(fullpath)[0].header
+        runids = sorted([(int(k[len('RUNS'):]), v) for k, v in header.items() if k.startswith('RUNS')], key=lambda x: x[1])
+        # start at Run, assuming it has already been created
+        runs = [Run(runid=rid, armconfig=armconfig, exposure=None) for rid in runids]
+        raws = [RawSpectrum(run=run) for run in runs]
+        with cls.each_fibinfo_row(fname) as row:
+            # this list comp is not a loop in cypher but simply a sequence of statements one after the other
+            singlespectra = [cls.read_l1single(raw, row) for raw in raws]
+            data = cls.make_spectra_from_single(singlespectra)  # and this is per fibretarget
+        return cls(fname=fname, **data)
 
     @classmethod
     def match(cls, directory):
         return directory.glob('stacked_*.fit')
 
 
-class L1SuperStack(File):
-    parents = [OBSpec, ArmConfig]
-    indexer = 'armconfig'
-    constructed_from = [L1Single]
+class L1SuperStackFile(L1StackFile):
+    parents = [Multiple(L1SuperStackSpectrum, constrain=[OBSpec, ArmConfig])]
 
     @classmethod
     def match(cls, directory):
         return directory.glob('superstacked_*.fit')
 
 
-class L1SuperTarget(File):
-    parents = [ArmConfig, WeaveTarget]
-    factors = ['binning', 'mode']
-    indexers = 'armconfig'
-    constructed_from = [L1Single]
+class L1SuperTargetFile(L1StackFile):
+    parents = [L1SuperTargetSpectrum]
 
     @classmethod
     def match(cls, directory):
         return directory.glob('[Lm]?WVE_*.fit')
 
 
-class L2Single(File):
-    parents = [Exposure]
-    constructed_from = [Multiple(L1Single, 2, 2)]
+class L2HeaderFibinfoFile(HeaderFibinfoFile):
+    def read(self):
+        """
+        L2Singles inherit from L1Single and so if the other is missing we can fill most of it in
+        """
+        hiers, factors = super().read()
+        header = fits.open(self.fname)[0].header
+        runids = sorted([(int(k[len('RUNS'):]), v) for k, v in header.items() if k.startswith('RUNS')], key=lambda x: x[1])
+        raw_fname = self.fname.with_name(f'r{runids[0]}.fit')
+        single_fname = self.fname.with_name(f'single_{runids[0]}.fit')
+        raw = RawFile(raw_fname, **hiers, **factors)
+        single = L1SingleFile(single_fname, run=hiers['run'], raw=raw)
+        armconfig = single.run.armconfig
+        if armconfig.camera == 'red':
+            camera = 'blue'
+        else:
+            camera = 'red'
+        other_armconfig = ArmConfig(armcode=None, resolution=None, vph=None, camera=camera, colour=None)
+        other_raw_fname = self.fname.with_name(f'r{runids[1]}.fit')
+        other_single_fname = self.fname.with_name(f'single_{runids[1]}.fit')
+        other_run = Run(runid=runids[1], run=single.run, armconfig=other_armconfig, exposure=single.run.exposure)
+        other_raw = RawFile(other_raw_fname, run=other_run)
+        other_single = L1SingleFile(other_single_fname, run=other_run, raw=other_raw)
+        return {'singles': [single, other_single], 'exposure': single.run.exposure}, {}
 
+
+class L2File(HeaderFibinfoFile):
     @classmethod
     def match(cls, directory):
-        return directory.glob('single_*_aps.fit')
+        return directory.glob('*aps.fit')
 
 
-class L2Stack(File):
-    parents = [Multiple(ArmConfig, 1, 3), FibreSet]
-    factors = ['binning', 'mode']
-    constructed_from = [Multiple(L1Stack, 0, 3), Multiple(L1SuperStack, 0, 3)]
-
+class L2SuperTargetFile(HeaderFibinfoFile):
     @classmethod
     def match(cls, directory):
-        return directory.glob('(super)?stacked_*_aps.fit')
+        return directory.glob('WVE*aps.fit')
 
 
-class L2SuperTarget(File):
-    parents = [Multiple(ArmConfig, 1, 3), WeaveTarget]
-    factors = ['mode', 'binning']
-    constructed_from = [Multiple(L1SuperTarget, 2, 3)]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('[Lm]?WVE_*_aps.fit')

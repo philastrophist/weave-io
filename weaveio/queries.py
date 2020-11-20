@@ -11,7 +11,7 @@ import pandas as pd
 from weaveio.address import Address
 from weaveio.file import File
 from weaveio.hierarchy import Graphable, Multiple
-from weaveio.product import get_product
+from weaveio.oldproduct import get_product
 from weaveio.utilities import quote
 
 
