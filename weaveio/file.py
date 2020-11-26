@@ -1,3 +1,4 @@
+from collections import defaultdict
 from pathlib import Path
 from typing import Tuple
 
@@ -55,14 +56,39 @@ class HeaderFibinfoFile(File):
         return tuple(header[c] for c in self.concatenation_constant_names[product_name])
 
     @classmethod
+    def make_surveys(cls, fullpath) -> None:
+        """
+        A target belongs to a Catalogue which belongs to a SubProgramme which is made by joining surveys
+        """
+        fibtable = AstropyTable(fits.open(fullpath)[cls.fibinfo_i].data).to_pandas()
+        surveys = {s for slist in fibtable['TARGSRVY'].tolist() for s in slist.strip().split(',')}
+        surveys = {s: Survey(surveyname=s) for s in surveys}  # first get unique surveys by name
+        # then unique programmes by surveys
+        progs = defaultdict(set)
+        for _, row in fibtable[['TARGSRVY', 'TARGPROG']].drop_duplicates().iterrows():
+            srvys = row['TARGSRVY'].strip().split(',')
+            progs[srvys] &= row['TARGPROG'].strip()
+        programmes = {}
+        for srvys, progset in progs.items():
+            for prog in progset:
+                programmes[prog] = SubProgramme(targprog=prog, surveys=[surveys[s] for s in srvys])
+        # then catalogues by subprogramme
+        cats = defaultdict(set)
+        for _, row in fibtable[['TARGPROG', 'TARGCAT']].drop_duplicates().iterrows():
+            cats[row['TARGPROG'].strip()] &= row['TARGCAT'].strip()
+
+        for progname, catlist in cats.items():
+            for cat in catlist:
+               SurveyCatalogue(subprogramme=programmes[progname], targcat=cat)
+
+    @classmethod
     def each_fibretarget(cls, row):
-        weavetargets = WeaveTarget(cname=row['cname'])
-        survey = Survey(surveyname=row['targsrvy'])
-        prog = SubProgramme(targprog=row['targprog'], surveys=survey, _protect=['surveys'])
-        catalogues = SurveyCatalogue(targcat=row['targcat'], subprogramme=prog, _protect=['subprogramme'])
-        surveytargets = SurveyTarget(tables=row, surveycatalogue=catalogues,
-                                     weavetarget=weavetargets,
-                                     _protect=['surveycatalogue', 'weavetarget'])
+        weavetarget = WeaveTarget(cname=row['cname'])
+        with Graph.get_context().unwind(row['targsrvy'].split(',')) as srvys:
+            surveys = Survey(surveyname=srvys)
+        prog = SubProgramme(targprog=row['targprog'], surveys=surveys)
+        catalogues = SurveyCatalogue(targcat=row['targcat'], subprogramme=prog)
+        surveytargets = SurveyTarget(tables=row, surveycatalogue=catalogues, weavetarget=weavetarget)
         fibres = Fibre(fibreid=row['fibreid'])
         fibretarget = FibreTarget(fibre=fibres, surveytarget=surveytargets, tables=row)
         return fibretarget
@@ -91,6 +117,7 @@ class HeaderFibinfoFile(File):
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
 
+        cls.make_surveys(fullpath)
         with cls.each_fibinfo_row(fullpath) as row:
             fibretarget = cls.each_fibretarget(row)
             fibreset = FibreSet(fibretargets=fibretarget)
