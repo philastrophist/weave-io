@@ -221,10 +221,10 @@ class Node:
 
 
 class Relationship:
-    def __init__(self, parent, child, type, **properties):
+    def __init__(self, parent, child, *labels, **properties):
         self.parent = parent
         self.child = child
-        self.type = type
+        self.labels = labels
         self.properties = properties
 
 
@@ -267,20 +267,22 @@ class Graph(metaclass=ContextMeta):
     def add_split_context(self, label, property, delimiter, *other_properties_to_set):
         self.split_contexts[(label, property, delimiter)] = split_node_names(label, property, delimiter, *other_properties_to_set)
 
-    def add_node(self, *labels, **properties):
+    def merge_node(self, node: Node):
+        labels, properties = node.labels, node.properties
         table_properties_list = properties.pop('tables', [])
         if not isinstance(table_properties_list, (tuple, list)):
             table_properties_list = [table_properties_list]
         table_properties = {k: v for p in table_properties_list for k, v in p.to_dict().items()}
         properties.update(table_properties)
-        self.counter[labels[-1]] += 1
-        n = self.counter[labels[-1]]
-        key = f"{labels[-1]}{n}".lower()
+        if node.key is None:
+            self.counter[labels[-1]] += 1
+            n = self.counter[labels[-1]]
+            node.key = f"{labels[-1]}{n}".lower()
         data = self.string_properties(properties)
         labels = self.string_labels(labels)
-        self.simples.append(f'MERGE ({key}:{labels} {{{data}}})\n'
-                            f'    ON CREATE SET {key}.dbcreated = timestamp()')
-        self.simples_index[key].append(len(self.simples))
+        self.simples.append(f'MERGE ({node.key}:{labels} {{{data}}})\n'
+                            f'    ON CREATE SET {node.key}.dbcreated = timestamp()')
+        self.simples_index[node.key].append(len(self.simples))
         properties.pop('id')
         for k, v in properties.items():
             if isinstance(v, Unwind):
@@ -288,20 +290,87 @@ class Graph(metaclass=ContextMeta):
                     for splitvar, splitdelimiter in v.splits:
                         if splitvar in v.columns:
                             self.add_split_context(labels, 'id', splitdelimiter, k)
-        self.current_keys.append(key)
-        return key
+        self.current_keys.append(node.key)
+        return node
 
-    def add_relationship(self, a, b, *labels, **properties):
-        if properties['order'] is None:
-            properties['order'] = Varname(f"{self.unwind_context}._input_index")
-        data = self.string_properties(properties)
-        labels = self.string_labels([l.upper() for l in labels])
+    def stringify_relationship(self, rel: Relationship):
+        if rel.properties['order'] is None:
+            rel.properties['order'] = Varname(f"{self.unwind_context}._input_index")
+        data = self.string_properties(rel.properties)
+        labels = self.string_labels([l.upper() for l in rel.labels])
+        return labels, data
+
+    def merge_relationship(self, rel: Relationship):
+        a, b = rel.parent.key, rel.child.key
+        labels, data = self.stringify_relationship(rel)
         pi = self.counter['_path']
         self.counter['_path'] += 1
         self.simples.append(f'MERGE ({a})-[_path{pi}:{labels} {{{data}}}]->({b})\n'
                             f'    ON CREATE SET _path{pi}.dbcreated = timestamp()')
         self.simples_index[a].append(len(self.simples))
         self.simples_index[b].append(len(self.simples))
+
+    def merge_relationships(self, rels: List[Relationship]):
+        for rel in rels:
+            self.merge_relationship(rel)
+
+    def single_dependency_merge(self, relationship: Relationship):
+        self.merge_relationship(relationship)
+
+    def dual_dependency_merge(self, rel1: Relationship, rel2: Relationship):
+        assert rel1.child is rel2.child
+        child = rel1.child
+        parent1, parent2 = rel1.parent.key, rel2.parent.key
+        labels1, data1 = self.stringify_relationship(rel1)
+        labels2, data2 = self.stringify_relationship(rel2)
+
+        pi = self.counter['_path']
+        self.counter['_path'] += 1
+        self.simples.append(f'WITH *, timestamp() as time\n'
+                            f'MERGE ({parent1})-[_path{pi}a:{labels1} {{{data1}}}]->({child})'
+                            f'<-[_path{pi}b:{labels2} {{{data2}}}]-({parent2})\n    '
+                            f'ON CREATE SET _path{pi}a.dbcreated = time, _path{pi}b.dbcreated = time')
+        self.simples_index[parent1].append(len(self.simples))
+        self.simples_index[parent2].append(len(self.simples))
+        self.simples_index[child].append(len(self.simples))
+
+
+    def collected_dependency_merge(self, *relationships: Relationship):
+        child = relationships[0].child
+        assert all(child is rel.child for rel in relationships[1:])
+
+        self.group_relationships(relationships)
+
+
+        labels1, data1 = self.stringify_relationship(rel1)
+        pi = self.counter['_path']
+        self.counter['_path'] += 1
+        s = f"with time, collect(fibre) as fibres"
+        f"OPTIONAL MATCH ({child.key}_matched: {child.labels})"
+        f"WHERE ALL(node in fibres WHERE (node)-[:]->({child.key}_matched))"
+        f"FOREACH (node in CASE WHEN fibreset_matched is null THEN [1] ELSE [] END | CREATE (fibreset_created: FibreSet {{dbcreated: time}}) FOREACH (node in fibres | MERGE (node)-[:r {dbcreated: time}]->(fibreset_created)))"
+        f"WITH *"
+        f"MATCH (fibreset: FibreSet)"
+        f"WHERE ALL(node in fibres WHERE (node)-[:r]->(fibreset))"
+        f"RETURN fibreset"
+
+
+    def merge_node_and_parent_relationships(self, relationships):
+        if len(relationships) == 0:
+            raise ValueError(f"There must be some relationships to merge with")
+        elif len(relationships) == 1:
+            child = self.single_dependency_merge(relationships[0])
+        elif len(relationships) == 2:
+            child = self.dual_dependency_merge(*relationships)
+        else:
+            child = self.collected_dependency_merge(relationships)
+        return child
+
+
+
+
+
+
 
     def add_table(self, table: pd.DataFrame, index, split=None):
         self.uses_table = True

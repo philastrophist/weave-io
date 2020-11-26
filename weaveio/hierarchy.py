@@ -1,5 +1,5 @@
 import inspect
-from typing import Tuple, Dict, Type
+from typing import Tuple, Dict, Type, Union, List
 from warnings import warn
 
 import networkx as nx
@@ -7,6 +7,7 @@ from graphviz import Source
 
 from .config_tables import progtemp_config
 from .graph import Graph, Node, Relationship, ContextError, Unwind
+from .utilities import Varname
 
 
 def chunker(lst, n):
@@ -191,18 +192,18 @@ class Graphable(metaclass=GraphableMeta):
                     type = 'is_required_by'
                 if isinstance(parent_list, (list, tuple)):
                     for iparent, parent in enumerate(parent_list):
-                        relationships.append(Relationship(parent.node, self.node, type, order=iparent))
+                        relationships.append(Relationship(parent.node, child, type, order=iparent))
                 else:
                     order = 0 if k in _protect else None
                     parent = parent_list
-                    relationships.append(Relationship(parent.node, self.node, type, order=order))
+                    relationships.append(Relationship(parent.node, child, type, order=order))
 
             self.node = child
-            if self.idname is not None:
+            if self.identifier is not None:
                 graph.merge_node(child)
                 graph.merge_relationships(relationships)
             else:
-                graph.merge_node_and_parent_relationships(child, relationships)
+                graph.merge_node_and_parent_relationships(relationships)
 
 
         except ContextError:
@@ -213,7 +214,38 @@ class Hierarchy(Graphable):
     parents = []
     factors = []
     indexer = None
-    type_graph_attrs = hierarchy_attrs
+    identifier_builder = None
+
+    def generate_identifier(self):
+        """
+        if `idname` is set, then return the identifier set at instantiation
+        otherwise, make an identifier by stitching together identifiers of its input
+        """
+        if self.identifier is not None:
+            return self.identifier
+        elif len(self.identifier_builder):
+            strings = []
+            identifiers = []
+            for i in self.identifier_builder:
+                obj = getattr(self, i)  # type: Union[List[Union[Hierarchy, str]], Hierarchy, str]
+                if not isinstance(obj, (list, tuple)):
+                    obj = [obj]
+                for o in obj:
+                    if isinstance(o, Hierarchy):
+                        identifiers.append(o.identifier)
+                    else:
+                        identifiers.append(o)
+            for i in identifiers:
+                if isinstance(i, (Unwind, Varname)):
+                    s = str(i)
+                    strings += ['+', s, '+']
+                else:
+                    s = str(i)
+                    strings.append(f"+'{s}'+")
+            final = ''.join(strings).strip('+').replace('++', '+').replace("''", "")
+            return Varname(final)
+        else:
+            return None
 
     def __repr__(self):
         return self.name
@@ -240,9 +272,9 @@ class Hierarchy(Graphable):
         else:
             self.uses_tables = True
         self.identifier = kwargs.pop(self.idname, None)
-        specification, factors = self.make_specification()
+        self.specification, factors = self.make_specification()
         # add any data held in a neo4j unwind table
-        for k, v in specification.items():
+        for k, v in self.specification.items():
             if k not in kwargs:
                 if tables is not None:
                     if k in tables:
@@ -250,7 +282,7 @@ class Hierarchy(Graphable):
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
-        for name, nodetype in specification.items():
+        for name, nodetype in self.specification.items():
             value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
@@ -265,6 +297,10 @@ class Hierarchy(Graphable):
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors
+        if self.identifier_builder is not None:
+            if self.identifier is not None:
+                raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
+            self.identifier = self.generate_identifier()
         setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors, _protect=_protect)
@@ -279,11 +315,12 @@ class APS(Hierarchy):
 
 
 class Simulator(Hierarchy):
+    idname = 'version'
     factors = ['simvdate', 'simver', 'simmode']
 
 
-class Observer(Hierarchy):
-    factors = ['sysver']
+class System(Hierarchy):
+    idname = 'version'
 
 
 class ArmConfig(Hierarchy):
@@ -387,9 +424,7 @@ class ProgTemp(Hierarchy):
         return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
                    instrumentconfiguration=config)
 
-
 class OBSpec(Hierarchy):
-    # This is globally unique by xml cat name
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
     factors = ['obtitle']
     parents = [ObsTemp, FibreSet, ProgTemp]
@@ -402,7 +437,7 @@ class OB(Hierarchy):
 
 
 class Exposure(Hierarchy):
-    idname = 'expmjd'
+    idname = 'expmjd'  # globally unique
     parents = [OB]
 
 
@@ -412,18 +447,16 @@ class Run(Hierarchy):
     indexer = 'armconfig'
 
 
-class Observation(Hierarchy):
-    # contains the observation header
-    parents = [Run, CASU, Observer, Simulator]
-
-
 class Spectrum(Hierarchy):
     is_template = True
-    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar', 'fibinfo']
+    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar']
 
 
 class RawSpectrum(Spectrum):
-    parents = [Observation]
+    parents = [Run, CASU, Simulator, System]
+    products = Spectrum.products + ['guideinfo', 'metinfo']
+    version_on = ['run']  # any duplicates under a run will be versioned based on their appearance in the database
+    # TODO: versioning: the relationship mentioned in version_on will be versioned 
 
 
 class L1SpectrumRow(Spectrum):
@@ -432,19 +465,23 @@ class L1SpectrumRow(Spectrum):
 
 
 class L1SingleSpectrum(L1SpectrumRow):
-    parents = [RawSpectrum, FibreTarget]
+    parents = [RawSpectrum, FibreTarget, CASU]
+    version_on = ['rawspectrum', 'fibretarget']
 
 
 class L1StackSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OB, ArmConfig])]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OB, ArmConfig, FibreTarget]), CASU]
+    version_on = ['l1singlespectra']
 
 
 class L1SuperStackSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OBSpec, ArmConfig])]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OBSpec, ArmConfig, FibreTarget]), CASU]
+    version_on = ['l1singlespectra']
 
 
 class L1SuperTargetSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[CFG, WeaveTarget])]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[CFG, WeaveTarget]), CASU]
+    version_on = ['l1singlespectra']
 
 
 class L2(Hierarchy):
