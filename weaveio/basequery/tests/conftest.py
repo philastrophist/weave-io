@@ -21,7 +21,7 @@ def data(workdir):
     return MyData(workdir, port=None)  # set to None for safety
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='module')
 def database(workdir):
     try:
         data = MyData(workdir, port=7687)

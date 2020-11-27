@@ -4,16 +4,17 @@
 // param: createprops => MAP
 // param: createpropsrel => MAP
 // returns: child => NODE
-// description: Performs a cypher merge to create or match a node(s) that has only the exact relationships given in spec
+// description: Performs a cypher merge to create or match a node(s) that has only the exact relationships given in spec. Labels must be identical, properties are matched as normal in cypher.
 ////////////////////////////////////////////////////////////
 
 WITH $specs as specs
 UNWIND specs as spec
 OPTIONAL MATCH p=(a)-[r]->(d)
 WHERE a = spec[0] AND type(r) = spec[1]
-AND all(l in $labels WHERE l in labels(d))
-AND all(k in keys(spec[2]) WHERE r[k] = spec[2][k] OR spec[2][k] is NULL) // specified relationship properties
 AND all(k in keys($properties) WHERE d[k] = $properties[k] OR $properties[k] is NULL)  // specifed node properties
+AND labels(d) = $labels
+AND all(k in keys(spec[2]) WHERE r[k] = spec[2][k] OR spec[2][k] is NULL) // specified relationship properties
+
 
 WITH specs, spec, collect(DISTINCT d) as childlist  // [child1, child2] per spec relation
 WITH specs, collect(spec[0]) as parents, collect(childlist) as childlists  // [[child1, child2], ...] per entire specification
