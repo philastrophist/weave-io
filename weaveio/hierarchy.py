@@ -455,8 +455,10 @@ class Spectrum(Hierarchy):
 class RawSpectrum(Spectrum):
     parents = [Run, CASU, Simulator, System]
     products = Spectrum.products + ['guideinfo', 'metinfo']
-    version_on = ['run']  # any duplicates under a run will be versioned based on their appearance in the database
-    # TODO: versioning: the relationship mentioned in version_on will be versioned 
+    version_on = ['run']
+    # any duplicates under a run will be versioned based on their appearance in the database
+    # only one raw per run essentially
+    # TODO: versioning: the relationship mentioned in version_on will be versioned
 
 
 class L1SpectrumRow(Spectrum):
@@ -493,3 +495,4 @@ class L2RowHDU(L2):
     factors = ['findex']  # to index within a file
     parents = [Multiple(L1SpectrumRow, 2, 3), APS]
     products = []
+    version_on = ['l1singlespectrumrows']
