@@ -404,6 +404,59 @@ def test_creates_two_on_prop_change(database: py2neo.Graph, procedure_tag: str):
     assert len(t) == 2
 
 
+def test_creates_one_to_one_correctly_on_spec_change(database: py2neo.Graph, procedure_tag: str):
+    q = f"""
+    MERGE (a: A {{id: 1}})
+    WITH [[a, 'rel', {{order: 0}}]] as specs
+    CALL custom.multimerge{procedure_tag}(specs, ['MyLabel'], {{match: 'match'}}, {{oncreate:1}}, {{oncreate: 1}}) YIELD child
+    
+    MERGE (a: A {{id: 1}})
+    WITH [[a, 'rel', {{order: 0}}]] as specs
+    CALL custom.multimerge{procedure_tag}(specs, ['MyLabel'], {{match: 'match'}}, {{oncreate: 2}}, {{oncreate: 2}}) YIELD child
+
+    MERGE (a: A {{id: 2}})
+    WITH [[a, 'rel', {{order: 0}}]] as specs
+    CALL custom.multimerge{procedure_tag}(specs, ['MyLabel'], {{match: 'match'}}, {{oncreate:3}}, {{oncreate: 3}}) YIELD child
+
+    MATCH (n:MyLabel)
+    MATCH (n)<-[r]-(a:A)
+    RETURN n.oncreate, r.oncreate
+    ORDER BY n.oncreate
+    """
+    t = database.run(q).to_table()
+    assert len(t) == 2
+    assert t[0][0] == 1
+    assert t[0][1] == 1
+    assert t[1][0] == 3
+    assert t[1][1] == 3
+
+
+def test_creates_one_to_one_correctly_on_child_change(database: py2neo.Graph, procedure_tag: str):
+    q = f"""
+    MERGE (a: A {{id: 1}})
+    WITH [[a, 'rel', {{order: 0}}]] as specs
+    CALL custom.multimerge{procedure_tag}(specs, ['MyLabel'], {{match: 'match'}}, {{oncreate:1}}, {{oncreate: 1}}) YIELD child
+    
+    MERGE (a: A {{id: 1}})
+    WITH [[a, 'rel', {{order: 0}}]] as specs
+    CALL custom.multimerge{procedure_tag}(specs, ['MyLabel'], {{match: 'match'}}, {{oncreate: 2}}, {{oncreate: 2}}) YIELD child
+
+    MERGE (a: A {{id: 1}})
+    WITH [[a, 'rel', {{order: 0}}]] as specs
+    CALL custom.multimerge{procedure_tag}(specs, ['MyLabel', 'MyOtherLabel'], {{match: 'match'}}, {{oncreate:3}}, {{oncreate: 3}}) YIELD child
+
+    MATCH (n:MyLabel)
+    MATCH (n)<-[r]-(a:A)
+    RETURN n.oncreate, r.oncreate
+    ORDER BY n.oncreate
+    """
+    t = database.run(q).to_table()
+    assert len(t) == 2
+    assert t[0][0] == 1
+    assert t[0][1] == 1
+    assert t[1][0] == 3
+    assert t[1][1] == 3
+
 
 def test_creates_three_on_super_and_subsets(database: py2neo.Graph, procedure_tag: str):
     q = f"""
