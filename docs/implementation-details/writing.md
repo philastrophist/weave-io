@@ -47,8 +47,35 @@ The L1SingleSpectrum is added to the graph as normal (if it is different, but th
 The actual information about the version of the data will be stored in nodes, either itself, or parent nodes. 
 This is what the `CASU` and `system` nodes are doing in the graph above.
 
+For each binary data product produced by CASU, versioning is done with  
+
+1. A checksum (stored in the node)
+1. Any author information (stored as parent nodes since they can author multiple products)
+
+
+
 
 # How the writing process works
 
 When a file is read, all the hierarchies that are contained within it are merged into the graph from top to bottom (not as you may expected, from the bottom to top). 
-   
+So when an `L1StackFile` is written to the db using `L1StackFile.read(fname)`, what is actually happening is something like the following (for one spectrum in that file):
+
+```python
+# L1StackFile.read(fname)  -  spectra stacked from the same OB but different exposures
+with data:
+    fibinfo = CypherData('fibinfo', fibinfo)
+    checksums = CypherData('checksums', checksums)
+    runids = CypherData('runids', runids)
+    with unwind(checksums, fibinfo) as checksum, fibinfo:
+        fibretarget = Fibretarget(...)  # make the hierarchy as in the raw file (this will just be a match if they are all the same)
+        with unwind(runid) as runid:
+            run = Run(runid=runid, exposure=None)  # match runs based only on runid
+            raw = RawSpectrum(run=run, casu=casu, simulator=simulator, system=system)  #  merge spectrum 
+            single = L1SingleSpectrum(raw=raw, casu=casu, fibretarget=fibretarget, checksum=None)  #  match the spectrum from the raw
+        singles, runs = collect(single, run)
+        stack = L1StackSpectrum(checksum=checksum, l1singlespectra=singles)  # still under fibretarget context
+    stacks = collect(stack)
+    L1StackFile(fname=fname, l1stackspectra=stacks)
+    
+        
+```

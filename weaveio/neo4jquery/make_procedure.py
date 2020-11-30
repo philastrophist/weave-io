@@ -14,6 +14,7 @@ def read_procedure_text(cql_fname):
     header = cypherlines[:i]
     params = []
     returns = []
+    requires = []
     description = 'no description given'
     for l in header:
         if '//' in l:
@@ -25,20 +26,24 @@ def read_procedure_text(cql_fname):
                 returns.append([i.strip() for i in l[len('returns:'):].split('=>')])
             if l.startswith('description:'):
                 description = l[len('description:'):].strip()
+            if l.startswith('requires:'):
+                requires = [x.strip() for x in l[len('requires:'):].strip().split(',')]
     query = '\n'.join(cypherlines[i+1:]).replace("'", "\\'")
-    return query, returns, params, description
+    return query, returns, params, description, requires
 
 
-def make_procedure(name, cql_fname, readwrite):
-    query, returns, params, description = read_procedure_text(cql_fname)
-    return f"CALL apoc.custom.asProcedure('{name}', '{query}', '{readwrite}', {returns}, {params}, '{description}')"
+def make_procedure(name, cql_fname, readwrite, tag=''):
+    query, returns, params, description, requirements = read_procedure_text(cql_fname)
+    for req in requirements:
+        query = query.replace(req, f'custom.{req}{tag}')
+    return f"CALL apoc.custom.asProcedure('{name}{tag}', '{query}', '{readwrite}', {returns}, {params}, '{description}')"
 
 
 def get_all_procedures(mode, tag=''):
     procedures = []
     for f in HERE.glob('*.cql'):
         name = f.name.replace('.cql', '')
-        procedures.append(make_procedure(name+tag, str(f), mode))
+        procedures.append(make_procedure(name, str(f), mode, tag))
     return procedures
 
 

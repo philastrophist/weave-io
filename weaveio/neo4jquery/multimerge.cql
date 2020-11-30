@@ -34,7 +34,8 @@ CALL apoc.do.when(size(children) > 0, "UNWIND $children as child RETURN child", 
 		UNWIND $specs as spec
 		CALL apoc.create.relationship(spec[0], spec[1], spec[2], node) yield rel
         SET rel += $createpropsrel
-        RETURN DISTINCT node as child",
+        WITH node as child
+        RETURN child",
 		{specs: specs, children:children, labels:$labels, props:$properties, createprops:$createprops, createpropsrel:$createpropsrel}
 	) YIELD value
 RETURN value.child as child
