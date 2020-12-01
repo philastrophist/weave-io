@@ -3,15 +3,16 @@
 // param: versionedlabels => LIST OF STRING  // the labels which define a version (not all parent nodes have to be unique)
 // param: versionattribute => STRING
 // returns: version => INT
-// description: Will version a node based on selected parent node labels and its own labels. If there is more than one instance of this label with those parent labels attached to it, the node will have a versionlabel property set to the number of instances. The relationship type is also versioned.
-// requires: multimerge
+// description: Given a parent specification and a child, find all other children of the specification that have versionedlabels. The version # of the passed child node is 1 + max(versions).
+// requires: multimatch
 ////////////////////////////////////////////////////////////
 
-CALL multimerge(specs, labels($child), {}, {}, {}) yield child
 Unwind $specs as spec
-WITH CASE WHEN any(l in $versionedlabels WHERE l in labels(spec[0])) THEN [spec[0], spec[1], {}] ELSE null END AS row, $child as unversioned_child
+WITH CASE WHEN any(l in $versionedlabels WHERE l in labels(spec[0])) THEN spec ELSE null END AS row, $child as unversioned_child
 WITH collect(row) as newspecs, unversioned_child
-WITH unversioned_child, max(child[$versionattribute]) as latest_version
+CALL multimatch(newspecs, labels(unversioned_child), {}, false) YIELD child  // false= other unmentioned parent nodes are allowed
+WHERE (child <> unversioned_child) OR (child is null)
+WITH unversioned_child, max(child[$versionattribute]) + 1 as latest_version
 WITH *, CASE WHEN latest_version is null THEN 0 ELSE latest_version END as latest_version
 CALL apoc.create.setProperty(unversioned_child, $versionattribute, latest_version) YIELD node
 RETURN latest_version as version

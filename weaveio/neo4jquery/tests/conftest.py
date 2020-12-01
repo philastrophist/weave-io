@@ -8,7 +8,7 @@ from py2neo.wiring import WireError
 from weaveio.neo4jquery.make_procedure import get_all_procedures
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope='module')
 def procedure_tag():
     return str(hash(datetime.now())).replace('-', '')[:5]
 
