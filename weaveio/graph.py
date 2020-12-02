@@ -4,15 +4,11 @@ import threading
 from collections import defaultdict
 from contextlib import contextmanager
 from sys import modules
-from typing import Optional, Type, TypeVar, List, Union, Any, Dict
+from typing import Optional, Type, TypeVar, List, Union, Dict
 
 import py2neo
-from py2neo import Graph as NeoGraph, Transaction
+from py2neo import Graph as NeoGraph
 
-from weaveio.neo4jqueries import split_node_names
-from weaveio.utilities import quote, Varname, hash_pandas_dataframe
-import pandas as pd
-import numpy as np
 
 T = TypeVar("T", bound="ContextMeta")
 
@@ -133,101 +129,6 @@ class ContextMeta(type):
         return instance
 
 
-def graphcontext(graph: Optional["Graph"]) -> "Graph":
-    """
-    Return the given graph or, if none was supplied, try to find one in
-    the context stack.
-    """
-    if graph is None:
-        graph = Graph.get_context(error_if_none=False)
-        if graph is None:
-            raise TypeError("No graph on context stack.")
-    return graph
-
-
-class TransactionWrapper:
-    def __init__(self, tx: Transaction):
-        self.tx = tx
-
-    def __enter__(self):
-        return self.tx
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.tx.commit()
-
-
-class Unwind:
-    def __init__(self, data:pd.DataFrame, name, columns=None, _renames=None, single=False, splits=None):
-        data.columns = [c.lower() for c in data.columns]
-        self.data = data
-        self.name = name
-        self.single = single
-        self.splits = [] if splits is None else splits
-        self.columns = self.data.columns if columns is None else columns
-        self._renames = {} if _renames is None else _renames
-
-    def __contains__(self, item):
-        return item in self.columns
-
-    def rename(self, **names):
-        renames = self._renames.copy()
-        renames.update(names)
-        return Unwind(self.data, self.name, self.columns, renames, self.splits)
-
-    def __getitem__(self, item):
-        if self.single:
-            raise TypeError(f"Cannot index a single Unwind column")
-        if not isinstance(item, (list, tuple, np.ndarray)):
-            item = [item]
-            single = True
-        else:
-            single = False
-        return Unwind(self.data[item], self.name, item,
-                      {k: v for k, v in self._renames.items() if k in item}, single=single,
-                      splits=self.splits)
-
-    def list(self):
-        return [f"{self.name}_{c}" if c in self.splits else f"{self.name}.{c}" for c in self.columns]
-
-    def get(self):
-        if self.single:
-            return self.list()[0]
-        return '[' + ','.join(self.list()) + ']'
-
-    def __str__(self):
-        if self.single:
-            return self.list()[0]
-        return '+'.join(self.list())
-
-    def hash(self):
-        return hash_pandas_dataframe(self.data.sort_index())
-
-
-@contextmanager
-def unwind_context(graph: 'Graph', unwind: Unwind):
-    graph.unwind_context = unwind.name
-    keys = graph.current_keys.copy()
-    yield unwind
-    keys.append(graph.current_keys[-1])
-    graph.current_keys = keys
-    graph.simples.append(f"WITH {', '.join(graph.current_keys)}")
-    graph.unwind_context = None
-
-
-class Node:
-    def __init__(self, *labels, **properties):
-        self.labels = labels
-        self.properties = properties
-
-
-class Relationship:
-    def __init__(self, parent, child, *labels, **properties):
-        self.parent = parent
-        self.child = child
-        self.labels = labels
-        self.properties = properties
-
-
 class Graph(metaclass=ContextMeta):
     def __new__(cls, *args, **kwargs):
         # resolves the parent instance
@@ -238,182 +139,14 @@ class Graph(metaclass=ContextMeta):
             instance._parent = cls.get_context(error_if_none=False)
         return instance
 
-    def __init__(self, profile=None, name=None, **settings):
+    def __init__(self, profile=None, name=None, write=False, **settings):
         self.neograph = NeoGraph(profile, name, **settings)
-        self.split_contexts = {}
+        if write:
+            self.query = CypherQuery(self)
 
-    def begin(self, **kwargs):
-        self.tx = self.neograph.begin(**kwargs)
-        self.uses_table = False
-        self.simples = []
-        self.simples_index = defaultdict(list)
-        self.unwind_context = None
-        self.unwinds = []
-        self.data = {}
-        self.counter = defaultdict(int)
-        self.current_keys = []
-        return self.tx
-
-    def execute(self, cypher, **parameters):
-        return self.neograph.run(cypher, parameters)
-
-    def string_properties(self, properties):
-        properties = {k: Varname(v.get()) if isinstance(v, Unwind) else v for k, v in properties.items()}
-        return ', '.join(f'{k}: {quote(v)}' for k, v in properties.items())
-
-    def string_labels(self, labels):
-        return ':'.join(labels)
-
-    def add_split_context(self, label, property, delimiter, *other_properties_to_set):
-        self.split_contexts[(label, property, delimiter)] = split_node_names(label, property, delimiter, *other_properties_to_set)
-
-    def merge_node(self, node: Node):
-        labels, properties = node.labels, node.properties
-        table_properties_list = properties.pop('tables', [])
-        if not isinstance(table_properties_list, (tuple, list)):
-            table_properties_list = [table_properties_list]
-        table_properties = {k: v for p in table_properties_list for k, v in p.to_dict().items()}
-        properties.update(table_properties)
-        if node.key is None:
-            self.counter[labels[-1]] += 1
-            n = self.counter[labels[-1]]
-            node.key = f"{labels[-1]}{n}".lower()
-        data = self.string_properties(properties)
-        labels = self.string_labels(labels)
-        self.simples.append(f'MERGE ({node.key}:{labels} {{{data}}})\n'
-                            f'    ON CREATE SET {node.key}.dbcreated = timestamp()')
-        self.simples_index[node.key].append(len(self.simples))
-        properties.pop('id')
-        for k, v in properties.items():
-            if isinstance(v, Unwind):
-                if v.splits is not None:
-                    for splitvar, splitdelimiter in v.splits:
-                        if splitvar in v.columns:
-                            self.add_split_context(labels, 'id', splitdelimiter, k)
-        self.current_keys.append(node.key)
-        return node
-
-    def stringify_relationship(self, rel: Relationship):
-        if rel.properties['order'] is None:
-            rel.properties['order'] = Varname(f"{self.unwind_context}._input_index")
-        data = self.string_properties(rel.properties)
-        labels = self.string_labels([l.upper() for l in rel.labels])
-        return labels, data
-
-    def merge_relationship(self, rel: Relationship):
-        a, b = rel.parent.key, rel.child.key
-        labels, data = self.stringify_relationship(rel)
-        pi = self.counter['_path']
-        self.counter['_path'] += 1
-        self.simples.append(f'MERGE ({a})-[_path{pi}:{labels} {{{data}}}]->({b})\n'
-                            f'    ON CREATE SET _path{pi}.dbcreated = timestamp()')
-        self.simples_index[a].append(len(self.simples))
-        self.simples_index[b].append(len(self.simples))
-
-    def merge_relationships(self, rels: List[Relationship]):
-        for rel in rels:
-            self.merge_relationship(rel)
-
-    def single_dependency_merge(self, relationship: Relationship):
-        self.merge_relationship(relationship)
-
-    def dual_dependency_merge(self, rel1: Relationship, rel2: Relationship):
-        assert rel1.child is rel2.child
-        child = rel1.child
-        parent1, parent2 = rel1.parent.key, rel2.parent.key
-        labels1, data1 = self.stringify_relationship(rel1)
-        labels2, data2 = self.stringify_relationship(rel2)
-
-        pi = self.counter['_path']
-        self.counter['_path'] += 1
-        self.simples.append(f'WITH *, timestamp() as time\n'
-                            f'MERGE ({parent1})-[_path{pi}a:{labels1} {{{data1}}}]->({child})'
-                            f'<-[_path{pi}b:{labels2} {{{data2}}}]-({parent2})\n    '
-                            f'ON CREATE SET _path{pi}a.dbcreated = time, _path{pi}b.dbcreated = time')
-        self.simples_index[parent1].append(len(self.simples))
-        self.simples_index[parent2].append(len(self.simples))
-        self.simples_index[child].append(len(self.simples))
-
-
-    def collected_dependency_merge(self, *relationships: Relationship):
-        child = relationships[0].child
-        assert all(child is rel.child for rel in relationships[1:])
-
-        self.group_relationships(relationships)
-
-
-        labels1, data1 = self.stringify_relationship(rel1)
-        pi = self.counter['_path']
-        self.counter['_path'] += 1
-        s = f"with time, collect(fibre) as fibres"
-        f"OPTIONAL MATCH ({child.key}_matched: {child.labels})"
-        f"WHERE ALL(node in fibres WHERE (node)-[:]->({child.key}_matched))"
-        f"FOREACH (node in CASE WHEN fibreset_matched is null THEN [1] ELSE [] END | CREATE (fibreset_created: FibreSet {{dbcreated: time}}) FOREACH (node in fibres | MERGE (node)-[:r {dbcreated: time}]->(fibreset_created)))"
-        f"WITH *"
-        f"MATCH (fibreset: FibreSet)"
-        f"WHERE ALL(node in fibres WHERE (node)-[:r]->(fibreset))"
-        f"RETURN fibreset"
-
-
-    def merge_node_and_parent_relationships(self, relationships):
-        if len(relationships) == 0:
-            raise ValueError(f"There must be some relationships to merge with")
-        elif len(relationships) == 1:
-            child = self.single_dependency_merge(relationships[0])
-        elif len(relationships) == 2:
-            child = self.dual_dependency_merge(*relationships)
-        else:
-            child = self.collected_dependency_merge(relationships)
-        return child
-
-
-
-
-
-
-
-    def add_table(self, table: pd.DataFrame, index, split=None):
-        self.uses_table = True
-        name = 'table'
-        table.columns = [c.lower() for c in table.columns]
-        table['_input_index'] = table.index.values
-        table.set_index(index, drop=False, inplace=True)
-        self.simples.append(f"WITH *\nUNWIND ${name}s as {name}")
-        safe_df = table.where(pd.notnull(table), 'NaN')
-        self.data[name+'s'] = [row.to_dict() for _, row in safe_df.iterrows()]
-        return unwind_context(self, Unwind(table, name, splits=split))
-
-    def make_statement(self):
-        return '\n\n'.join(self.simples)
-
-    def print_profiler(self):
-        statement = self.make_statement()
-        from py2neo.client.packstream import PackStreamHydrant
-        hydrant = PackStreamHydrant(self.neograph)
-        r = hydrant.dehydrate(self.data)
-        r = str(r).replace("':", ":").replace(", '", ", ").replace("{'", "{")
-        return f':params {r}' + '\nPROFILE\n' + statement
-
-    def evaluate_statement(self):
-        statement = self.make_statement()
-        self.tx.evaluate(statement, **self.data)
-
-    def commit(self):
-        if len(self.simples) or len(self.data):
-            self.evaluate_statement()
-        return self.tx.commit()
-
-    def clean_up_statement(self):
-        if len(self.split_contexts):
-            splits = 'WITH *\n'.join(self.split_contexts.values())
-            return splits
-        return
-
-    def execute_cleanup(self):
-        statement = self.clean_up_statement()
-        if statement is not None:
-            tx = self.neograph.auto()
-            tx.evaluate(statement)
+    def upload(self):
+        q = self.query.render_query()
+        self.neograph.run(q, parameters={d.name: d for d in self.query.data})
 
     def create_unique_constraint(self, label, key):
         try:
@@ -429,3 +162,264 @@ class Graph(metaclass=ContextMeta):
 
 
 Graph._context_class = Graph
+
+
+class CypherQuery:
+    def __init__(self, graph):
+        self.graph = graph
+        self.statements = []
+        self.open_contexts = [set()]
+        self.data = []
+        self.timestamp = TimeStamp()
+        self.add_statement(self.timestamp)
+
+    @property
+    def current_context(self):
+        return self.open_contexts[-1]
+
+    @property
+    def accessible_variables(self):
+        return [v for context in self.current_context[::-1] for v in context]
+
+    def add_statement(self, statement):
+        for v in statement.input_variables:
+            if v not in self.accessible_variables:
+                raise ValueError(f"{v} is not accessible is this context. Have you left a WITH context?")
+        self.statements.append(statement)
+        self.current_context.update(statement.output_variables)
+
+    def make_variable_names(self):
+        d = defaultdict(int)
+        for statement in self.statements:
+            for v in statement.input_variables + statement.output_variables:
+                if v.name is None:
+                    i = d[v.namehint]
+                    d[v.namehint] += 1
+                    v.name = f'{v.namehint}{i}'
+        for data in self.data:
+            i = d[data.namehint]
+            d[data.namehint] += 1
+            data.name = f'{data.namehint}{i}'
+
+    def render_query(self):
+        self.make_variable_names()
+        return '\n'.join([s.to_cypher() for s in self.statements])
+
+    def open_context(self):
+        self.open_contexts.append(set())
+
+    def close_context(self):
+        del self.open_contexts[-1]
+
+    def add_data(self, data):
+        self.data.append(data)
+
+
+class Statement:
+    """A cypher statement that takes inputs and returns outputs"""
+    def __init__(self, input_variables, output_variables):
+        self.input_variables = input_variables
+        self.output_variables = output_variables
+        self.timestamp = Graph.get_context().query.timestamp
+
+    def to_cypher(self):
+        raise NotImplementedError
+
+
+class TimeStamp(Statement):
+    def __init__(self):
+        super(TimeStamp, self).__init__([], CypherVariable('time'))
+
+    def to_cypher(self):
+        return f'WITH *, timestamp() as {self.output_variables[0]}'
+
+
+class CypherVariable:
+    def __init__(self, namehint=None):
+        self.namehint = namehint
+        self._name = None
+
+    @property
+    def name(self):
+        return self._name
+
+    def __repr__(self):
+        return self.name
+
+    def __getattr__(self, item):
+        return CypherVariableAttribute(self, item)
+
+    def __getitem__(self, item):
+        return CypherVariableAttribute(self, item)
+
+
+class DerivedCypherVariable(CypherVariable):
+    def __init__(self, parent, args):
+        super(DerivedCypherVariable, self).__init__()
+        self.parent = parent
+        self.args = args
+
+    def string_formatter(self, parent, args):
+        raise NotImplementedError
+
+    @property
+    def name(self):
+        return self.string_formatter(self.parent, self.args)
+
+
+class CypherVariableItem(DerivedCypherVariable):
+    def string_formatter(self, parent, attr):
+        return f"{parent}[{attr}]"
+
+
+class CypherVariableAttribute(DerivedCypherVariable):
+    def string_formatter(self, parent, attr):
+        return f"{parent}.{attr}"
+
+
+class Collection(CypherVariable):
+    pass
+
+
+class CypherData(CypherVariable):
+    def __init__(self, data, name='data'):
+        super(CypherData, self).__init__(name)
+        self.data = data
+        query = Graph.get_context().query  # type: CypherQuery
+        query.add_data(self)
+
+    def __repr__(self):
+        return '$' + super(CypherData, self).__repr__()
+
+
+class Unwind(Statement):
+    def __init__(self, *args: CypherVariable):
+        output_variables = [CypherVariable('unwound_'+a.namehint) for a in args]
+        if len(self.input_variables) > 1:
+            self.indexer_variable = CypherVariable('i')
+            output_variables.append(self.indexer_variable)
+        super(Unwind, self).__init__(args, output_variables)
+
+    def to_cypher(self):
+        if len(self.input_variables) == 1:
+            return f"UNWIND {self.input_variables[0]} as {self.output_variables[0]}"
+        else:
+            outaliasstr = 'WITH *'
+            for n, (i, o) in enumerate(zip(self.input_variables, self.output_variables[:-1])):
+                outaliasstr += f', {i}[{self.indexer_variable}] as {o}'
+            inliststr = f'[{",".join(self.input_variables)}]'
+            return f"WITH *, apoc.coll.max([x in {inliststr} | SIZE(x)]) as m; UNWIND range(0, m) as {self.indexer_variable}; {outaliasstr}"
+
+
+class Collect(Statement):
+    def __init__(self, *args):
+        super(Collect, self).__init__(args, [Collection(a.namehint+'s') for a in args])
+
+    def to_cypher(self):
+        return f"WITH " + ','.join([f'collect({a}) as {b}' for a, b in zip(self.input_variables, self.output_variables)])
+
+    def __getitem__(self, inarg):
+        i = self.input_variables.index(inarg)
+        return self.output_variables[i]
+
+
+class GroupBy(Statement):
+    def __init__(self, nodelist, propertyname):
+        super(GroupBy, self).__init__([nodelist], [CypherVariable(propertyname+'_dict')])
+        self.propertyname = propertyname
+
+    def to_cypher(self):
+        return f"WITH *, apoc.map.groupBy({self.input_variables[0]}, {self.propertyname}) as {self.output_variables[0]}"
+
+
+class Varname:
+    def __init__(self, key):
+        self.key = key
+
+    def __repr__(self):
+        return self.key
+
+
+class MergeMany2One(Statement):
+    def __init__(self, parents: Dict[Union[CypherVariable, Collection], str], labels: List[str], properties: dict, versioned_labels: List[str]):
+        self.parents = parents
+        self.labels = labels
+        self.properties = {Varname(k): v for k, v in properties.items()}
+        self.versioned_labels = versioned_labels
+        self.child = CypherVariable(labels[-1])
+        self.speclist = [CypherVariable(p.namehint) for p in self.parents]
+        self.specs = CypherVariable('specs')
+        super().__init__(parents, [self.child] + self.speclist + [self.specs])
+        if len(versioned_labels):
+            self.version = CypherVariable('version')
+            self.output_variables.append(self.version)
+
+    def make_specs(self):
+        specs = []
+        for (parent, reltype), spec in zip(self.parents.items(), self.speclist):
+            if isinstance(parent, Collection):
+                specs.append(f"WITH *, [i in range(0, size({parent}) - 1) | [{parent}[i], {reltype}, {{order: i}}]] as {spec}")
+            else:
+                specs.append(f"WITH *, [{parent}, {reltype}, {{order: 0}}] as {spec}")
+        return '\n'.join(specs) + f'WITH *, {"+".join(self.specs)} as {self.specs}'
+
+    def to_cypher(self):
+        merge = self.make_specs()
+        merge += f"\nCALL custom.multimerge({self.specs}, {self.labels}, {self.properties}, {{dbcreated: {self.timestamp}}}, {{}}) YIELD {self.child}"
+        if len(self.versioned_labels):
+            merge += f"\nCALL custom.version({self.specs}, {self.child}, {self.versioned_labels}, 'version') YIELD {self.version}"
+        return merge
+
+
+class MatchMany2One(MergeMany2One):
+    def to_cypher(self):
+        match = self.make_specs()
+        match += f"\nCALL custom.multimatch({self.specs}, {self.labels}, {self.properties}) YIELD {self.child}"
+        return match
+
+
+class MergeNode(Statement):
+    keyword = 'MERGE'
+
+    def __init__(self, labels: List[str], properties: dict):
+        self.labels = [Varname(l) for l in labels]
+        self.properties = {Varname(k): v for k, v in properties.items()}
+        self.out = CypherVariable()
+        super(MergeNode, self).__init__([], [self.out])
+
+    def to_cypher(self):
+        labels = ':'.join(map(str, self.labels))
+        return f"{self.keyword} ({self.out}:{labels} {{{self.properties}}})"
+
+
+class MatchNode(MergeNode):
+    keyword = 'MATCH'
+
+
+@contextmanager
+def unwind(*args):
+    query = Graph.get_context().query  # type: CypherQuery
+    unwinder = Unwind(*args)
+    query.open_context()  # allow this context to accumulate variables
+    query.add_statement(unwinder)  # append the actual statement
+    yield unwinder.output_variables  # give back the unwound variables
+    context_variables = query.current_context
+    query.close_context()  # remove the variables from being referenced from now on
+    query.statements.append(Collect(*context_variables))  # allow the collections to be accessible - force
+
+
+def collect(*variables: CypherVariable):
+    query = Graph.get_context().query  # type: CypherQuery
+    collector = query.statements[-1]
+    if not isinstance(collector, Collect):
+        raise NameError(f"You must use collect straight after a with context")
+    return [collector[variable] for variable in variables]
+
+
+def groupby(variable_list, propertyname):
+    if not isinstance(variable_list, Collection):
+        raise TypeError(f"{variable_list} is not a collection")
+    query = Graph.get_context().query  # type: CypherQuery
+    g = GroupBy(variable_list, propertyname)
+    query.add_statement(g)
+    return g.output_variables[0]

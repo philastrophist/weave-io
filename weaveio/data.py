@@ -80,10 +80,11 @@ def get_all_subclasses(cls):
 class Data:
     filetypes = []
 
-    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002):
+    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False):
         self.handler = Handler(self)
         self.host = host
         self.port = port
+        self.write = write
         self._graph = None
         self.filelists = {}
         self.rootdir = Path(rootdir)
@@ -124,7 +125,7 @@ class Data:
     @property
     def graph(self):
         if self._graph is None:
-            self._graph = Graph(host=self.host, port=self.port)
+            self._graph = Graph(host=self.host, port=self.port, write=self.write)
         return self._graph
 
     def make_relation_graph(self):
@@ -181,22 +182,18 @@ class Data:
         for filetype in self.filetypes:
             self.filelists[filetype] = list(filetype.match(self.rootdir))
         with self.graph:
-            # self.make_constraints()
-            for filetype, files in self.filelists.items():
-                if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
-                    continue
-                for file in tqdm(files, desc=filetype.__name__):
-                    tx = self.graph.begin()
-                    f = filetype(file)
-                    if not tx.finished():
-                        try:
-                            self.graph.commit()
-                        except py2neo.database.work.ClientError as e:
-                            process_neo4j_error(self, f, e.message)
-                            logging.exception(self.graph.make_statement(), exc_info=True)
-                            raise e
-            logging.info('Cleaning up...')
-            self.graph.execute_cleanup()
+            self.make_constraints()
+        for filetype, files in self.filelists.items():
+            if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
+                continue
+            for file in tqdm(files, desc=filetype.__name__):
+                try:
+                    with self.graph:
+                        filetype(file)
+                        self.graph.upload()
+                except py2neo.database.work.ClientError as e:
+                    logging.exception('ClientError:', exc_info=True)
+                    raise e
 
 
     def _validate_one_required(self, hierarchy_name):

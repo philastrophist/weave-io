@@ -37,8 +37,15 @@ Uniqueness allows us to keep adding files and data without worrying about duplic
 There are three types of versioning data that WEAVE-IO deals with in some way.
 
 1. **Schema changes**: If WEAVE output files change so dramatically that the weaveio schema no longer maps to it, then we would need to rebuild the database. 
-1. **Mismatched ids**: A hierarchy purports to have an ID but its data are different in some to the one which already exists (mismatched). Due to the uniqueness constraint set in the database, these writes will be rejected. If this happens, then something has gone wrong with the ids WEAVE assigns to runs, obs, and files. Therefore, this should never happen.
-1. **Reprocessing**: If a hierarchy is produced more than once with a different process (i.e. a raw spectrum is reprocessed using a different set of CASU parameters), then there would be duplication. However, WEAVEIO requires that you specify which version of CASU, APS etc was used and also requires the checksum for each spectrum/file. This will stop overwriting but, by itself, would complicate the graph and stop queries like `data.runs[12345].raw` from being valid (if there is now more than one version of raw). So WEAVEIO creates a `version` number along the Neo4j `relationships` (`()-[:IS_REQUIRED_BY {version: 1}]-()`). WEAVE-IO will then choose the most recent version when traversing the graph. Only when you specify CASU or APS version explicitly, will WEAVE-IO be forced to traverse a less up-to-date version path.
+1. **Mismatched ids**: A hierarchy purports to have an ID but its data are different in some to the one which already exists (mismatched). 
+Due to the uniqueness constraint set in the database, these writes will be rejected. 
+If this happens, then something has gone wrong with the ids WEAVE assigns to runs, obs, and files. Therefore, this should never happen.
+1. **Reprocessing**: If a hierarchy is produced more than once with a different process (i.e. a raw spectrum is reprocessed using a different set of CASU parameters), then there would be duplication. 
+However, WEAVEIO requires that you specify which version of CASU, APS etc was used and also requires the checksum for each spectrum/file. 
+This will stop overwriting but, by itself, would complicate the graph and stop queries like `data.runs[12345].raw` from being valid (if there is now more than one version of raw). 
+So WEAVEIO creates a `version` number as a node property.
+ WEAVE-IO will then choose the most recent version when traversing the graph. 
+ Only when you specify CASU or APS version explicitly, will WEAVE-IO be forced to traverse a less up-to-date version path.
 
 ### Version paths
 Only some relationships are versioned. For example, a RawSpectrum is only supposed to have one L1SingleSpectrum.
@@ -66,6 +73,10 @@ with data:
     fibinfo = CypherData('fibinfo', fibinfo)
     checksums = CypherData('checksums', checksums)
     runids = CypherData('runids', runids)
+    with unwind(runid) as runid:
+        run = Run(runid=runid, exposure=None)  # match runs based only on runid
+        raw = RawSpectrum(run=run, casu=casu, simulator=simulator, system=system)  #  merge spectrum
+    raws = collect(raw)
     with unwind(checksums, fibinfo) as checksum, fibinfo:
         fibretarget = Fibretarget(...)  # make the hierarchy as in the raw file (this will just be a match if they are all the same)
         with unwind(runid) as runid:

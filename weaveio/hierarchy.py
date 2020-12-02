@@ -6,7 +6,7 @@ import networkx as nx
 from graphviz import Source
 
 from .config_tables import progtemp_config
-from .graph import Graph, Node, Relationship, ContextError, Unwind
+from .graph import Graph, ContextError, Unwind
 from .utilities import Varname
 
 
@@ -204,8 +204,6 @@ class Graphable(metaclass=GraphableMeta):
                 graph.merge_relationships(relationships)
             else:
                 graph.merge_node_and_parent_relationships(relationships)
-
-
         except ContextError:
             pass
 
@@ -376,20 +374,20 @@ class SurveyCatalogue(Hierarchy):
 class SurveyTarget(Hierarchy):
     parents = [SurveyCatalogue, WeaveTarget]
     # assume the worst case, that targids are not unique
-    factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch']
+    factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch',
+               'targpmra', 'targpmdec', 'targparal']
 
 
-class SurveyExpectations(Hierarchy):
+class TargetPhotometry(Hierarchy):
     parents = [SurveyTarget]
-    factors = ['targpmra', 'targpmdec', 'targparal',
-               'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
+    factors = ['mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
                'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
 
 
 class FibreTarget(Hierarchy):
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget, SurveyExpectations]
+    parents = [Fibre, SurveyTarget, TargetPhotometry]
 
 
 class FibreSet(Hierarchy):
