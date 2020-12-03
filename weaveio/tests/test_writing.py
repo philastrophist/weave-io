@@ -20,14 +20,14 @@ def test_context_compatibility():
 def test_merge_node():
     with CypherQuery() as query:
         merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1,2,3]})
-    cypher = query.render_query().split('\n')
+    cypher = query.render_query()[0].split('\n')
     assert cypher[-2] == "MERGE (b0:A:B {a: 1, b: 2, c: [1, 2, 3]}) ON CREATE SET b0.dbcreated = time0"
 
 
 def test_match_node():
     with CypherQuery() as query:
         match_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1,2,3]})
-    cypher = query.render_query().split('\n')
+    cypher = query.render_query()[0].split('\n')
     assert cypher[-2] == "MATCH (b0:A:B {a: 1, b: 2, c: [1, 2, 3]})"
 
 
@@ -35,7 +35,7 @@ def test_merge_many2one_with_one():
     with CypherQuery() as query:
         parent = match_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1,2,3]})
         child = merge_node(['C'], {'p': 1}, parents={parent: 'req'}, versioned_labels=['A'])
-    cypher = query.render_query().split('\n')
+    cypher = query.render_query()[0].split('\n')
     assert cypher[1] == "MATCH (b0:A:B {a: 1, b: 2, c: [1, 2, 3]})"
     assert cypher[2] == "WITH *, [[b0, 'req', {order: 0}]] as bspec0"
     assert cypher[3] == "WITH *, bspec0 as specs0"
@@ -48,7 +48,7 @@ def test_merge_many2one_with_mixture():
         parent1 = match_node(labels=['A', 'B'], properties={'a': 1})
         parent2 = match_node(labels=['A', 'B', 'other'], properties={'a': 2})
         child = merge_node(['C'], {'p': 1}, parents={parent1: 'req1', parent2: 'req2'}, versioned_labels=['other'])
-    cypher = query.render_query()
+    cypher = query.render_query()[0]
     expected = [PREFIX,
         "MATCH (b0:A:B {a: 1})",
         "MATCH (other0:A:B:Other {a: 2})",
@@ -68,7 +68,7 @@ def test_merge_many2one_with_mixture_run(procedure_tag, database):
         parent1 = merge_node(labels=['A', 'B'], properties={'a': 1})
         parent2 = merge_node(labels=['A', 'B', 'other'], properties={'a': 2})
         child = merge_node(['C'], {'p': 1}, parents={parent1: 'req1', parent2: 'req2'}, versioned_labels=['other'])
-    cypher = query.render_query(procedure_tag)
+    cypher = query.render_query(procedure_tag)[0]
     database.neograph.run(cypher)
     result = database.neograph.run('MATCH (n: C) MATCH (p: A)-[]->(n) WITH n, collect(p.a) as a return n.p, a').to_table()
     assert len(result) == 1
@@ -81,7 +81,7 @@ def test_getattribute():
     with CypherQuery() as query:
         parent1 = merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2})
     query.returns(parent1.a, parent1.b)
-    cypher = query.render_query()
+    cypher = query.render_query()[0]
     assert cypher.split('\n')[-1] == 'RETURN b0.a, b0.b'
 
 
@@ -89,7 +89,7 @@ def test_getitem():
     with CypherQuery() as query:
         parent1 = merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2})
     query.returns(parent1['a'], parent1['b'])
-    cypher = query.render_query()
+    cypher = query.render_query()[0]
     assert cypher.split('\n')[-1] == "RETURN b0['a'], b0['b']"
 
 
@@ -99,7 +99,7 @@ def test_input_data_retrievable(input_data):
         data1 = CypherData(input_data, 'mydata')
         data2 = CypherData(input_data, 'mydata')
     query.returns(data1, data2)
-    cypher = query.render_query()
+    cypher = query.render_query()[0]
     assert cypher == PREFIX + '\nRETURN $mydata0, $mydata1'
 
 
@@ -111,11 +111,11 @@ def test_unwind_input_list():
             node = merge_node(['A'], {'a': number})
         nodes = collect(node)
     query.returns(nodes)
-    cypher = query.render_query()
+    cypher = query.render_query()[0]
     expected = [
         PREFIX,
         'MERGE (b0:B {b: 1}) ON CREATE SET b0.dbcreated = time0',
-        'UNWIND $mydata0 as unwound_mydata0',
+        'WITH * UNWIND $mydata0 as unwound_mydata0',
             'MERGE (a0:A {a: unwound_mydata0}) ON CREATE SET a0.dbcreated = time0',
         'WITH time0, b0, collect(a0) as as0',
         "RETURN as0"
@@ -133,12 +133,12 @@ def test_unwind_nested_contexts():
             nodelist = collect(node)
         nodelistlist = collect(nodelist)
     query.returns(nodelistlist)
-    cypher = query.render_query()
+    cypher = query.render_query()[0]
     expected = [
         PREFIX,
         'MERGE (b0:B {b: 1}) ON CREATE SET b0.dbcreated = time0',
-        'UNWIND $mydata0 as unwound_mydata0',
-            'UNWIND $mydata0 as unwound_mydata1',
+        'WITH * UNWIND $mydata0 as unwound_mydata0',
+            'WITH * UNWIND $mydata0 as unwound_mydata1',
                 'MERGE (a0:A {a: unwound_mydata0, b: unwound_mydata1}) ON CREATE SET a0.dbcreated = time0',
             'WITH time0, b0, unwound_mydata0, collect(a0) as as0',
         'WITH time0, b0, collect(as0) as ass0',
@@ -153,23 +153,96 @@ def test_autoclose_unwind_with_no_variables_carried_over():
         merge_node(['B'], {'b': 1})
         with unwind(data) as number:
             node = merge_node(['A'], {'a': number})
+    cypher = query.render_query()[0].split('\n')
+    assert cypher[-2] == 'WITH time0, b0'
+
+
+def test_closed_unwind_context_not_accessible():
+    with CypherQuery() as query:
+        data = CypherData([1,2,3], 'mydata')
+        merge_node(['B'], {'b': 1})
+        with unwind(data) as number:
+            node = merge_node(['A'], {'a': number})
         with pytest.raises(ValueError):
             merge_node(['B'], {'b': number})
 
 
+def test_unwind_that_returns_multiple_variables():
+    with CypherQuery() as query:
+        data = CypherData(['1', '2', '3'], 'mydata')
+        with unwind(data, data) as (a, b):
+            pass
+    cypher = query.render_query()[0]
+    expected = [
+        PREFIX,
+        "WITH *, apoc.coll.max([x in [$mydata0,$mydata0] | SIZE(x)])-1 as m",
+        "UNWIND range(0, m) as i0 WITH *, $mydata0[i0] as unwound_mydata0, $mydata0[i0] as unwound_mydata1",
+        "WITH time0",
+        "RETURN time0"
+    ]
+    assert cypher == '\n'.join(expected)
 
-def test_closed_unwind_context_not_accessible():
-    assert False
+
+def test_unwind_that_returns_multiple_variables_with_enumerate():
+    with CypherQuery() as query:
+        data = CypherData(['1', '2', '3'], 'mydata')
+        with unwind(data, enumerate=True) as (d, i):
+            pass
+        indexes = collect(i)
+    cypher = query.render_query()[0]
+    expected = [
+        PREFIX,
+        "WITH *, apoc.coll.max([x in [$mydata0] | SIZE(x)])-1 as m",
+        "UNWIND range(0, m) as i0 WITH *, $mydata0[i0] as unwound_mydata0",
+        "WITH time0, collect(i0) as is0",
+        "RETURN time0"
+    ]
+    assert cypher == '\n'.join(expected)
 
 
-def test_multiply_returned_nested_unwinds_with_collect():
-    assert False
+
+def test_unwind_collect_unwind_collect():
+    with CypherQuery() as query:
+        data = CypherData(['1', '2', '3'], 'mydata')
+        with unwind(data, enumerate=True) as (d, i):
+            pass
+        ds = collect(d)
+        with unwind(ds) as d:
+            pass
+        ds = collect(ds)
+    cypher = query.render_query()[0]
+    expected = [
+        PREFIX,
+        "WITH *, apoc.coll.max([x in [$mydata0] | SIZE(x)])-1 as m",
+        "UNWIND range(0, m) as i0 WITH *, $mydata0[i0] as unwound_mydata0",
+        "WITH time0, collect(unwound_mydata0) as unwound_mydatas0",
+        "UNWIND unwound_mydatas0 as unwound_unwound_mydatas0",
+        "WITH time0, collect(unwound_unwound_mydatas0) as unwound_unwound_mydatass0",
+        "RETURN time0"
+    ]
+    assert cypher == '\n'.join(expected)
 
 
-def test_groupby_makes_dict():
-    assert False
+def test_groupby_makes_dict(procedure_tag, database):
+    with CypherQuery() as query:
+        data = CypherData(['1', '2', '3'], 'mydata')
+        merge_node(['B'], {'b': 1})
+        with unwind(data) as number:
+            node = merge_node(['A'], {'a': number})
+        nodes = collect(node)
+        nodedict = groupby(nodes, 'a')
+    query.returns(nodedict['1'].a, nodedict['2'].a, nodedict['3'].a, nodedict['0'].a)
+    cypher, parameters = query.render_query(procedure_tag)
+    result = database.neograph.run(cypher, parameters=parameters).to_table()
+    assert result[0] == ('1', '2', '3', None)
 
 
 def test_groupby_fails_if_input_is_not_collection():
-    assert False
+    with CypherQuery() as query:
+        data = CypherData(['1', '2', '3'], 'mydata')
+        b = merge_node(['B'], {'b': 1})
+        with unwind(data) as number:
+            node = merge_node(['A'], {'a': number})
+        with pytest.raises(TypeError):
+            nodedict = groupby(b, 'b')
 

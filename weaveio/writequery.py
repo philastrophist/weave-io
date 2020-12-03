@@ -53,7 +53,8 @@ class CypherQuery(metaclass=ContextMeta):
             self.returns(self.timestamp)
         self.make_variable_names()
         q = '\n'.join([s.to_cypher() for s in self.statements])
-        return re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')
+        datadict = {d.name: d.data for d in self.data}
+        return re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', ''), datadict
 
     def open_context(self):
         self.open_contexts.append([])
@@ -167,22 +168,27 @@ class CypherData(CypherVariable):
 
 
 class Unwind(Statement):
-    def __init__(self, *args: CypherVariable):
+    def __init__(self, *args: CypherVariable, enumerated=False):
         output_variables = [CypherVariable('unwound_'+a.namehint.replace('$', "")) for a in args]
         super(Unwind, self).__init__(args, output_variables)
-        if len(self.input_variables) > 1:
+        self.passed_outputs = self.output_variables.copy()
+        if enumerated or len(self.input_variables) > 1:
             self.indexer_variable = CypherVariable('i')
-            output_variables.append(self.indexer_variable)
+            self.output_variables.append(self.indexer_variable)
+            if enumerated:
+                self.passed_outputs.append(self.indexer_variable)
+        self.enumerated = enumerated
 
     def to_cypher(self):
-        if len(self.input_variables) == 1:
-            return f"UNWIND {self.input_variables[0]} as {self.output_variables[0]}"
+        if len(self.input_variables) == 1 and not self.enumerated:
+            return f"WITH * UNWIND {self.input_variables[0]} as {self.output_variables[0]}"
         else:
             outaliasstr = 'WITH *'
             for n, (i, o) in enumerate(zip(self.input_variables, self.output_variables[:-1])):
                 outaliasstr += f', {i}[{self.indexer_variable}] as {o}'
-            inliststr = f'[{",".join(self.input_variables)}]'
-            return f"WITH *, apoc.coll.max([x in {inliststr} | SIZE(x)]) as m; UNWIND range(0, m) as {self.indexer_variable}; {outaliasstr}"
+            inliststr = f'[{",".join(map(str, self.input_variables))}]'
+            return f"WITH *, apoc.coll.max([x in {inliststr} | SIZE(x)])-1 as m\n" \
+                   f"UNWIND range(0, m) as {self.indexer_variable} {outaliasstr}"
 
 
 class Collect(Statement):
@@ -192,7 +198,10 @@ class Collect(Statement):
 
     def to_cypher(self):
         collections =  ','.join([f'collect({a}) as {b}' for a, b in zip(self.input_variables, self.output_variables)])
-        return f"WITH " + ', '.join(map(str, self.previous)) + ', ' + collections
+        r = f"WITH " + ', '.join(map(str, self.previous))
+        if len(collections):
+            r += ', ' + collections
+        return r
 
     def __getitem__(self, inarg):
         i = self.input_variables.index(inarg)
@@ -209,7 +218,7 @@ class GroupBy(Statement):
         self.propertyname = propertyname
 
     def to_cypher(self):
-        return f"WITH *, apoc.map.groupBy({self.input_variables[0]}, {self.propertyname}) as {self.output_variables[0]}"
+        return f"WITH *, apoc.map.groupBy({self.input_variables[0]}, '{self.propertyname}') as {self.output_variables[0]}"
 
 
 class Varname:
@@ -229,7 +238,8 @@ class MergeMany2One(Statement):
         self.child = CypherVariable(labels[-1])
         self.speclist = [CypherVariable(p.namehint+'spec') for p in self.parents]
         self.specs = CypherVariable('specs')
-        super().__init__(list(parents.keys()), [self.child] + self.speclist + [self.specs])
+        factors = [v for v in properties.values() if isinstance(v, CypherVariable)]
+        super().__init__(factors + list(parents.keys()), [self.child] + self.speclist + [self.specs])
         if len(versioned_labels):
             self.version = CypherVariable('version')
             self.output_variables.append(self.version)
@@ -267,7 +277,8 @@ class MatchNode(Statement):
         self.labels = [camelcase(l) for l in labels]
         self.properties = {Varname(k): v for k, v in properties.items()}
         self.out = CypherVariable(labels[-1])
-        super(MatchNode, self).__init__([], [self.out])
+        inputs = [v for v in properties.values() if isinstance(v, CypherVariable)]
+        super(MatchNode, self).__init__(inputs, [self.out])
 
     def to_cypher(self):
         labels = ':'.join(map(str, self.labels))
@@ -310,15 +321,15 @@ def merge_node(labels, properties, parents=None, versioned_labels=None):
 
 
 @contextmanager
-def unwind(*args):
+def unwind(*args, enumerate=False):
     query = CypherQuery.get_context()  # type: CypherQuery
-    unwinder = Unwind(*args)
+    unwinder = Unwind(*args, enumerated=enumerate)
     query.open_context()  # allow this context to accumulate variables
     query.add_statement(unwinder)  # append the actual statement
-    if len(unwinder.output_variables) == 1:
-        yield unwinder.output_variables[0]  # give back the unwound variables
+    if len(unwinder.passed_outputs) == 1:
+        yield unwinder.passed_outputs[0]  # give back the unwound variables
     else:
-        yield tuple(unwinder.output_variables)
+        yield tuple(unwinder.passed_outputs)
     query.close_context()  # remove the variables from being referenced from now on
     previous = [param for context in query.open_contexts for param in context]
     query.statements.append(Collect(previous))  # allow the collections to be accessible - force
