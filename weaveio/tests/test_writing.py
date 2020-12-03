@@ -209,18 +209,30 @@ def test_unwind_collect_unwind_collect():
         ds = collect(d)
         with unwind(ds) as d:
             pass
-        ds = collect(ds)
+        ds = collect(d)
     cypher = query.render_query()[0]
     expected = [
         PREFIX,
         "WITH *, apoc.coll.max([x in [$mydata0] | SIZE(x)])-1 as m",
         "UNWIND range(0, m) as i0 WITH *, $mydata0[i0] as unwound_mydata0",
         "WITH time0, collect(unwound_mydata0) as unwound_mydatas0",
-        "UNWIND unwound_mydatas0 as unwound_unwound_mydatas0",
+        "WITH * UNWIND unwound_mydatas0 as unwound_unwound_mydatas0",
         "WITH time0, collect(unwound_unwound_mydatas0) as unwound_unwound_mydatass0",
         "RETURN time0"
     ]
     assert cypher == '\n'.join(expected)
+
+
+def test_accessing_unwound_variable_after_unwinding_is_not_allowed():
+    with CypherQuery() as query:
+        data = CypherData(['1', '2', '3'], 'mydata')
+        with unwind(data, enumerate=True) as (d, i):
+            pass
+        ds = collect(d)
+        with unwind(ds) as d:
+            pass
+        with pytest.raises(ValueError):
+            groupby(ds, 'property')
 
 
 def test_groupby_makes_dict(procedure_tag, database):

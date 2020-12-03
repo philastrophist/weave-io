@@ -205,7 +205,10 @@ class Collect(Statement):
 
     def __getitem__(self, inarg):
         i = self.input_variables.index(inarg)
-        return self.output_variables[i]
+        try:
+            return self.output_variables[i]
+        except IndexError:
+            raise KeyError(f"Cannot access {inarg} in this context, have you unwound it previously or left a WITH context?")
 
     def __delitem__(self, key):
         i = self.input_variables.index(key)
@@ -331,6 +334,8 @@ def unwind(*args, enumerate=False):
     else:
         yield tuple(unwinder.passed_outputs)
     query.close_context()  # remove the variables from being referenced from now on
+    query.open_contexts = [[param for param in c if param not in args] for c in query.open_contexts]
+    # previous = [param for context in query.open_contexts for param in context if param not in args]
     previous = [param for context in query.open_contexts for param in context]
     query.statements.append(Collect(previous))  # allow the collections to be accessible - force
 
@@ -346,7 +351,7 @@ def collect(*variables: CypherVariable):
     collector = Collect(collector.previous, *variables)
     query.statements[-1] = collector
     r = [collector[variable] for variable in variables]
-    query.open_contexts[-1] = r
+    query.open_contexts[-1] += r
     if len(r) == 1:
         return r[0]
     return r
