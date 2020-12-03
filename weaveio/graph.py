@@ -14,7 +14,7 @@ class Graph(metaclass=ContextMeta):
             instance._parent = cls.get_context(error_if_none=False)
         return instance
 
-    def __init__(self, profile=None, name=None, write=False, **settings):
+    def __init__(self, profile=None, name=None, **settings):
         self.neograph = NeoGraph(profile, name, **settings)
 
     def create_unique_constraint(self, label, key):
@@ -28,6 +28,7 @@ class Graph(metaclass=ContextMeta):
             self.neograph.schema.drop_uniqueness_constraint(label, key)
         except py2neo.database.work.DatabaseError:
             pass
+
 
 
 Graph._context_class = Graph
