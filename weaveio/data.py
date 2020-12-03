@@ -15,7 +15,8 @@ from tqdm import tqdm
 from weaveio.address import Address
 from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.basequery.hierarchy import HeterogeneousHierarchyFrozenQuery
-from weaveio.graph import Graph, Unwind
+from weaveio.graph import Graph
+from weaveio.writequery import Unwind
 from weaveio.hierarchy import Multiple
 from weaveio.file import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile, L2File, File, L2SuperTargetFile
 from weaveio.queries import BasicQuery, HeterogeneousHierarchy

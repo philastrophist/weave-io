@@ -1,4 +1,4 @@
-from .graph import CypherData, unwind, collect, groupby
+from .writequery import CypherData, unwind, collect, groupby
 
 
 def get_fibretargets():

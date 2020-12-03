@@ -6,7 +6,9 @@ import networkx as nx
 from graphviz import Source
 
 from .config_tables import progtemp_config
-from .graph import Graph, ContextError, Unwind
+from .graph import Graph
+from .writequery import CypherQuery, Unwind
+from .context import ContextError
 from .utilities import Varname
 
 
@@ -180,8 +182,7 @@ class Graphable(metaclass=GraphableMeta):
         self.predecessors = predecessors
         self.data = None
         try:
-            graph = Graph.get_context()  # type: Graph
-            child = Node(*self.neotypes, **self.neoproperties)
+            graph = Graph.get_context().query  # type: CypherQuery
             relationships = []
             for k, parent_list in predecessors.items():
                 if self.indexer is None:
@@ -456,32 +457,44 @@ class RawSpectrum(Spectrum):
     version_on = ['run']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
-    # TODO: versioning: the relationship mentioned in version_on will be versioned
 
 
 class L1SpectrumRow(Spectrum):
-    factors = ['findex']  # to index within a file
     is_template = True
 
 
 class L1SingleSpectrum(L1SpectrumRow):
     parents = [RawSpectrum, FibreTarget, CASU]
     version_on = ['rawspectrum', 'fibretarget']
+    factors = [
+        'nspec', 'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
+        'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
+        'skyline_off1', 'skyline_rms1', 'skyline_off2', 'skyline_rms2',
+        'sky_shift', 'sky_scale', 'exptime', 'snr',
+        'meanflux_g', 'meanflux_r', 'meanflux_i',
+        'meanflux_gg', 'meanflux_bp', 'meanflux_rp'
+               ]
 
 
 class L1StackSpectrum(L1SpectrumRow):
     parents = [Multiple(L1SingleSpectrum, 2, constrain=[OB, ArmConfig, FibreTarget]), CASU]
     version_on = ['l1singlespectra']
+    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+               'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
 
 
 class L1SuperStackSpectrum(L1SpectrumRow):
     parents = [Multiple(L1SingleSpectrum, 2, constrain=[OBSpec, ArmConfig, FibreTarget]), CASU]
     version_on = ['l1singlespectra']
+    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+               'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
 
 
 class L1SuperTargetSpectrum(L1SpectrumRow):
     parents = [Multiple(L1SingleSpectrum, 2, constrain=[CFG, WeaveTarget]), CASU]
     version_on = ['l1singlespectra']
+    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+               'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
 
 
 class L2(Hierarchy):
@@ -490,7 +503,30 @@ class L2(Hierarchy):
 
 class L2RowHDU(L2):
     is_template = True
-    factors = ['findex']  # to index within a file
     parents = [Multiple(L1SpectrumRow, 2, 3), APS]
     products = []
-    version_on = ['l1singlespectrumrows']
+    version_on = ['l1spectrumrows']
+
+#
+# class Classifications(L2RowHDU):
+#     pass
+#
+#
+# class Star(L2RowHDU):
+#     pass
+#
+#
+# class Galaxy(L2RowHDU):
+#     pass
+#
+#
+# class L2Spectrum(L2RowHDU):
+#     is_template = True
+#
+#
+# class ClassificationModelSpectrum(L2Spectrum):
+#     pass
+#
+#
+# class StellarModelSpectrum(L2Spectrum):
+#     pass

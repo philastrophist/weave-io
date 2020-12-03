@@ -5,6 +5,7 @@ from typing import Tuple
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
 
+import weaveio.writequery
 from weaveio.config_tables import progtemp_config
 from weaveio.graph import Graph
 from weaveio.hierarchy import Run, OB, OBSpec, ArmConfig, Exposure, \
@@ -84,7 +85,7 @@ class HeaderFibinfoFile(File):
     @classmethod
     def each_fibretarget(cls, row):
         weavetarget = WeaveTarget(cname=row['cname'])
-        with Graph.get_context().unwind(row['targsrvy'].split(',')) as srvys:
+        with weaveio.writequery.unwind(row['targsrvy'].split(',')) as srvys:
             surveys = Survey(surveyname=srvys)
         prog = SubProgramme(targprog=row['targprog'], surveys=surveys)
         catalogues = SurveyCatalogue(targcat=row['targcat'], subprogramme=prog)
