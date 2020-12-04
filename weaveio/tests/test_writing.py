@@ -56,7 +56,7 @@ def test_merge_many2one_with_mixture():
         "WITH *, [[other0, 'req2', {order: 0}]] as otherspec0",
         "WITH *, bspec0+otherspec0 as specs0",
         "CALL custom.multimerge(specs0, ['C'], {p: 1}, {dbcreated: time0}, {dbcreated: time0}) YIELD child as c0",
-        "CALL custom.version(specs0, c0, ['other'], 'version') YIELD version as version0",
+        "CALL custom.version(specs0, c0, ['Other'], 'version') YIELD version as version0",
         "RETURN time0"
                 ]
     expected = '\n'.join(expected)
@@ -186,7 +186,7 @@ def test_unwind_that_returns_multiple_variables():
 def test_unwind_that_returns_multiple_variables_with_enumerate():
     with CypherQuery() as query:
         data = CypherData(['1', '2', '3'], 'mydata')
-        with unwind(data, enumerate=True) as (d, i):
+        with unwind(data, enumerated=True) as (d, i):
             pass
         indexes = collect(i)
     cypher = query.render_query()[0]
@@ -204,7 +204,7 @@ def test_unwind_that_returns_multiple_variables_with_enumerate():
 def test_unwind_collect_unwind_collect():
     with CypherQuery() as query:
         data = CypherData(['1', '2', '3'], 'mydata')
-        with unwind(data, enumerate=True) as (d, i):
+        with unwind(data, enumerated=True) as (d, i):
             pass
         ds = collect(d)
         with unwind(ds) as d:
@@ -226,7 +226,7 @@ def test_unwind_collect_unwind_collect():
 def test_accessing_unwound_variable_after_unwinding_is_not_allowed():
     with CypherQuery() as query:
         data = CypherData(['1', '2', '3'], 'mydata')
-        with unwind(data, enumerate=True) as (d, i):
+        with unwind(data, enumerated=True) as (d, i):
             pass
         ds = collect(d)
         with unwind(ds) as d:
@@ -258,3 +258,60 @@ def test_groupby_fails_if_input_is_not_collection():
         with pytest.raises(TypeError):
             nodedict = groupby(b, 'b')
 
+
+@pytest.fixture(scope='class')
+def bigquery(database, procedure_tag):
+    with CypherQuery() as query:
+        checksums = CypherData(list(range(10)),'checksums')
+        runids = CypherData(['runid1', 'runid2', 'runid3'], 'runids')
+        with unwind(checksums, enumerated=True) as (checksum, i):
+            fibretarget = merge_node(['target'], {'id': i})
+        fibretargets = collect(fibretarget)
+        with unwind(checksums, fibretargets) as (checksum, fibretarget):
+            with unwind(runids) as runid:
+                run = merge_node(['run'], {'id': runid})
+                raw = merge_node(['raw'], {}, parents={run: 'req'}, versioned_labels=['run'])
+                spec = merge_node(['SingleSpectrum'], {}, parents={raw: 'req', fibretarget: 'req'}, versioned_labels=['raw', 'target'])
+            specs = collect(spec)
+            stack = merge_node(['stack'], {'checksum': checksum}, parents={specs: 'req'})
+        stacks = collect(stack)
+        merge_node(['StackFile'], {'fname': 'fname'}, parents={stacks: 'req'})
+        run = match_node(['run'], {'id': 'runid1'})
+        raw = match_node(['raw'], {}, parents={run: 'req'})
+        merge_node(['rawfile'], {'fname': 'rawfname'}, parents={raw: 'req'})
+    cypher, data = query.render_query(procedure_tag)
+    database.neograph.run(cypher, parameters=data)
+    return cypher, data, database
+
+
+@pytest.mark.usefixtures("bigquery")
+class TestBigQuery:
+    def test_spec_has_run_and_raw(self, bigquery):
+        cypher, data, database = bigquery
+        result = database.neograph.run('match (s:SingleSpectrum) optional match (raw:Raw)-->(s)<--(t:Target) return s, raw, t').to_data_frame()
+        assert len(result) == 30
+        assert not result['raw'].isnull().any()
+
+    @pytest.mark.parametrize('v,n,version', [('Run', 3, None), ('Raw', 3, 0), ('SingleSpectrum', 30, 0)])
+    def test_raw_has_version0(self, v, n, version, bigquery):
+        cypher, data, database = bigquery
+        result = database.neograph.run(f'match (v:{v}) return v.version').to_data_frame()
+        assert len(result) == n
+        if version is not None:
+            assert (result['v.version'] == version).all()
+        else:
+            assert (result['v.version'].isnull()).all()
+
+    def test_stack_has_3_single_spectra(self, bigquery):
+        cypher, data, database = bigquery
+        result = database.neograph.run(f'match (stack:Stack) optional match (stack)<--(single:SingleSpectrum) '
+                                       f'with stack, collect(single) as singles return stack, singles').to_data_frame()
+        assert len(result) == 10
+        assert all(len(s) == 3 for s in result['singles'])
+
+    def test_stackfile_has_all_stacks(self, bigquery):
+        cypher, data, database = bigquery
+        result = database.neograph.run(f'match (stackfile:StackFile) optional match (stackfile)<--(stack:Stack) '
+                                       f'with stackfile, collect(stack.checksum) as stacks return stackfile, stacks').to_data_frame()
+        assert len(result) == 1
+        assert all(set(s) == set(range(10)) for s in result['stacks'])

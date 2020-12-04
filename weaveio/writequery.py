@@ -6,6 +6,7 @@ import re
 
 from weaveio.context import ContextMeta
 
+
 def camelcase(x):
     return x[0].upper() + x[1:]
 
@@ -13,9 +14,10 @@ def camelcase(x):
 class CypherQuery(metaclass=ContextMeta):
     def __init__(self):
         self.data = []
-        self.statements = [TimeStamp()]
+        self.statements = [TimeStamp()]  # type: List[Statement]
         self.timestamp = self.statements[0].output_variables[0]
         self.open_contexts = [[self.timestamp]]
+        self.closed_context = None
 
     @property
     def current_context(self):
@@ -46,7 +48,6 @@ class CypherQuery(metaclass=ContextMeta):
                     i = d[namehint]
                     d[namehint] += 1
                     v._name = f'{namehint}{i}'
-
 
     def render_query(self, procedure_tag=''):
         if not isinstance(self.statements[-1], Returns):
@@ -197,7 +198,7 @@ class Collect(Statement):
         super(Collect, self).__init__(args, [Collection(a.namehint+'s') for a in args])
 
     def to_cypher(self):
-        collections =  ','.join([f'collect({a}) as {b}' for a, b in zip(self.input_variables, self.output_variables)])
+        collections = ','.join([f'collect({a}) as {b}' for a, b in zip(self.input_variables, self.output_variables)])
         r = f"WITH " + ', '.join(map(str, self.previous))
         if len(collections):
             r += ', ' + collections
@@ -237,7 +238,7 @@ class MergeMany2One(Statement):
         self.parents = parents
         self.labels = [camelcase(l) for l in labels]
         self.properties = {Varname(k): v for k, v in properties.items()}
-        self.versioned_labels = versioned_labels
+        self.versioned_labels = [camelcase(l) for l in versioned_labels]
         self.child = CypherVariable(labels[-1])
         self.speclist = [CypherVariable(p.namehint+'spec') for p in self.parents]
         self.specs = CypherVariable('specs')
@@ -269,7 +270,7 @@ class MergeMany2One(Statement):
 class MatchMany2One(MergeMany2One):
     def to_cypher(self):
         match = self.make_specs()
-        match += f"\nCALL custom.multimatch({self.specs}, {self.labels}, {self.properties}) YIELD child as {self.child}"
+        match += f"\nCALL custom.multimatch({self.specs}, {self.labels}, {self.properties}, false, false) YIELD child as {self.child}"
         return match
 
 
@@ -324,9 +325,9 @@ def merge_node(labels, properties, parents=None, versioned_labels=None):
 
 
 @contextmanager
-def unwind(*args, enumerate=False):
+def unwind(*args, enumerated=False):
     query = CypherQuery.get_context()  # type: CypherQuery
-    unwinder = Unwind(*args, enumerated=enumerate)
+    unwinder = Unwind(*args, enumerated=enumerated)
     query.open_context()  # allow this context to accumulate variables
     query.add_statement(unwinder)  # append the actual statement
     if len(unwinder.passed_outputs) == 1:

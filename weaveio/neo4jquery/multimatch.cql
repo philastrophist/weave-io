@@ -2,11 +2,17 @@
 // param: labels => LIST OF STRING
 // param: properties => MAP
 // param: exclusive => BOOL => true
+// param: allownull => BOOL => true
 // returns: child => NODE
 // description: Performs a cypher match to match a node(s) that has only the exact relationships given in spec. Labels must be identical, properties are matched as normal in cypher.
 ////////////////////////////////////////////////////////////
 
-WITH $specs as specs
+UNWIND $specs as spec
+WITH spec
+WHERE spec[0] is not null
+WITH [spec[0], spec[1], spec[2]] as newspec
+WITH collect(newspec) as specs  // filter out null entries
+
 UNWIND specs as spec
 OPTIONAL MATCH p=(a)-[r]->(d)
 WHERE a = spec[0] AND type(r) = spec[1]
@@ -25,4 +31,6 @@ UNWIND children as child
 CALL apoc.do.when($exclusive = true, 'OPTIONAL MATCH (_child) WHERE NOT EXISTS{MATCH (_child)<-[]-(other)
 WHERE NOT (other in $parents)} AND _child = $child
 RETURN _child as child', 'RETURN $child as child', {child:child, parents:parents}) YIELD value
-RETURN value.child as child
+
+CALL apoc.do.when($allownull, 'RETURN $value.child as child', 'WITH value.child as child WHERE child is not NULL RETURN child', {value:value}) yield value as value2
+RETURN value2.child as child
