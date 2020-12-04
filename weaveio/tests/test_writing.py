@@ -284,7 +284,7 @@ def bigquery(database, procedure_tag):
     return cypher, data, database
 
 
-@pytest.mark.usefixtures("bigquery")
+@pytest.mark.usefixtures("bigquery")  # careful, there seems to be a bug with pytest and this database is not separate!
 class TestBigQuery:
     def test_spec_has_run_and_raw(self, bigquery):
         cypher, data, database = bigquery
@@ -315,3 +315,9 @@ class TestBigQuery:
                                        f'with stackfile, collect(stack.checksum) as stacks return stackfile, stacks').to_data_frame()
         assert len(result) == 1
         assert all(set(s) == set(range(10)) for s in result['stacks'])
+
+    def test_rawfile_is_attached_to_a_single_raw(self, bigquery):
+        cypher, data, database = bigquery
+        result = database.neograph.run('match (f:Rawfile) optional match (run:Run)-->(raw:Raw)-->(f) return f, raw, run.id').to_data_frame()
+        assert len(result) == 1
+        assert result['run.id'][0] == 'runid1'
