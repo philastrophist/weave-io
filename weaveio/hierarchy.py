@@ -376,19 +376,14 @@ class SurveyTarget(Hierarchy):
     parents = [SurveyCatalogue, WeaveTarget]
     # assume the worst case, that targids are not unique
     factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch',
-               'targpmra', 'targpmdec', 'targparal']
-
-
-class TargetPhotometry(Hierarchy):
-    parents = [SurveyTarget]
-    factors = ['mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
+               'targpmra', 'targpmdec', 'targparal', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
                'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
 
 
 class FibreTarget(Hierarchy):
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget, TargetPhotometry]
+    parents = [Fibre, SurveyTarget]
 
 
 class FibreSet(Hierarchy):
