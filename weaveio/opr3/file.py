@@ -142,6 +142,7 @@ class HeaderFibinfoFile(File):
 class RawFile(HeaderFibinfoFile):
     parents = [RawSpectrum]
     fibinfo_i = 3
+    match_pattern = 'r*.fit'
 
     @classmethod
     def read(cls, directory: Path, fname: Path):
@@ -149,13 +150,10 @@ class RawFile(HeaderFibinfoFile):
         raw = RawSpectrum(run=hiers['run'])
         return  cls(fname=fname, raw=raw)
 
-    @classmethod
-    def match(cls, directory: Path):
-        return directory.glob('r*.fit')
-
 
 class L1SingleFile(HeaderFibinfoFile):
     parents = [Multiple(L1SingleSpectrum, constrain=[RawSpectrum])]
+    match_pattern = 'single_*.fit'
 
     @classmethod
     def read(cls, directory: Path, fname: Path):
@@ -169,14 +167,11 @@ class L1SingleFile(HeaderFibinfoFile):
             single_spectra = cls.read_l1single(raw, row)
         return cls(fname=fname, l1singlespectra=single_spectra)
 
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('single_*.fit')
-
 
 class L1StackFile(HeaderFibinfoFile):
     parents = [Multiple(L1StackSpectrum, constrain=[Exposure, ArmConfig])]
     dependencies = [Run]
+    match_pattern = 'stacked_*.fit'
 
     @classmethod
     def make_spectra_from_single(cls, singles):
@@ -206,25 +201,19 @@ class L1StackFile(HeaderFibinfoFile):
             data = cls.make_spectra_from_single(singlespectra)  # and this is per fibretarget
         return cls(fname=fname, **data)
 
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('stacked_*.fit')
-
 
 class L1SuperStackFile(L1StackFile):
     parents = [Multiple(L1SuperStackSpectrum, constrain=[OBSpec, ArmConfig])]
+    match_pattern = 'superstacked_*.fit'
 
     @classmethod
     def match(cls, directory):
-        return directory.glob('superstacked_*.fit')
+        return directory.glob()
 
 
 class L1SuperTargetFile(L1StackFile):
     parents = [L1SuperTargetSpectrum]
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('[Lm]?WVE_*.fit')
+    match_pattern = 'WVE_*.fit'
 
 
 class L2HeaderFibinfoFile(HeaderFibinfoFile):
@@ -254,12 +243,4 @@ class L2HeaderFibinfoFile(HeaderFibinfoFile):
 
 
 class L2File(HeaderFibinfoFile):
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('*aps.fit')
-
-
-class L2SuperTargetFile(HeaderFibinfoFile):
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('WVE*aps.fit')
+    match_pattern = '*aps.fit'

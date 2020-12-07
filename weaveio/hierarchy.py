@@ -84,7 +84,7 @@ class GraphableMeta(type):
         if cls.idname is not None and cls.identifier_builder is not None:
             raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
         if cls.indexes and (cls.idname is not None or cls.identifier_builder is not None):
-            raise RuleBreakingException(f"You cannot define an index and identifier at the same time for {name}")
+            raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
         nparents_in_id = 0
         parentnames = {}
         for i in cls.parents:
@@ -178,15 +178,13 @@ class Graphable(metaclass=GraphableMeta):
             raise ValueError(f"{self} must have an identifier")
         if self.idname is None and self.identifier is not None:
             raise ValueError(f"{self} must have an idname to be given an identifier")
-        else:
+        elif self.idname is not None:
             d[self.idname] = self.identifier
             d['id'] = self.identifier
         for f in self.factors:
             value = getattr(self, f.lower())
             if value is not None:
                 d[f.lower()] = value
-        if self.parents:
-            d['parents'] = self.parents
         return d
 
     def __init__(self, **predecessors):
@@ -383,7 +381,8 @@ class Hierarchy(Graphable):
             if self.identifier is not None:
                 raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
             self.identifier = self.generate_identifier()
-        setattr(self, self.idname, self.identifier)
+        if self.idname is not None:
+            setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
 

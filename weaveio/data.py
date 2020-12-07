@@ -14,13 +14,10 @@ from tqdm import tqdm
 
 from weaveio.address import Address
 from weaveio.basequery.handler import Handler, defaultdict
-from weaveio.basequery.hierarchy import HeterogeneousHierarchyFrozenQuery
 from weaveio.graph import Graph
 from weaveio.writequery import Unwind
 from weaveio.hierarchy import Multiple
 from weaveio.file import File
-from weaveio.opr3.file import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile, L2File, L2SuperTargetFile
-from weaveio.queries import BasicQuery, HeterogeneousHierarchy
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
@@ -184,15 +181,16 @@ class Data:
 
     def directory_to_neo4j(self, *filetype_names):
         for filetype in self.filetypes:
-            self.filelists[filetype] = list(filetype.match(self.rootdir))
+            self.filelists[filetype] = self.rootdir.rglob(filetype.match_pattern)
         for filetype, files in self.filelists.items():
             if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
                 continue
             for file in tqdm(files, desc=filetype.__name__):
                 try:
-                    with self.graph:
-                        filetype(file)
-                        self.graph.upload()
+                    with self.graph.write() as query:
+                        filetype.read(self.rootdir, file.relative_to(self.rootdir))
+                    cypher, parameters = query.render_query()
+                    self.graph.neograph.run(cypher, parameters=parameters)
                 except py2neo.database.work.ClientError as e:
                     logging.exception('ClientError:', exc_info=True)
                     raise e
@@ -368,14 +366,8 @@ class Data:
         return self.handler.begin_with_heterogeneous().__getattr__(item)
 
     def plot_relations(self, fname='relations.pdf'):
-        from networkx.drawing.nx_agraph import graphviz_layout, to_agraph
+        from networkx.drawing.nx_agraph import to_agraph
         G = self.relation_graph
         A = to_agraph(G)
         A.layout('dot')
         A.draw(fname)
-
-
-
-class OurData(Data):
-    filetypes = [RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile,
-                 L2File, L2SuperTargetFile]

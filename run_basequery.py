@@ -1,4 +1,4 @@
-from weaveio.data import OurData
+from weaveio.opr3 import OurData
 from weaveio.opr3.hierarchy import FibreTarget
 
 data = OurData('data', port=7687)

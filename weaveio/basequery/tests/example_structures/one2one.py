@@ -11,15 +11,18 @@ File1<-HierarchyA<-HierarchyB<-Multiple(HierarchyC)
 
 class HierarchyF(Hierarchy):
     factors = ['f_factor_a']
-    indexes = factors
+    idname = 'id'
+
 
 class HierarchyD(Hierarchy):
     factors = ['shared_factor_name']
-    indexes = factors
+    idname = 'id'
+
 
 class HierarchyC(Hierarchy):
     factors = ['c_factor_a', 'c_factor_b', 'shared_factor_name']
-    indexes = factors
+    idname = 'id'
+
 
 class HierarchyB(Hierarchy):
     parents = [Multiple(HierarchyC, 2, 2), HierarchyD]
@@ -35,19 +38,17 @@ class HierarchyA(Hierarchy):
 
 class File1(File):
     parents = [HierarchyA]
+    match_pattern = '*.fits'
 
-    def read(self) -> Tuple[Dict[str, 'Hierarchy'], dict]:
-        fname = str(self.fname).split('/')[-1]
+    @classmethod
+    def read(cls, directory, fname) -> 'File':
+        fname = str(fname)
         hierarchyf = HierarchyF(id=fname, f_factor_a='a')
         hierarchyd = HierarchyD(id=fname, shared_factor_name='shared_d')
         hierarchyc1 = HierarchyC(id=fname+'1', c_factor_a='a', c_factor_b='b', shared_factor_name='shared_c1')
         hierarchyc2 = HierarchyC(id=fname+'2', c_factor_a='a', c_factor_b='b', shared_factor_name='shared_c2')
         hierarchyb = HierarchyB(otherid=fname, b_factor_b='b',  b_factor_a='a', hierarchycs=[hierarchyc1, hierarchyc2], hierarchyd=hierarchyd)
-        return {'hierarchya': HierarchyA(id=fname, hierarchyb=hierarchyb, a_factor_a='a', a_factor_b='b', hierarchyfs=[hierarchyf])}, {}
-
-    @classmethod
-    def match(cls, directory):
-        return directory.glob('*.fits')
+        return cls(fname, hierarchya=HierarchyA(id=fname, hierarchyb=hierarchyb, a_factor_a='a', a_factor_b='b', hierarchyfs=[hierarchyf]))
 
 
 class MyDataOne2One(Data):

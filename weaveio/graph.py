@@ -2,6 +2,7 @@ import py2neo
 from py2neo import Graph as NeoGraph
 
 from weaveio.context import ContextMeta
+from weaveio.writequery import CypherQuery
 
 
 class Graph(metaclass=ContextMeta):
@@ -29,7 +30,11 @@ class Graph(metaclass=ContextMeta):
         except py2neo.database.work.DatabaseError:
             pass
 
+    def write(self):
+        return CypherQuery()
 
+    def execute(self, cypher, **payload):
+        return self.neograph.run(cypher, parameters=payload)
 
 Graph._context_class = Graph
 
