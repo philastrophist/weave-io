@@ -21,12 +21,13 @@ def data(workdir):
     return MyData(workdir, port=None)  # set to None for safety
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='function')
 def database(workdir):
     try:
         data = MyData(workdir, port=7687)
         assert data.graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"
         data.graph.neograph.run('MATCH (n) DETACH DELETE n')
+        data.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
     except (AssertionError, WireError):
         pytest.xfail("unsupported configuration of testing database")
     else:

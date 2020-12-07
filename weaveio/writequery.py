@@ -302,7 +302,7 @@ class MatchRelationship(Statement):
     def __init__(self, parent, child, reltype: str, properties: dict):
         self.parent = parent
         self.child = child
-        self.reltype = camelcase(reltype)
+        self.reltype = reltype
         self.properties = {Varname(k): v for k, v in properties.items()}
         inputs = [self.parent, self.child] + [v for v in properties.values() if isinstance(v, CypherVariable)]
         self.out = CypherVariable(reltype)
@@ -310,11 +310,14 @@ class MatchRelationship(Statement):
 
     def to_cypher(self):
         reldata = f'[{self.out}:{self.reltype} {self.properties}]'
-        return f"{self.keyword} ({self.parent})-{reldata}->{self.child})"
+        return f"{self.keyword} ({self.parent})-{reldata}->({self.child})"
 
 
 class MergeRelationship(MatchRelationship):
     keyword = 'MERGE'
+
+    def to_cypher(self):
+        return super().to_cypher() + f' ON CREATE SET {self.out}.dbcreated = time0'
 
 
 class MergeDependentNode(Statement):
@@ -326,38 +329,43 @@ class MergeDependentNode(Statement):
                              f"This is a restriction of neo4j.")
         self.labels = [camelcase(l) for l in labels]
         self.properties = {Varname(k): v for k, v in properties.items()}
-        self.out = CypherVariable(labels[-1])
         self.parents = [(p[0], p[1], {Varname(k): v for k, v in p[2].items()}) for p in parents]
         inputs = [v for v in properties.values() if isinstance(v, CypherVariable)]
         inputs += [p[0] for p in parents]
-        super().__init__(inputs, [self.out])
+        self.out = CypherVariable(labels[-1])
+        self.rels = [CypherVariable('rel') for p in parents]
+        super().__init__(inputs, [self.out] + self.rels)
 
     def to_cypher(self):
         labels = ':'.join(map(str, self.labels))
         child = f'({self.out}:{labels} {self.properties})'
-        statement = f'({self.parents[0][0]})-[:{self.parents[0][1]} {self.parents[0][2]}]->({child})'
+        statement = f'({self.parents[0][0]})-[{self.rels[0]}:{self.parents[0][1]} {self.parents[0][2]}]->{child}'
         if len(self.parents) > 1:
-            statement += f'<-[: {self.parents[1][1]} {self.parents[1][2]}-({self.parents[1][0]})'
-        return f"{self.keyword} {statement}"
+            statement += f'<-[{self.rels[1]}:{self.parents[1][1]} {self.parents[1][2]}]-({self.parents[1][0]})'
+        statement = f"{self.keyword} {statement} ON CREATE SET {self.rels[0]}.dbcreated = time0, " \
+                    f"{self.out}.dbcreated = time0"
+        if len(self.parents) > 1:
+            statement += f", {self.rels[1]}.dbcreated = time0"
+        return statement
 
 
 class SetVersion(Statement):
     def __init__(self, parents: List[CypherVariable], reltypes: List[str], childlabel: str, child: CypherVariable):
-        if len(reltypes) == len(parents):
+        if len(reltypes) != len(parents):
             raise ValueError(f"reltypes must be the same length as parents")
         self.parents = parents
         self.reltypes = reltypes
-        self.childlabel = childlabel
+        self.childlabel = camelcase(childlabel)
         self.child = child
         super(SetVersion, self).__init__(self.parents, [])
 
     def to_cypher(self):
         matches = ', '.join([f'({p})-[:{r}]->(c:{self.childlabel})' for p, r in zip(self.parents, self.reltypes)])
-        return f'CALL {{ \n' \
+        return f'WITH * CALL {{ \n' \
         f'WITH {self.child} OPTIONAL MATCH {matches} WHERE id(c) <> id({self.child}) \n' \
         f'WITH {self.child}, max(c.version) as maxversion \n' \
-        f'SET {self.child}.version = coalesce(child.version, maxversion + 1, 0) \n' \
-        f' }}'
+        f'SET {self.child}.version = coalesce({self.child}.version, maxversion + 1, 0) \n' \
+        f'RETURN {self.child.version} }}'
 
 
 

@@ -19,6 +19,7 @@ def database(procedure_tag) -> py2neo.Graph:
         graph = Graph(port=7687, host='host.docker.internal')
         assert graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"
         graph.neograph.run('MATCH (n) DETACH DELETE n')
+        graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
         for text in get_all_procedures('write', procedure_tag):
             graph.neograph.run(text)
         return graph

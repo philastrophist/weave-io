@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData
+from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, merge_node_relationship, set_version
 from weaveio.graph import Graph
 
 
@@ -321,3 +321,67 @@ class TestBigQuery:
         result = database.neograph.run('match (f:Rawfile) optional match (run:Run)-->(raw:Raw)-->(f) return f, raw, run.id').to_data_frame()
         assert len(result) == 1
         assert result['run.id'][0] == 'runid1'
+
+
+def test_merge_relationship():
+    with CypherQuery() as query:
+        a = merge_node(['a'], {})
+        b = merge_node(['b'], {})
+        merge_relationship(a, b, 'rel', {'prop': 'a'})
+    cypher = query.render_query()[0]
+    assert cypher == '\n'.join([PREFIX,
+                                "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
+                                "MERGE (b0:B {}) ON CREATE SET b0.dbcreated = time0",
+                                "MERGE (a0)-[rel0:rel {prop: 'a'}]->(b0) ON CREATE SET rel0.dbcreated = time0",
+                                "RETURN time0"
+                                ])
+
+
+def test_merge_node_relationship_with_one():
+    with CypherQuery() as query:
+        a = merge_node(['a'], {})
+        merge_node_relationship(['b'], {'prop': 'b'},  [(a, 'rel', {'prop': 'a'})])
+    cypher = query.render_query()[0]
+    assert cypher == '\n'.join([PREFIX,
+                                "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
+                                "MERGE (a0)-[rel0:rel {prop: 'a'}]->(b0:B {prop: 'b'}) "
+                                "ON CREATE SET rel0.dbcreated = time0, b0.dbcreated = time0",
+                                "RETURN time0"
+                                ])
+
+
+def test_merge_node_relationship_with_two():
+    with CypherQuery() as query:
+        a = merge_node(['a'], {})
+        b = merge_node(['b'], {})
+        merge_node_relationship(['c'], {'prop': 'c'},  [(a, 'rel', {'prop': 'a'}),
+                                                        (b, 'rel', {'prop': 'b'})])
+    cypher = query.render_query()[0]
+    assert cypher == '\n'.join([PREFIX,
+                                "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
+                                "MERGE (b0:B {}) ON CREATE SET b0.dbcreated = time0",
+                                "MERGE (a0)-[rel0:rel {prop: 'a'}]->(c0:C {prop: 'c'})<-[rel1:rel {prop: 'b'}]-(b0) "
+                                "ON CREATE SET rel0.dbcreated = time0, c0.dbcreated = time0, rel1.dbcreated = time0",
+                                "RETURN time0"
+                                ])
+
+
+def test_versioning(database):
+    with CypherQuery() as query:
+        a = merge_node(['a'], {})
+        b = merge_node(['b'], {})
+        c1 = merge_node_relationship(['c'], {'prop': 'c1'},  [(a, 'rel', {'prop': 'a'}),
+                                                        (b, 'rel', {'prop': 'b'})])
+        set_version([a, b], ['rel', 'rel'], 'C', c1)
+        c2 = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
+                                                            (b, 'rel', {'prop': 'b'})])
+        set_version([a, b], ['rel', 'rel'], 'C', c2)
+        c2dupl = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
+                                                            (b, 'rel', {'prop': 'b'})])
+        set_version([a, b], ['rel', 'rel'], 'C', c2dupl)
+    cypher = query.render_query()[0]
+    database.neograph.run(cypher)
+    results = database.neograph.run('MATCH (c:C) return c.prop, c.version ORDER BY c.version').to_table()
+    assert results[0] == ('c1', 0)
+    assert results[1] == ('c2', 1)
+    assert len(results) == 2
