@@ -171,19 +171,19 @@ class Data:
                                                      label=numberlabel)
                         d.append(subclass)
 
-    def make_constraints(self):
-        for hierarchy in self.hierarchies:
-            self.graph.create_unique_constraint(hierarchy.__name__, 'id')
+    def make_constraints_cypher(self):
+        return [hierarchy.make_schema() for hierarchy in self.hierarchies]
 
-    def drop_constraints(self):
-        for hierarchy in self.hierarchies:
-            self.graph.drop_unique_constraint(hierarchy.__name__, 'id')
+    def apply_constraints(self):
+        for q in tqdm(self.make_constraints_cypher(), desc='applying constraints'):
+            self.graph.neograph.run(q)
+
+    def drop_all_constraints(self):
+        self.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
 
     def directory_to_neo4j(self, *filetype_names):
         for filetype in self.filetypes:
             self.filelists[filetype] = list(filetype.match(self.rootdir))
-        with self.graph:
-            self.make_constraints()
         for filetype, files in self.filelists.items():
             if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
                 continue

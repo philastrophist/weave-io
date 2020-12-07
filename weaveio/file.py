@@ -9,7 +9,7 @@ import weaveio.writequery
 from weaveio.config_tables import progtemp_config
 from weaveio.graph import Graph
 from weaveio.hierarchy import Run, OB, OBSpec, ArmConfig, Exposure, \
-    FibreSet, ProgTemp, ObsTemp, Survey, Fibre, WeaveTarget, \
+    ProgTemp, ObsTemp, Survey, Fibre, WeaveTarget, \
     FibreTarget, SurveyCatalogue, SubProgramme, SurveyTarget, Hierarchy, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, Multiple
 from weaveio.oldproduct import Header, Array, Table
 

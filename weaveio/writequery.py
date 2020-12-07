@@ -1,6 +1,6 @@
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Dict, Union, List
+from typing import Dict, Union, List, Tuple
 
 import re
 
@@ -296,6 +296,71 @@ class MergeNode(MatchNode):
         return super().to_cypher() + f" ON CREATE SET {self.out}.dbcreated = {self.timestamp}"
 
 
+class MatchRelationship(Statement):
+    keyword = 'MATCH'
+
+    def __init__(self, parent, child, reltype: str, properties: dict):
+        self.parent = parent
+        self.child = child
+        self.reltype = camelcase(reltype)
+        self.properties = {Varname(k): v for k, v in properties.items()}
+        inputs = [self.parent, self.child] + [v for v in properties.values() if isinstance(v, CypherVariable)]
+        self.out = CypherVariable(reltype)
+        super().__init__(inputs, [self.out])
+
+    def to_cypher(self):
+        reldata = f'[{self.out}:{self.reltype} {self.properties}]'
+        return f"{self.keyword} ({self.parent})-{reldata}->{self.child})"
+
+
+class MergeRelationship(MatchRelationship):
+    keyword = 'MERGE'
+
+
+class MergeDependentNode(Statement):
+    keyword = 'MERGE'
+
+    def __init__(self, labels: List[str], properties: dict, parents: List[Tuple[CypherVariable, str, dict]]):
+        if len(parents) > 2:
+            raise ValueError(f"Cannot perform dependent node merge for more than 2 parent nodes. "
+                             f"This is a restriction of neo4j.")
+        self.labels = [camelcase(l) for l in labels]
+        self.properties = {Varname(k): v for k, v in properties.items()}
+        self.out = CypherVariable(labels[-1])
+        self.parents = [(p[0], p[1], {Varname(k): v for k, v in p[2].items()}) for p in parents]
+        inputs = [v for v in properties.values() if isinstance(v, CypherVariable)]
+        inputs += [p[0] for p in parents]
+        super().__init__(inputs, [self.out])
+
+    def to_cypher(self):
+        labels = ':'.join(map(str, self.labels))
+        child = f'({self.out}:{labels} {self.properties})'
+        statement = f'({self.parents[0][0]})-[:{self.parents[0][1]} {self.parents[0][2]}]->({child})'
+        if len(self.parents) > 1:
+            statement += f'<-[: {self.parents[1][1]} {self.parents[1][2]}-({self.parents[1][0]})'
+        return f"{self.keyword} {statement}"
+
+
+class SetVersion(Statement):
+    def __init__(self, parents: List[CypherVariable], reltypes: List[str], childlabel: str, child: CypherVariable):
+        if len(reltypes) == len(parents):
+            raise ValueError(f"reltypes must be the same length as parents")
+        self.parents = parents
+        self.reltypes = reltypes
+        self.childlabel = childlabel
+        self.child = child
+        super(SetVersion, self).__init__(self.parents, [])
+
+    def to_cypher(self):
+        matches = ', '.join([f'({p})-[:{r}]->(c:{self.childlabel})' for p, r in zip(self.parents, self.reltypes)])
+        return f'CALL {{ \n' \
+        f'WITH {self.child} OPTIONAL MATCH {matches} WHERE id(c) <> id({self.child}) \n' \
+        f'WITH {self.child}, max(c.version) as maxversion \n' \
+        f'SET {self.child}.version = coalesce(child.version, maxversion + 1, 0) \n' \
+        f' }}'
+
+
+
 def _mergematch_node(labels, properties, parents=None, versioned_labels=None, merge=False):
     query = CypherQuery.get_context()
     if parents is None:
@@ -322,6 +387,38 @@ def match_node(labels, properties, parents=None, versioned_labels=None):
 
 def merge_node(labels, properties, parents=None, versioned_labels=None):
     return _mergematch_node(labels, properties, parents, versioned_labels, merge=True)
+
+
+def _mergematch_relationship(parent, child, reltype, properties, merge=True):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    if merge:
+        statement = MergeRelationship(parent, child, reltype, properties)
+    else:
+        statement = MatchRelationship(parent, child, reltype, properties)
+    returned = statement.output_variables[0]
+    query.add_statement(statement)
+    return returned
+
+
+def merge_relationship(parent, child, reltype, properties):
+    return _mergematch_relationship(parent, child, reltype, properties, True)
+
+
+def match_relationship(parent, child, reltype, properties):
+    return _mergematch_relationship(parent, child, reltype, properties, False)
+
+
+def merge_node_relationship(labels: List[str], properties: dict,
+                            parents: List[Tuple[CypherVariable, str, dict]]):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MergeDependentNode(labels, properties, parents)
+    query.add_statement(statement)
+    return statement.out
+
+def set_version(parents, reltypes, childlabel, child):
+    query = CypherQuery.get_context() # type: CypherQuery
+    statement = SetVersion(parents, reltypes, childlabel, child)
+    query.add_statement(statement)
 
 
 @contextmanager

@@ -7,7 +7,7 @@ from graphviz import Source
 
 from .config_tables import progtemp_config
 from .graph import Graph
-from .writequery import CypherQuery, Unwind
+from .writequery import CypherQuery, Unwind, MergeNode, Collection, unwind, merge_node, collect, merge_relationship, merge_node_relationship, set_version
 from .context import ContextError
 from .utilities import Varname
 
@@ -56,7 +56,7 @@ class RuleBreakingException(Exception):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None):
+    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None):
         self.node = node
         self.minnumber = minnumber
         self.maxnumber = maxnumber
@@ -64,6 +64,7 @@ class Multiple:
         self.singular_name = node.singular_name
         self.plural_name = node.plural_name
         self.idname = self.node.idname
+        self.relation_idname = idname
         try:
             self.factors =  self.node.factors
         except AttributeError:
@@ -106,6 +107,38 @@ class GraphableMeta(type):
         r = super(GraphableMeta, meta).__new__(meta, name, bases, dct)
         return r
 
+    def __init__(cls, name, bases, dct):
+        if cls.idname is not None and cls.identifier_builder is not None:
+            raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
+        if cls.indexes and (cls.idname is not None or cls.identifier_builder is not None):
+            raise RuleBreakingException(f"You cannot define an index and identifier at the same time for {name}")
+        nparents_in_id = 0
+        parentnames = {}
+        for i in cls.parents:
+            if isinstance(i, Multiple):
+                parentnames[i.plural_name] = (i.minnumber, i.maxnumber)
+            else:
+                parentnames[i.singular_name] = (1, 1)
+        if cls.identifier_builder is not None:
+            for p in cls.identifier_builder:
+                if p in parentnames:
+                    mn, mx = parentnames[p]
+                    if mn == 0:
+                        raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
+                    if mx != mn:
+                        raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
+                    nparents_in_id += mx
+                elif p in cls.factors:
+                    pass
+                else:
+                    raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
+            if nparents_in_id > 2:
+                raise RuleBreakingException(f"Cannot create an id using more than 2 parents")
+        for i in cls.version_on:
+            if i not in [p.singular_name for p in cls.parents]:
+                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must be a singular parent")
+        super().__init__(name, bases, dct)
+
 
 class Graphable(metaclass=GraphableMeta):
     idname = None
@@ -122,6 +155,9 @@ class Graphable(metaclass=GraphableMeta):
     query = None
     is_template = False
     products = []
+    indexes = []
+    identifier_builder = None
+    version_on = []
 
     @classmethod
     def requirement_names(cls):
@@ -176,44 +212,115 @@ class Graphable(metaclass=GraphableMeta):
             d['parents'] = self.parents
         return d
 
-    def __init__(self, _protect=None, **predecessors):
-        if _protect is None:
-            _protect = []
+    def __init__(self, **predecessors):
         self.predecessors = predecessors
         self.data = None
         try:
-            graph = Graph.get_context().query  # type: CypherQuery
-            relationships = []
-            for k, parent_list in predecessors.items():
-                if self.indexer is None:
-                    type = 'is_required_by'
-                elif k in self.indexer.lower():
-                    type = 'indexes'
-                else:
-                    type = 'is_required_by'
-                if isinstance(parent_list, (list, tuple)):
-                    for iparent, parent in enumerate(parent_list):
-                        relationships.append(Relationship(parent.node, child, type, order=iparent))
-                else:
-                    order = 0 if k in _protect else None
-                    parent = parent_list
-                    relationships.append(Relationship(parent.node, child, type, order=order))
-
-            self.node = child
-            if self.identifier is not None:
-                graph.merge_node(child)
-                graph.merge_relationships(relationships)
-            else:
-                graph.merge_node_and_parent_relationships(relationships)
+            query = CypherQuery.get_context()  # type: CypherQuery
         except ContextError:
-            pass
+            return
+        merge_strategy = self.__class__.merge_strategy()
+        version_parents = []
+        if  merge_strategy == 'NODE FIRST':
+            self.node = child = merge_node(self.neotypes, self.neoproperties)
+            for k, parent_list in predecessors.items():
+                type = 'is_required_by'
+                if isinstance(parent_list, Collection):
+                    with unwind(parent_list, enumerated=True) as (parent, i):
+                        props = {'order': i}
+                        merge_relationship(parent.node, child, type, props)
+                    parent_list = collect(parent.node)
+                    if k in self.version_on:
+                        raise RuleBreakingException(f"Cannot version on a collection of nodes")
+                else:
+                    for parent in parent_list:
+                        props = {'order': 0}
+                        merge_relationship(parent.node, child, type, props)
+                        if k in self.version_on:
+                            version_parents.append(parent.node)
+        elif merge_strategy == 'NODE+RELATIONSHIP':
+            parentnames = [p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
+            parents = []
+            others = []
+            for k, parent_list in predecessors.items():
+                if isinstance(parent_list, Collection):
+                    raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
+                if k in parentnames and k in self.identifier_builder:
+                    parents += [p.node for p in parent_list]
+                else:
+                    others += [(i, p.node) for i, p in enumerate(parent_list)]
+                if k in self.version_on:
+                    version_parents += parent_list
+            reltype = 'is_required_by'
+            relparents = [(p, reltype, {'order': 0}) for p in parents]
+            child = self.node = merge_node_relationship(self.neotypes, self.neoproperties, relparents)
+            for i, other in others:
+                merge_relationship(other, child, reltype, {'order': i})
+        else:
+            ValueError(f"Merge strategy not known: {merge_strategy}")
+        if len(version_parents):
+            set_version(version_parents, ['is_required_by']*len(version_parents), self.node, self.neotypes[-1])
+
+
+    @classmethod
+    def has_factor_identity(cls):
+        if cls.identifier_builder is None:
+            return False
+        if len(cls.identifier_builder) == 0:
+            return False
+        for p in cls.parents:
+            if isinstance(p, Multiple):
+                if p.plural_name in cls.identifier_builder:
+                    return False
+            elif p.singular_name in cls.identifier_builder:
+                return False
+        return True
+
+    @classmethod
+    def has_parent_identity(cls):
+        if cls.identifier_builder is None:
+            return False
+        if len(cls.identifier_builder) == 0:
+            return False
+        for p in cls.parents:
+            if isinstance(p, Multiple):
+                if p.plural_name in cls.identifier_builder:
+                    return True
+            elif p.singular_name in cls.identifier_builder:
+                return True
+        return False
+
+    @classmethod
+    def make_schema(cls):
+        name = cls.__name__
+        if cls.idname is not None:
+            prop = cls.idname
+            return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY'
+        elif cls.identifier_builder:
+            if cls.has_factor_identity():
+                key = ', '.join([f'n.{f}' for f in cls.identifier_builder])
+                return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT ({key}) IS NODE KEY'
+            elif cls.has_parent_identity():
+                key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
+                return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+        key = ', '.join([i for i in cls.indexes])
+        return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+
+    @classmethod
+    def merge_strategy(cls):
+        if cls.idname is not None:
+            return 'NODE FIRST'
+        elif cls.identifier_builder:
+            if cls.has_factor_identity():
+                return 'NODE FIRST'
+            elif cls.has_parent_identity():
+                return 'NODE+RELATIONSHIP'
+        return 'NODE FIRST'
 
 
 class Hierarchy(Graphable):
     parents = []
     factors = []
-    indexer = None
-    identifier_builder = None
 
     def generate_identifier(self):
         """
@@ -260,7 +367,6 @@ class Hierarchy(Graphable):
         return specification, factors
 
     def __init__(self, tables=None, **kwargs):
-        _protect = kwargs.pop('_protect', [])
         self.uses_tables = False
         if tables is None:
             for value in kwargs.values():
@@ -302,28 +408,33 @@ class Hierarchy(Graphable):
             self.identifier = self.generate_identifier()
         setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
-        super(Hierarchy, self).__init__(**predecessors, _protect=_protect)
+        super(Hierarchy, self).__init__(**predecessors)
 
 
-class CASU(Hierarchy):
+class Author(Hierarchy):
+    is_template = True
+
+
+class CASU(Author):
     idname = 'version'
 
 
-class APS(Hierarchy):
+class APS(Author):
     idname = 'version'
 
 
-class Simulator(Hierarchy):
+class Simulator(Author):
     idname = 'version'
     factors = ['simvdate', 'simver', 'simmode']
 
 
-class System(Hierarchy):
+class System(Author):
     idname = 'version'
 
 
 class ArmConfig(Hierarchy):
     factors = ['resolution', 'vph', 'camera', 'colour']
+    identifier_builder = ['resolution', 'vph', 'camera']
 
     def __init__(self, tables=None, **kwargs):
         if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
@@ -342,6 +453,7 @@ class ArmConfig(Hierarchy):
 
 class ObsTemp(Hierarchy):
     factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
+    identifier_builder = factors
 
     @classmethod
     def from_header(cls, header):
@@ -364,46 +476,32 @@ class Fibre(Hierarchy):
 
 class SubProgramme(Hierarchy):
     parents = [Multiple(Survey)]
-    factors = ['targprog']  # unique only to survey groups
+    idname = 'targprog'
 
 
 class SurveyCatalogue(Hierarchy):
     parents = [SubProgramme]
-    factors = ['targcat']  # unique only to subprogrammes
+    idname = 'targcat'
 
 
 class SurveyTarget(Hierarchy):
     parents = [SurveyCatalogue, WeaveTarget]
-    # assume the worst case, that targids are not unique
     factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch',
                'targpmra', 'targpmdec', 'targparal', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
                'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
-
-
-class FibreTarget(Hierarchy):
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
-               'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget]
-
-
-class FibreSet(Hierarchy):
-    # defined entirely by constituent fibretargets (unique only in this respect)
-    parents = [Multiple(FibreTarget)]
-
-
-class CFG(Hierarchy):
-    parents = [ArmConfig]
-    factors = ['mode', 'binning']
+    identifier_builder = ['weavetarget', 'surveycatalogue', 'targid', 'targra', 'targdec']
 
 
 class InstrumentConfiguration(Hierarchy):
     factors = ['mode', 'binning']
-    parents = [Multiple(ArmConfig, 2, 2)]
+    parents = [Multiple(ArmConfig, 2, 2, idname='camera')]
+    identifier_builder = ['armconfigs', 'mode', 'binning']
 
 
 class ProgTemp(Hierarchy):
     parents = [InstrumentConfiguration]
     factors = ['length', 'exposure_code']
+    identifier_builder = ['instrumentconfiguration'] + factors
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -418,10 +516,18 @@ class ProgTemp(Hierarchy):
         return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
                    instrumentconfiguration=config)
 
+
+class FibreTarget(Hierarchy):
+    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
+               'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
+    parents = [Fibre, SurveyTarget]
+    identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
+
+
 class OBSpec(Hierarchy):
-    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
     factors = ['obtitle']
-    parents = [ObsTemp, FibreSet, ProgTemp]
+    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget, 0)]
+    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
 class OB(Hierarchy):
@@ -438,11 +544,11 @@ class Exposure(Hierarchy):
 class Run(Hierarchy):
     idname = 'runid'
     parents = [ArmConfig, Exposure]
-    indexer = 'armconfig'
 
 
 class Spectrum(Hierarchy):
     is_template = True
+    idname = 'hashid'
     products = ['flux', 'ivar', 'noss_flux', 'noss_ivar']
 
 
@@ -486,7 +592,7 @@ class L1SuperStackSpectrum(L1SpectrumRow):
 
 
 class L1SuperTargetSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[CFG, WeaveTarget]), CASU]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=[WeaveTarget]), CASU]
     version_on = ['l1singlespectra']
     factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']

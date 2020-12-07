@@ -9,7 +9,7 @@ deletion = graph.run('call apoc.periodic.iterate("MATCH (n) return n", "DETACH D
 assert np.all(deletion == 0)
 
 times = []
-xs = range(1, 50)
+xs = range(1, 200)
 for i in tqdm(xs):
     start = clock()
     query = """
@@ -18,7 +18,6 @@ for i in tqdm(xs):
     MERGE (obspec: OBSpec {xml: uniquetorun})
     MERGE (ob: OB {obid: uniquetorun})
     MERGE (obspec)-[:req]->(ob)
-    MERGE (obspec)<-[:req]-(fibreset: FibreSet)
     MERGE (arm)-[:req]->(obspec)
     
     MERGE (exposure:Exposure {expmjd: uniquetorun, otherthing: uniquetorun})
@@ -37,16 +36,15 @@ for i in tqdm(xs):
         MERGE (surveycatalogue)<-[:req]-(subprogramme)
 
         MERGE (w:WeaveTarget {cname: uniquei})
-        MERGE (s:SurveyTarget {targid: uniquei, ra: uniquei, dec: uniquei, otherthing: uniquei})<-[:req]-(surveycatalogue)
-        MERGE (w)-[:req]->(s)
+        MERGE (w)-[:req]->(s:SurveyTarget {targid: uniquei, ra: uniquei, dec: uniquei, otherthing: uniquei, o: 'a'})<-[:req]-(surveycatalogue)
         MERGE (f: Fibre {id: uniqueinloop})
-        MERGE (s)-[:req]->(ft:FibreTarget {fibrera: uniquei, fibredec: uniquei, status: uniquei, otherthing: uniqueinloop})<-[:req]-(f)
-        MERGE (ft)-[:req]->(fibreset)
+        MERGE (s)-[:req]->(ft:FibreTarget {fibrera: uniquei, fibredec: uniquei, status: uniquei, otherthing: uniqueinloop, b: 'b'})<-[:req]-(f)
+        MERGE (ft)-[:req]->(obspec)
         MERGE (ft)-[:req]->(spec:L1SingleSpectrum {checksum: uniquei, otherthing: uniquei})<-[:req]-(raw)
         
     
     """
-    graph.run(query, parameters={'a': i, 'length': 9000})
+    graph.run(query, parameters={'a': i, 'length': 1000})
     times.append(clock() - start)
 print(query)
 times = np.array(times)

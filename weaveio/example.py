@@ -1,8 +1,8 @@
 from .writequery import CypherData, unwind, collect, groupby
 
 
-def get_fibretargets():
-    srvyinfo = CypherData(df_svryinfo)
+def get_fibretargets(df_svryinfo, df_fibinfo):
+    srvyinfo = CypherData(df_svryinfo)   # surveys split inline
     fibinfo = CypherData(df_fibinfo)
     with unwind(srvyinfo) as svryrow:
         with unwind(svryrow['surveyname']) as surveyname:
@@ -11,21 +11,21 @@ def get_fibretargets():
         prog = SubProgramme(targprog=svryrow['targprog'], surveys=surveys)
         cat = SurveyCatalogue(catname=svryrow['targcat'], subprogramme=prog)
     cat_collection = collect(cat)
-    cats = groupby(cat_collection, 'catname')
+    cats = groupby(cat_collection, 'targcat')
     with unwind(fibinfo) as fibrow:
         cat = cats[fibrow['targcat']]
         weavetarget = WeaveTarget(cname=fibrow['cname'])
         surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
-        photometry = TargetPhotometry(surveytarget=surveytarget, tables=fibrow)
         fibre = Fibre(fibreid=fibrow['fibreid'])
-        fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre, targetphotometry=photometry)
-    fibretargets = collect(fibtarget)
+        fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre)
+    return collect(fibtarget)
 
 
 def add_raw():
     fibretargets = get_fibretargets()
-    fibreset = FibreSet(fibretargets=fibretargets)
-    obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, fibreset=fibreset, progtemp=progtemp)
+    obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
+    obspec.fibreset.attach(fibretargets=fibretargets)
+
     ob = OB(obid=obid, obstartmjd=mjd, obspec=obspec)
     exposure = Exposure(expmjd=expmjd, ob=ob)
     run = Run(runid=runid, exposure=exposure, armconfig=armconfig)

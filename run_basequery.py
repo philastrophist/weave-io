@@ -1,8 +1,11 @@
 from weaveio.data import OurData
+from weaveio.hierarchy import FibreTarget
 
-data = OurData('data', port=11002)
-
-data.plot_relations()
+data = OurData('data', port=7687)
+print(data.make_constraints_cypher())
+# data.drop_all_constraints()
+# data.apply_constraints()
+# data.plot_relations()
 # data.directory_to_neo4j('L1SingleFile')
 # data.validate()
 # thing = data.exposures.runs.exposures.runs[['1002814']]['runids', 'expmjd', 'cnames']
