@@ -10,7 +10,7 @@ from .utilities import Varname
 
 
 def hierarchy_query_decorator(function):
-    @wraps
+    @wraps(function)
     def inner(*args, **kwargs):
         args = [a.node if isinstance(a, Graphable) else a for a in args]
         kwargs = {k.node if isinstance(k, Graphable) else k: v.node if isinstance(v, Graphable) else v for k, v in kwargs}
