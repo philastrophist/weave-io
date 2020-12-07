@@ -361,11 +361,17 @@ class SetVersion(Statement):
 
     def to_cypher(self):
         matches = ', '.join([f'({p})-[:{r}]->(c:{self.childlabel})' for p, r in zip(self.parents, self.reltypes)])
-        return f'WITH * CALL {{ \n' \
-        f'WITH {self.child} OPTIONAL MATCH {matches} WHERE id(c) <> id({self.child}) \n' \
-        f'WITH {self.child}, max(c.version) as maxversion \n' \
-        f'SET {self.child}.version = coalesce({self.child}.version, maxversion + 1, 0) \n' \
-        f'RETURN {self.child.version} }}'
+        query = [
+            f"WITH * CALL {{",
+                f"\t WITH {','.join(map(str, self.parents))}, {self.child}",
+                f"\t OPTIONAL MATCH {matches}"
+                f"\t WHERE id(c) <> id({self.child})",
+                f"\t WITH {self.child}, max(c.version) as maxversion",
+                f"\t SET {self.child}.version = coalesce({self.child}.version, maxversion + 1, 0)",
+                f"\t RETURN {self.child.version}",
+            f"}}"
+        ]
+        return '\n'.join(query)
 
 
 
