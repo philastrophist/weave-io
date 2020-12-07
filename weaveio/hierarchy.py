@@ -5,9 +5,7 @@ from warnings import warn
 import networkx as nx
 from graphviz import Source
 
-from .config_tables import progtemp_config
-from .graph import Graph
-from .writequery import CypherQuery, Unwind, MergeNode, Collection, unwind, merge_node, collect, merge_relationship, merge_node_relationship, set_version
+from .writequery import CypherQuery, Unwind, Collection, unwind, merge_node, collect, merge_relationship, merge_node_relationship, set_version
 from .context import ContextError
 from .utilities import Varname
 
@@ -16,33 +14,6 @@ def chunker(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-def graph2pdf(graph, ftitle):
-    dot = nx.nx_pydot.to_pydot(graph)
-    dot.set_strict(False)
-    # dot.obj_dict['attributes']['splines'] = 'ortho'
-    dot.obj_dict['attributes']['nodesep'] = '0.5'
-    dot.obj_dict['attributes']['ranksep'] = '0.75'
-    dot.obj_dict['attributes']['overlap'] = False
-    dot.obj_dict['attributes']['penwidth'] = 18
-    dot.obj_dict['attributes']['concentrate'] = False
-    Source(dot).render(ftitle, cleanup=True, format='pdf')
-
-
-lightblue = '#69A3C3'
-lightgreen = '#71C2BF'
-red = '#D08D90'
-orange = '#DFC6A1'
-purple = '#a45fed'
-pink = '#d50af5'
-
-hierarchy_attrs = {'type': 'hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
-abstract_hierarchy_attrs = {'type': 'hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
-factor_attrs = {'type': 'factor', 'style': 'filled', 'fillcolor': orange, 'shape': 'box', 'edgecolor': orange}
-identity_attrs = {'type': 'id', 'style': 'filled', 'fillcolor': purple, 'shape': 'box', 'edgecolor': purple}
-product_attrs = {'type': 'factor', 'style': 'filled', 'fillcolor': pink, 'shape': 'box', 'edgecolor': pink}
-l1file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightblue, 'shape': 'box', 'edgecolor': lightblue}
-l2file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightgreen, 'shape': 'box', 'edgecolor': lightgreen}
-rawfile_attrs = l1file_attrs
 
 FORBIDDEN_LABELS = []
 FORBIDDEN_PROPERTY_NAMES = []
@@ -88,8 +59,10 @@ class GraphableMeta(type):
         if dct.get('plural_name', None) is None:
             dct['plural_name'] = name.lower() + 's'
         dct['singular_name'] = name.lower()
-        dct['plural_name'] = dct['plural_name'].lower()
-        dct['singular_name'] = dct['singular_name'].lower()
+        if dct['plural_name'] != dct['plural_name'].lower():
+            raise RuleBreakingException(f"plural_name must be lowercase")
+        if dct['singular_name'] != dct['singular_name'].lower():
+            raise RuleBreakingException(f"singular_name must be lowercase")
         idname = dct.get('idname', None)
         if idname in FORBIDDEN_IDNAMES:
             raise RuleBreakingException(f"You may not name an id as one of {FORBIDDEN_IDNAMES}")
@@ -135,8 +108,12 @@ class GraphableMeta(type):
             if nparents_in_id > 2:
                 raise RuleBreakingException(f"Cannot create an id using more than 2 parents")
         for i in cls.version_on:
-            if i not in [p.singular_name for p in cls.parents]:
-                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must be a singular parent")
+            if i not in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
+                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must refer to a parent")
+        if not cls.is_template:
+            if not (len(cls.indexes) or cls.idname or
+                    (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
+                raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
         super().__init__(name, bases, dct)
 
 
@@ -153,7 +130,7 @@ class Graphable(metaclass=GraphableMeta):
     factors = []
     data = None
     query = None
-    is_template = False
+    is_template = True
     products = []
     indexes = []
     identifier_builder = None
@@ -261,7 +238,6 @@ class Graphable(metaclass=GraphableMeta):
         if len(version_parents):
             set_version(version_parents, ['is_required_by']*len(version_parents), self.node, self.neotypes[-1])
 
-
     @classmethod
     def has_factor_identity(cls):
         if cls.identifier_builder is None:
@@ -321,6 +297,7 @@ class Graphable(metaclass=GraphableMeta):
 class Hierarchy(Graphable):
     parents = []
     factors = []
+    is_template = True
 
     def generate_identifier(self):
         """
@@ -360,7 +337,7 @@ class Hierarchy(Graphable):
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
-        parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
+        parents = {p.singular_name if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
@@ -410,224 +387,3 @@ class Hierarchy(Graphable):
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
 
-
-class Author(Hierarchy):
-    is_template = True
-
-
-class CASU(Author):
-    idname = 'version'
-
-
-class APS(Author):
-    idname = 'version'
-
-
-class Simulator(Author):
-    idname = 'version'
-    factors = ['simvdate', 'simver', 'simmode']
-
-
-class System(Author):
-    idname = 'version'
-
-
-class ArmConfig(Hierarchy):
-    factors = ['resolution', 'vph', 'camera', 'colour']
-    identifier_builder = ['resolution', 'vph', 'camera']
-
-    def __init__(self, tables=None, **kwargs):
-        if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
-            kwargs['colour'] = 'green'
-        else:
-            kwargs['colour'] = kwargs['camera']
-        super().__init__(tables, **kwargs)
-
-    @classmethod
-    def from_progtemp_code(cls, progtemp_code):
-        config = progtemp_config.loc[progtemp_code[0]]
-        red = cls(resolution=str(config.resolution), vph=int(config.red_vph), camera='red')
-        blue = cls(resolution=str(config.resolution), vph=int(config.blue_vph), camera='blue')
-        return red, blue
-
-
-class ObsTemp(Hierarchy):
-    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
-    identifier_builder = factors
-
-    @classmethod
-    def from_header(cls, header):
-        names = [f.lower() for f in cls.factors]
-        obstemp_code = list(header['OBSTEMP'])
-        return cls(**{n: v for v, n in zip(obstemp_code, names)})
-
-
-class Survey(Hierarchy):
-    idname = 'surveyname'
-
-
-class WeaveTarget(Hierarchy):
-    idname = 'cname'
-
-
-class Fibre(Hierarchy):
-    idname = 'fibreid'
-
-
-class SubProgramme(Hierarchy):
-    parents = [Multiple(Survey)]
-    idname = 'targprog'
-
-
-class SurveyCatalogue(Hierarchy):
-    parents = [SubProgramme]
-    idname = 'targcat'
-
-
-class SurveyTarget(Hierarchy):
-    parents = [SurveyCatalogue, WeaveTarget]
-    factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch',
-               'targpmra', 'targpmdec', 'targparal', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
-               'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
-    identifier_builder = ['weavetarget', 'surveycatalogue', 'targid', 'targra', 'targdec']
-
-
-class InstrumentConfiguration(Hierarchy):
-    factors = ['mode', 'binning']
-    parents = [Multiple(ArmConfig, 2, 2, idname='camera')]
-    identifier_builder = ['armconfigs', 'mode', 'binning']
-
-
-class ProgTemp(Hierarchy):
-    parents = [InstrumentConfiguration]
-    factors = ['length', 'exposure_code']
-    identifier_builder = ['instrumentconfiguration'] + factors
-
-    @classmethod
-    def from_progtemp_code(cls, progtemp_code):
-        progtemp_code = progtemp_code.split('.')[0]
-        progtemp_code_list = list(map(int, progtemp_code))
-        configs = ArmConfig.from_progtemp_code(progtemp_code_list)
-        mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
-        binning = progtemp_code_list[3]
-        config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
-        exposure_code = progtemp_code[2:4]
-        length = progtemp_code_list[1]
-        return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
-                   instrumentconfiguration=config)
-
-
-class FibreTarget(Hierarchy):
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
-               'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-
-
-class OBSpec(Hierarchy):
-    factors = ['obtitle']
-    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget, 0)]
-    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
-
-
-class OB(Hierarchy):
-    idname = 'obid'  # This is globally unique by obid
-    factors = ['obstartmjd']
-    parents = [OBSpec]
-
-
-class Exposure(Hierarchy):
-    idname = 'expmjd'  # globally unique
-    parents = [OB]
-
-
-class Run(Hierarchy):
-    idname = 'runid'
-    parents = [ArmConfig, Exposure]
-
-
-class Spectrum(Hierarchy):
-    is_template = True
-    idname = 'hashid'
-    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar']
-
-
-class RawSpectrum(Spectrum):
-    parents = [Run, CASU, Simulator, System]
-    products = Spectrum.products + ['guideinfo', 'metinfo']
-    version_on = ['run']
-    # any duplicates under a run will be versioned based on their appearance in the database
-    # only one raw per run essentially
-
-
-class L1SpectrumRow(Spectrum):
-    is_template = True
-
-
-class L1SingleSpectrum(L1SpectrumRow):
-    parents = [RawSpectrum, FibreTarget, CASU]
-    version_on = ['rawspectrum', 'fibretarget']
-    factors = [
-        'nspec', 'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
-        'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
-        'skyline_off1', 'skyline_rms1', 'skyline_off2', 'skyline_rms2',
-        'sky_shift', 'sky_scale', 'exptime', 'snr',
-        'meanflux_g', 'meanflux_r', 'meanflux_i',
-        'meanflux_gg', 'meanflux_bp', 'meanflux_rp'
-               ]
-
-
-class L1StackSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OB, ArmConfig, FibreTarget]), CASU]
-    version_on = ['l1singlespectra']
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
-               'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-
-
-class L1SuperStackSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[OBSpec, ArmConfig, FibreTarget]), CASU]
-    version_on = ['l1singlespectra']
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
-               'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-
-
-class L1SuperTargetSpectrum(L1SpectrumRow):
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=[WeaveTarget]), CASU]
-    version_on = ['l1singlespectra']
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
-               'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-
-
-class L2(Hierarchy):
-    is_template = True
-
-
-class L2RowHDU(L2):
-    is_template = True
-    parents = [Multiple(L1SpectrumRow, 2, 3), APS]
-    products = []
-    version_on = ['l1spectrumrows']
-
-#
-# class Classifications(L2RowHDU):
-#     pass
-#
-#
-# class Star(L2RowHDU):
-#     pass
-#
-#
-# class Galaxy(L2RowHDU):
-#     pass
-#
-#
-# class L2Spectrum(L2RowHDU):
-#     is_template = True
-#
-#
-# class ClassificationModelSpectrum(L2Spectrum):
-#     pass
-#
-#
-# class StellarModelSpectrum(L2Spectrum):
-#     pass

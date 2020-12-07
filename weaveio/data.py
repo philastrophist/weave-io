@@ -18,7 +18,8 @@ from weaveio.basequery.hierarchy import HeterogeneousHierarchyFrozenQuery
 from weaveio.graph import Graph
 from weaveio.writequery import Unwind
 from weaveio.hierarchy import Multiple
-from weaveio.file import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile, L2File, File, L2SuperTargetFile
+from weaveio.file import File
+from weaveio.opr3.file import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile, L2File, L2SuperTargetFile
 from weaveio.queries import BasicQuery, HeterogeneousHierarchy
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "

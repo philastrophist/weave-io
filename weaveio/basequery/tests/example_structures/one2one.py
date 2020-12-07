@@ -10,16 +10,16 @@ File1<-HierarchyA<-HierarchyB<-Multiple(HierarchyC)
 """
 
 class HierarchyF(Hierarchy):
-    factors =['f_factor_a']
-
+    factors = ['f_factor_a']
+    indexes = factors
 
 class HierarchyD(Hierarchy):
     factors = ['shared_factor_name']
-
+    indexes = factors
 
 class HierarchyC(Hierarchy):
     factors = ['c_factor_a', 'c_factor_b', 'shared_factor_name']
-
+    indexes = factors
 
 class HierarchyB(Hierarchy):
     parents = [Multiple(HierarchyC, 2, 2), HierarchyD]
@@ -50,5 +50,5 @@ class File1(File):
         return directory.glob('*.fits')
 
 
-class MyData(Data):
+class MyDataOne2One(Data):
     filetypes = [File1]

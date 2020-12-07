@@ -1,5 +1,5 @@
 from weaveio.data import OurData
-from weaveio.hierarchy import FibreTarget
+from weaveio.opr3.hierarchy import FibreTarget
 
 data = OurData('data', port=7687)
 print(data.make_constraints_cypher())
