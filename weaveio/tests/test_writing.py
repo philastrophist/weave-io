@@ -63,14 +63,14 @@ def test_merge_many2one_with_mixture():
     assert cypher == expected
 
 
-def test_merge_many2one_with_mixture_run(procedure_tag, database):
+def test_merge_many2one_with_mixture_run(procedure_tag, write_database):
     with CypherQuery() as query:
         parent1 = merge_node(labels=['A', 'B'], properties={'a': 1})
         parent2 = merge_node(labels=['A', 'B', 'other'], properties={'a': 2})
         child = merge_node(['C'], {'p': 1}, parents={parent1: 'req1', parent2: 'req2'}, versioned_labels=['other'])
     cypher = query.render_query(procedure_tag)[0]
-    database.neograph.run(cypher)
-    result = database.neograph.run('MATCH (n: C) MATCH (p: A)-[]->(n) WITH n, collect(p.a) as a return n.p, a').to_table()
+    write_database.neograph.run(cypher)
+    result = write_database.neograph.run('MATCH (n: C) MATCH (p: A)-[]->(n) WITH n, collect(p.a) as a return n.p, a').to_table()
     assert len(result) == 1
     row = result[0]
     assert row[0] == 1
@@ -235,7 +235,7 @@ def test_accessing_unwound_variable_after_unwinding_is_not_allowed():
             groupby(ds, 'property')
 
 
-def test_groupby_makes_dict(procedure_tag, database):
+def test_groupby_makes_dict(procedure_tag, write_database):
     with CypherQuery() as query:
         data = CypherData(['1', '2', '3'], 'mydata')
         merge_node(['B'], {'b': 1})
@@ -245,7 +245,7 @@ def test_groupby_makes_dict(procedure_tag, database):
         nodedict = groupby(nodes, 'a')
     query.returns(nodedict['1'].a, nodedict['2'].a, nodedict['3'].a, nodedict['0'].a)
     cypher, parameters = query.render_query(procedure_tag)
-    result = database.neograph.run(cypher, parameters=parameters).to_table()
+    result = write_database.neograph.run(cypher, parameters=parameters).to_table()
     assert result[0] == ('1', '2', '3', None)
 
 
@@ -260,7 +260,7 @@ def test_groupby_fails_if_input_is_not_collection():
 
 
 @pytest.fixture(scope='class')
-def bigquery(database, procedure_tag):
+def bigquery(write_database, procedure_tag):
     with CypherQuery() as query:
         checksums = CypherData(list(range(10)),'checksums')
         runids = CypherData(['runid1', 'runid2', 'runid3'], 'runids')
@@ -280,8 +280,8 @@ def bigquery(database, procedure_tag):
         raw = match_node(['raw'], {}, parents={run: 'req'})
         merge_node(['rawfile'], {'fname': 'rawfname'}, parents={raw: 'req'})
     cypher, data = query.render_query(procedure_tag)
-    database.neograph.run(cypher, parameters=data)
-    return cypher, data, database
+    write_database.neograph.run(cypher, parameters=data)
+    return cypher, data, write_database
 
 
 @pytest.mark.usefixtures("bigquery")  # careful, there seems to be a bug with pytest and this database is not separate!
@@ -366,7 +366,7 @@ def test_merge_node_relationship_with_two():
                                 ])
 
 
-def test_versioning(database):
+def test_versioning(write_database):
     with CypherQuery() as query:
         a = merge_node(['a'], {})
         b = merge_node(['b'], {})
@@ -380,8 +380,8 @@ def test_versioning(database):
                                                             (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c2dupl)
     cypher = query.render_query()[0]
-    database.neograph.run(cypher)
-    results = database.neograph.run('MATCH (c:C) return c.prop, c.version ORDER BY c.version').to_table()
+    write_database.neograph.run(cypher)
+    results = write_database.neograph.run('MATCH (c:C) return c.prop, c.version ORDER BY c.version').to_table()
     assert results[0] == ('c1', 0)
     assert results[1] == ('c2', 1)
     assert len(results) == 2

@@ -13,8 +13,8 @@ def procedure_tag():
     return str(hash(datetime.now())).replace('-', '')[:5]
 
 
-@pytest.fixture(scope='module')
-def database(procedure_tag) -> py2neo.Graph:
+@pytest.fixture(scope='class')
+def write_database(procedure_tag) -> py2neo.Graph:
     try:
         graph = Graph(port=7687, host='host.docker.internal')
         assert graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"
