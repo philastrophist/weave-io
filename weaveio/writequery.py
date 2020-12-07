@@ -27,9 +27,16 @@ class CypherQuery(metaclass=ContextMeta):
     def accessible_variables(self):
         return [v for context in self.open_contexts[::-1] for v in context] + [i for i in self.data]
 
+    def is_accessible(self, variable):
+        if variable in self.accessible_variables:
+            return True
+        if hasattr(variable, 'parent'):
+            return self.is_accessible(variable.parent)
+        return False
+
     def add_statement(self, statement):
         for v in statement.input_variables:
-            if v not in self.accessible_variables:
+            if not self.is_accessible(v):
                 raise ValueError(f"{v} is not accessible is this context. Have you left a WITH context?")
         self.statements.append(statement)
         self.current_context.extend(statement.output_variables)
@@ -108,7 +115,7 @@ class TimeStamp(Statement):
 
 class CypherVariable:
     def __init__(self, namehint=None):
-        self.namehint = namehint
+        self.namehint = 'variable' if namehint is None else namehint
         self._name = None
 
     @property
@@ -119,9 +126,6 @@ class CypherVariable:
         if self.name is None:
             return super(CypherVariable, self).__repr__()
         return self.name
-
-    def __getattr__(self, item):
-        return CypherVariableAttribute(self, item)
 
     def __getitem__(self, item):
         return CypherVariableItem(self, item)
@@ -216,9 +220,35 @@ class Collect(Statement):
         del self.input_variables[i]
 
 
+class NodeMap(CypherVariable):
+    def __getitem__(self, item):
+        query = CypherQuery.get_context()  # type: CypherQuery
+        statement = GetItemStatement(self, item)
+        query.add_statement(statement)
+        return statement.out
+
+
+class GetItemStatement(Statement):
+    def __init__(self, mapping, item):
+        self.mapping = mapping
+        self.item = item
+        ins = [mapping]
+        if isinstance(item, CypherVariable):
+            ins.append(item)
+        self.out = CypherVariable(mapping.namehint + '_' +item.namehint)
+        super(GetItemStatement, self).__init__(ins, [self.out])
+
+    def to_cypher(self):
+        if isinstance(self.item, CypherVariable):
+            item = f'{self.item}'
+        else:
+            item = f"'{self.item}'"
+        return f'WITH *, {self.mapping}[{item}] as {self.out}'
+
+
 class GroupBy(Statement):
     def __init__(self, nodelist, propertyname):
-        super(GroupBy, self).__init__([nodelist], [CypherVariable(propertyname+'_dict')])
+        super(GroupBy, self).__init__([nodelist], [NodeMap(propertyname+'_dict')])
         self.propertyname = propertyname
 
     def to_cypher(self):
@@ -367,8 +397,8 @@ class SetVersion(Statement):
                 f"\t OPTIONAL MATCH {matches}"
                 f"\t WHERE id(c) <> id({self.child})",
                 f"\t WITH {self.child}, max(c.version) as maxversion",
-                f"\t SET {self.child}.version = coalesce({self.child}.version, maxversion + 1, 0)",
-                f"\t RETURN {self.child.version}",
+                f"\t SET {self.child}.version = coalesce({self.child}['version'], maxversion + 1, 0)",
+                f"\t RETURN {self.child['version']}",
             f"}}"
         ]
         return '\n'.join(query)

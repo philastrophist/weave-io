@@ -24,7 +24,7 @@ def data_one2one(workdir):
 @pytest.fixture(scope='module')
 def database_one2one(workdir):
     try:
-        data = MyDataOne2One(workdir, port=7687)
+        data = MyDataOne2One(workdir, port=7687, write=True)
         assert data.graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"
         data.graph.neograph.run('MATCH (n) DETACH DELETE n')
         data.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')

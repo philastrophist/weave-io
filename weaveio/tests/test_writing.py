@@ -77,14 +77,6 @@ def test_merge_many2one_with_mixture_run(procedure_tag, write_database):
     assert row[1] == [1, 2]
 
 
-def test_getattribute():
-    with CypherQuery() as query:
-        parent1 = merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2})
-    query.returns(parent1.a, parent1.b)
-    cypher = query.render_query()[0]
-    assert cypher.split('\n')[-1] == 'RETURN b0.a, b0.b'
-
-
 def test_getitem():
     with CypherQuery() as query:
         parent1 = merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2})
@@ -243,7 +235,7 @@ def test_groupby_makes_dict(procedure_tag, write_database):
             node = merge_node(['A'], {'a': number})
         nodes = collect(node)
         nodedict = groupby(nodes, 'a')
-    query.returns(nodedict['1'].a, nodedict['2'].a, nodedict['3'].a, nodedict['0'].a)
+    query.returns(nodedict['1'].a, nodedict['2']['a'], nodedict['3']['a'], nodedict['0']['a'])
     cypher, parameters = query.render_query(procedure_tag)
     result = write_database.neograph.run(cypher, parameters=parameters).to_table()
     assert result[0] == ('1', '2', '3', None)

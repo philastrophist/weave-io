@@ -39,15 +39,16 @@ class HeaderFibinfoFile(File):
         header = fits.open(self.fname)[self.hdus.index(product_name)].header
         return tuple(header[c] for c in self.concatenation_constant_names[product_name])
 
+    @classmethod
     def make_fibretargets(cls, df_svryinfo, df_fibinfo):
         srvyinfo = CypherData(df_svryinfo)  # surveys split inline
         fibinfo = CypherData(df_fibinfo)
         with unwind(srvyinfo) as svryrow:
-            with unwind(svryrow['surveyname']) as surveyname:
+            with unwind(svryrow['targsrvy']) as surveyname:
                 survey = Survey(surveyname=surveyname)
             surveys = collect(survey)
             prog = SubProgramme(targprog=svryrow['targprog'], surveys=surveys)
-            cat = SurveyCatalogue(catname=svryrow['targcat'], subprogramme=prog)
+            cat = SurveyCatalogue(targcat=svryrow['targcat'], subprogramme=prog)
         cat_collection = collect(cat)
         cats = groupby(cat_collection, 'targcat')
         with unwind(fibinfo) as fibrow:
@@ -55,51 +56,18 @@ class HeaderFibinfoFile(File):
             weavetarget = WeaveTarget(cname=fibrow['cname'])
             surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
             fibre = Fibre(fibreid=fibrow['fibreid'])
-            fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre)
+            fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre, tables=fibrow)
         return collect(fibtarget)
 
     @classmethod
-    def make_surveys(cls, fullpath) -> None:
-        """
-        A target belongs to a Catalogue which belongs to a SubProgramme which is made by joining surveys
-        """
-        fibtable = AstropyTable(fits.open(fullpath)[cls.fibinfo_i].data).to_pandas()
-        surveys = {s for slist in fibtable['TARGSRVY'].tolist() for s in slist.strip().split(',')}
-        surveys = {s: Survey(surveyname=s) for s in surveys}  # first get unique surveys by name
-        # then unique programmes by surveys
-        progs = defaultdict(set)
-        for _, row in fibtable[['TARGSRVY', 'TARGPROG']].drop_duplicates().iterrows():
-            srvys = row['TARGSRVY'].strip().split(',')
-            progs[srvys] &= row['TARGPROG'].strip()
-        programmes = {}
-        for srvys, progset in progs.items():
-            for prog in progset:
-                programmes[prog] = SubProgramme(targprog=prog, surveys=[surveys[s] for s in srvys])
-        # then catalogues by subprogramme
-        cats = defaultdict(set)
-        for _, row in fibtable[['TARGPROG', 'TARGCAT']].drop_duplicates().iterrows():
-            cats[row['TARGPROG'].strip()] &= row['TARGCAT'].strip()
-
-        for progname, catlist in cats.items():
-            for cat in catlist:
-               SurveyCatalogue(subprogramme=programmes[progname], targcat=cat)
+    def read_fibinfo_dataframe(cls, fname):
+        fibinfo = AstropyTable(fits.open(fname)[cls.fibinfo_i].data).to_pandas().sort_values('FIBREID')
+        fibinfo.columns = [i.lower() for i in fibinfo.columns]
+        return fibinfo
 
     @classmethod
-    def each_fibretarget(cls, row):
-        weavetarget = WeaveTarget(cname=row['cname'])
-        with unwind(row['targsrvy'].split(',')) as srvys:
-            surveys = Survey(surveyname=srvys)
-        prog = SubProgramme(targprog=row['targprog'], surveys=surveys)
-        catalogues = SurveyCatalogue(targcat=row['targcat'], subprogramme=prog)
-        surveytargets = SurveyTarget(tables=row, surveycatalogue=catalogues, weavetarget=weavetarget)
-        fibres = Fibre(fibreid=row['fibreid'])
-        fibretarget = FibreTarget(fibre=fibres, surveytarget=surveytargets, tables=row)
-        return fibretarget
-
-    @classmethod
-    def each_fibinfo_row(cls, fname):
-        fibinfo = AstropyTable(fits.open(fname)[cls.fibinfo_i].data).to_pandas()
-        return Graph.get_context().add_table(fibinfo, index='fibreid')
+    def read_surveyinfo(cls, df_fibinfo):
+        return df_fibinfo[['targsrvy', 'targprog', 'targcat']].drop_duplicates()
 
     @classmethod
     def read_hierarchy(cls, directory: Path, fname: Path):

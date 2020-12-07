@@ -4,16 +4,25 @@ from typing import Tuple, Dict, Type, Union, List
 from warnings import warn
 
 from . import writequery
-from .writequery import CypherQuery, Unwind, Collection
+from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
 from .utilities import Varname
 
+def _convert_types_to_node(x):
+    if isinstance(x, dict):
+        return {_convert_types_to_node(k): _convert_types_to_node(v) for k, v in x.items()}
+    elif isinstance(x, (list, set, tuple)):
+        return x.__class__([_convert_types_to_node(i) for i in x])
+    elif isinstance(x, Graphable):
+        return x.node
+    else:
+        return x
 
 def hierarchy_query_decorator(function):
     @wraps(function)
     def inner(*args, **kwargs):
-        args = [a.node if isinstance(a, Graphable) else a for a in args]
-        kwargs = {k.node if isinstance(k, Graphable) else k: v.node if isinstance(v, Graphable) else v for k, v in kwargs}
+        args = _convert_types_to_node(args)
+        kwargs = _convert_types_to_node(kwargs)
         return function(*args, **kwargs)
     return inner
 
@@ -152,6 +161,15 @@ class Graphable(metaclass=GraphableMeta):
     identifier_builder = None
     version_on = []
 
+    @property
+    def node(self):
+        return self._node
+
+    @node.setter
+    def node(self, value):
+        assert isinstance(value, CypherVariable)
+        self._node = value
+
     @classmethod
     def requirement_names(cls):
         l = []
@@ -219,16 +237,16 @@ class Graphable(metaclass=GraphableMeta):
                 if isinstance(parent_list, Collection):
                     with unwind(parent_list, enumerated=True) as (parent, i):
                         props = {'order': i}
-                        merge_relationship(parent.node, child, type, props)
-                    parent_list = collect(parent.node)
+                        merge_relationship(parent, child, type, props)
+                    parent_list = collect(parent)
                     if k in self.version_on:
                         raise RuleBreakingException(f"Cannot version on a collection of nodes")
                 else:
                     for parent in parent_list:
                         props = {'order': 0}
-                        merge_relationship(parent.node, child, type, props)
+                        merge_relationship(parent, child, type, props)
                         if k in self.version_on:
-                            version_parents.append(parent.node)
+                            version_parents.append(parent)
         elif merge_strategy == 'NODE+RELATIONSHIP':
             parentnames = [p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
             parents = []
@@ -237,9 +255,9 @@ class Graphable(metaclass=GraphableMeta):
                 if isinstance(parent_list, Collection):
                     raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
                 if k in parentnames and k in self.identifier_builder:
-                    parents += [p.node for p in parent_list]
+                    parents += [p for p in parent_list]
                 else:
-                    others += [(i, p.node) for i, p in enumerate(parent_list)]
+                    others += [(i, p) for i, p in enumerate(parent_list)]
                 if k in self.version_on:
                     version_parents += parent_list
             reltype = 'is_required_by'
@@ -313,37 +331,6 @@ class Hierarchy(Graphable):
     factors = []
     is_template = True
 
-    def generate_identifier(self):
-        """
-        if `idname` is set, then return the identifier set at instantiation
-        otherwise, make an identifier by stitching together identifiers of its input
-        """
-        if self.identifier is not None:
-            return self.identifier
-        elif len(self.identifier_builder):
-            strings = []
-            identifiers = []
-            for i in self.identifier_builder:
-                obj = getattr(self, i)  # type: Union[List[Union[Hierarchy, str]], Hierarchy, str]
-                if not isinstance(obj, (list, tuple)):
-                    obj = [obj]
-                for o in obj:
-                    if isinstance(o, Hierarchy):
-                        identifiers.append(o.identifier)
-                    else:
-                        identifiers.append(o)
-            for i in identifiers:
-                if isinstance(i, (Unwind, Varname)):
-                    s = str(i)
-                    strings += ['+', s, '+']
-                else:
-                    s = str(i)
-                    strings.append(f"+'{s}'+")
-            final = ''.join(strings).strip('+').replace('++', '+').replace("''", "")
-            return Varname(final)
-        else:
-            return None
-
     def __repr__(self):
         return self.name
 
@@ -373,8 +360,7 @@ class Hierarchy(Graphable):
         for k, v in self.specification.items():
             if k not in kwargs:
                 if tables is not None:
-                    if k in tables:
-                        kwargs[k] = tables[k]
+                    kwargs[k] = tables[k]
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
@@ -396,7 +382,6 @@ class Hierarchy(Graphable):
         if self.identifier_builder is not None:
             if self.identifier is not None:
                 raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
-            self.identifier = self.generate_identifier()
         if self.idname is not None:
             setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"

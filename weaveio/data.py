@@ -83,7 +83,7 @@ class Data:
         self.handler = Handler(self)
         self.host = host
         self.port = port
-        self.write = write
+        self.write_allowed = write
         self._graph = None
         self.filelists = {}
         self.rootdir = Path(rootdir)
@@ -117,6 +117,11 @@ class Data:
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
         self.make_relation_graph()
+
+    def write(self):
+        if self.write_allowed:
+            return self.graph.write()
+        raise IOError(f"You have not allowed write operations in this instance of data (write=False)")
 
     def is_unique_factor(self, name):
         return len(self.factor_hierarchies[name]) == 1
@@ -195,7 +200,7 @@ class Data:
                     skipped += 1
                     continue
                 try:
-                    with self.graph.write() as query:
+                    with self.write() as query:
                         filetype.read(self.rootdir, file.relative_to(self.rootdir))
                     cypher, parameters = query.render_query()
                     self.graph.neograph.run(cypher, parameters=parameters)
