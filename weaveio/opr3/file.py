@@ -5,13 +5,16 @@ from typing import Tuple
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
 
-import weaveio.writequery
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple
+from weaveio.hierarchy import Multiple, unwind, collect
 from weaveio.oldproduct import Header, Array, Table
-from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, OBSpec, OB, Exposure, Run, L1SingleSpectrum, RawSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum
+from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
+    WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp,\
+    OBSpec, OB, Exposure, Run, L1SingleSpectrum, RawSpectrum, L1StackSpectrum, \
+    L1SuperStackSpectrum, L1SuperTargetSpectrum
+from weaveio.writequery import groupby, CypherData
 
 
 class HeaderFibinfoFile(File):
@@ -35,6 +38,25 @@ class HeaderFibinfoFile(File):
     def read_concatenation_constants(self, product_name) -> Tuple:
         header = fits.open(self.fname)[self.hdus.index(product_name)].header
         return tuple(header[c] for c in self.concatenation_constant_names[product_name])
+
+    def make_fibretargets(cls, df_svryinfo, df_fibinfo):
+        srvyinfo = CypherData(df_svryinfo)  # surveys split inline
+        fibinfo = CypherData(df_fibinfo)
+        with unwind(srvyinfo) as svryrow:
+            with unwind(svryrow['surveyname']) as surveyname:
+                survey = Survey(surveyname=surveyname)
+            surveys = collect(survey)
+            prog = SubProgramme(targprog=svryrow['targprog'], surveys=surveys)
+            cat = SurveyCatalogue(catname=svryrow['targcat'], subprogramme=prog)
+        cat_collection = collect(cat)
+        cats = groupby(cat_collection, 'targcat')
+        with unwind(fibinfo) as fibrow:
+            cat = cats[fibrow['targcat']]
+            weavetarget = WeaveTarget(cname=fibrow['cname'])
+            surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
+            fibre = Fibre(fibreid=fibrow['fibreid'])
+            fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre)
+        return collect(fibtarget)
 
     @classmethod
     def make_surveys(cls, fullpath) -> None:
@@ -65,7 +87,7 @@ class HeaderFibinfoFile(File):
     @classmethod
     def each_fibretarget(cls, row):
         weavetarget = WeaveTarget(cname=row['cname'])
-        with weaveio.writequery.unwind(row['targsrvy'].split(',')) as srvys:
+        with unwind(row['targsrvy'].split(',')) as srvys:
             surveys = Survey(surveyname=srvys)
         prog = SubProgramme(targprog=row['targprog'], surveys=surveys)
         catalogues = SurveyCatalogue(targcat=row['targcat'], subprogramme=prog)
@@ -83,7 +105,7 @@ class HeaderFibinfoFile(File):
     def read_hierarchy(cls, directory: Path, fname: Path):
         fullpath = directory / fname
         header = fits.open(fullpath)[0].header
-        runid = str(header['RUN'])
+        runid = int(header['RUN'])
         camera = str(header['CAMERA'].lower()[len('WEAVE'):])
         expmjd = str(header['MJD-OBS'])
         res = str(header['VPH']).rstrip('123')

@@ -179,13 +179,21 @@ class Data:
     def drop_all_constraints(self):
         self.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
 
+    def get_extant_files(self):
+        return self.graph.execute("MATCH (f:File) RETURN DISTINCT f.fname").to_series(dtype=str).values.tolist()
+
     def directory_to_neo4j(self, *filetype_names):
+        extant_fnames = self.get_extant_files()
         for filetype in self.filetypes:
             self.filelists[filetype] = self.rootdir.rglob(filetype.match_pattern)
         for filetype, files in self.filelists.items():
+            skipped = 0
             if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
                 continue
             for file in tqdm(files, desc=filetype.__name__):
+                if file in extant_fnames:
+                    skipped += 1
+                    continue
                 try:
                     with self.graph.write() as query:
                         filetype.read(self.rootdir, file.relative_to(self.rootdir))
@@ -194,7 +202,7 @@ class Data:
                 except py2neo.database.work.ClientError as e:
                     logging.exception('ClientError:', exc_info=True)
                     raise e
-
+            print(f'Skipped {skipped} files')
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]

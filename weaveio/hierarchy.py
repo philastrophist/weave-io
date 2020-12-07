@@ -1,13 +1,29 @@
 import inspect
+from functools import wraps
 from typing import Tuple, Dict, Type, Union, List
 from warnings import warn
 
-import networkx as nx
-from graphviz import Source
-
-from .writequery import CypherQuery, Unwind, Collection, unwind, merge_node, collect, merge_relationship, merge_node_relationship, set_version
+from . import writequery
+from .writequery import CypherQuery, Unwind, Collection
 from .context import ContextError
 from .utilities import Varname
+
+
+def hierarchy_query_decorator(function):
+    @wraps
+    def inner(*args, **kwargs):
+        args = [a.node if isinstance(a, Graphable) else a for a in args]
+        kwargs = {k.node if isinstance(k, Graphable) else k: v.node if isinstance(v, Graphable) else v for k, v in kwargs}
+        return function(*args, **kwargs)
+    return inner
+
+
+unwind = hierarchy_query_decorator(writequery.unwind)
+merge_node = hierarchy_query_decorator(writequery.merge_node)
+collect = hierarchy_query_decorator(writequery.collect)
+merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
+merge_node_relationship = hierarchy_query_decorator(writequery.merge_node_relationship)
+set_version = hierarchy_query_decorator(writequery.set_version)
 
 
 def chunker(lst, n):
@@ -234,7 +250,7 @@ class Graphable(metaclass=GraphableMeta):
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
-            set_version(version_parents, ['is_required_by']*len(version_parents), self.node, self.neotypes[-1])
+            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child)
 
     @classmethod
     def has_factor_identity(cls):
@@ -385,4 +401,5 @@ class Hierarchy(Graphable):
             setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
+
 

@@ -34,6 +34,7 @@ class HierarchyA(Hierarchy):
     parents = [HierarchyB, Multiple(HierarchyF, 1, 3)]
     factors = ['a_factor_a', 'a_factor_b']
     idname = 'id'
+    version_on = ['hierarchyb']
 
 
 class File1(File):

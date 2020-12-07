@@ -34,7 +34,13 @@ class Graph(metaclass=ContextMeta):
         return CypherQuery()
 
     def execute(self, cypher, **payload):
-        return self.neograph.run(cypher, parameters=payload)
+        import pandas as pd
+        d = {}
+        for k, v in payload.items():
+            if isinstance(v, (pd.DataFrame, pd.Series)):
+                v = pd.DataFrame(v).reset_index().to_dict('records')
+            d[k] = v
+        return self.neograph.run(cypher, parameters=d)
 
 Graph._context_class = Graph
 
