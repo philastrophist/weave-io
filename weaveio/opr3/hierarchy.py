@@ -7,20 +7,20 @@ class Author(Hierarchy):
 
 
 class CASU(Author):
-    idname = 'version'
+    idname = 'casuid'
 
 
 class APS(Author):
-    idname = 'version'
+    idname = 'apsid'
 
 
 class Simulator(Author):
-    idname = 'version'
     factors = ['simvdate', 'simver', 'simmode']
+    identifier_builder = factors
 
 
 class System(Author):
-    idname = 'version'
+    idname = 'sysver'
 
 
 class ArmConfig(Hierarchy):
@@ -43,14 +43,14 @@ class ArmConfig(Hierarchy):
 
 
 class ObsTemp(Hierarchy):
-    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
-    identifier_builder = factors
+    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky', 'code']
+    identifier_builder = factors[:-1]
 
     @classmethod
     def from_header(cls, header):
-        names = [f.lower() for f in cls.factors]
+        names = [f.lower() for f in cls.factors[:-1]]
         obstemp_code = list(header['OBSTEMP'])
-        return cls(**{n: v for v, n in zip(obstemp_code, names)})
+        return cls(**{n: v for v, n in zip(obstemp_code, names)}, code=header['OBSTEMP'])
 
 
 class Survey(Hierarchy):
@@ -91,7 +91,7 @@ class InstrumentConfiguration(Hierarchy):
 
 class ProgTemp(Hierarchy):
     parents = [InstrumentConfiguration]
-    factors = ['length', 'exposure_code']
+    factors = ['length', 'exposure_code', 'code']
     identifier_builder = ['instrumentconfiguration'] + factors
 
     @classmethod
@@ -104,7 +104,7 @@ class ProgTemp(Hierarchy):
         config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
         exposure_code = progtemp_code[2:4]
         length = progtemp_code_list[1]
-        return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
+        return cls(code=progtemp_code, length=length, exposure_code=exposure_code,
                    instrumentconfiguration=config)
 
 
@@ -137,18 +137,34 @@ class Run(Hierarchy):
     parents = [ArmConfig, Exposure]
 
 
+class Observation(Hierarchy):
+    parents = [Run, CASU, Simulator, System]
+    factors = ['seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
+    products = ['guideinfo', 'metinfo']
+    version_on = ['run']
+    indexes = ['seeing', 'observer', 'skybright']
+
+    @classmethod
+    def from_header(cls, run, header):
+        factors = {f: header[f] for f in cls.factors}
+        casu = CASU(casuid=header['casuid'])
+        sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
+        sys = System(sysver=header['sysver'])
+        return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
+
+
 class Spectrum(Hierarchy):
     plural_name = 'spectra'
     is_template = True
     idname = 'hashid'
-    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar']
 
 
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
-    parents = [Run, CASU, Simulator, System]
-    products = Spectrum.products + ['guideinfo', 'metinfo']
-    version_on = ['run']
+    factors = ['detector']
+    parents = [Observation, CASU]
+    products = ['header', 'counts']
+    version_on = ['observation', 'detector']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
 
@@ -156,12 +172,13 @@ class RawSpectrum(Spectrum):
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
+    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar']
 
 
 class L1SingleSpectrum(L1SpectrumRow):
     plural_name = 'l1singlespectra'
-    parents = [RawSpectrum, FibreTarget, CASU]
-    version_on = ['rawspectrum', 'fibretarget']
+    parents = [Observation, Multiple(RawSpectrum, 2, 2), FibreTarget, CASU]
+    version_on = ['rawspectra', 'observation', 'fibretarget']
     factors = L1SpectrumRow.factors + [
         'nspec', 'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',

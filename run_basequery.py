@@ -4,23 +4,24 @@ from weaveio.opr3.file import RawFile
 import pandas as pd
 
 data = OurData('data', port=7687, write=True)
-# print(data.graph.execute('unwind $data as d return d.a', data=pd.DataFrame({'a': [np.nan, 1, 2,np.nan]})).to_table())
+data.plot_relations()
 
 deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
 assert np.all(deletion == 0)
-data.drop_all_constraints()
+# data.drop_all_constraints()
+# data.apply_constraints()
 
 print('start write')
 with data.write() as query:
-    fibinfo = RawFile.read_fibinfo_dataframe('data/r1002813.fit')
-    srvyinfo = RawFile.read_surveyinfo(fibinfo)
-    RawFile.make_fibretargets(srvyinfo, fibinfo)
+    RawFile.read(data.rootdir, 'r1002813.fit')
 cypher, params = query.render_query()
 r = data.graph.execute(cypher, **params)
 print(r.stats())
+
+
 # data.directory_to_neo4j('Raw')
 
-# data.apply_constraints()
+
 # data.plot_relations()
 # data.validate()
 # thing = data.exposures.runs.exposures.runs[['1002814']]['runids', 'expmjd', 'cnames']

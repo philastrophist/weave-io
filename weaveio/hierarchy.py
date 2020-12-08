@@ -132,9 +132,17 @@ class GraphableMeta(type):
                     raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
             if nparents_in_id > 2:
                 raise RuleBreakingException(f"Cannot create an id using more than 2 parents")
+        version_parents = []
+        version_factors = []
         for i in cls.version_on:
-            if i not in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
-                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must refer to a parent")
+            if i in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
+                version_parents.append(i)
+            elif i in cls.factors:
+                version_factors.append(i)
+            else:
+                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must refer to a parent or factor.")
+        if len(version_factors) > 1 and len(version_parents) == 0:
+            raise RuleBreakingException(f"Cannot build a version relative to nothing. You must version on at least one parent.")
         if not cls.is_template:
             if not (len(cls.indexes) or cls.idname or
                     (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
@@ -268,7 +276,8 @@ class Graphable(metaclass=GraphableMeta):
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
-            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child)
+            version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
+            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child, version_factors)
 
     @classmethod
     def has_factor_identity(cls):
@@ -311,7 +320,7 @@ class Graphable(metaclass=GraphableMeta):
             elif cls.has_parent_identity():
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
                 return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
-        key = ', '.join([i for i in cls.indexes])
+        key = ', '.join([f'n.{i}' for i in cls.indexes])
         return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
 
     @classmethod

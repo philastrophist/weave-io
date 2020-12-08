@@ -380,17 +380,18 @@ class MergeDependentNode(Statement):
 
 
 class SetVersion(Statement):
-    def __init__(self, parents: List[CypherVariable], reltypes: List[str], childlabel: str, child: CypherVariable):
+    def __init__(self, parents: List[CypherVariable], reltypes: List[str], childlabel: str, child: CypherVariable, childproperties: dict):
         if len(reltypes) != len(parents):
             raise ValueError(f"reltypes must be the same length as parents")
         self.parents = parents
         self.reltypes = reltypes
         self.childlabel = camelcase(childlabel)
+        self.childproperties = {Varname(k): v for k, v in childproperties.items()}
         self.child = child
         super(SetVersion, self).__init__(self.parents, [])
 
     def to_cypher(self):
-        matches = ', '.join([f'({p})-[:{r}]->(c:{self.childlabel})' for p, r in zip(self.parents, self.reltypes)])
+        matches = ', '.join([f'({p})-[:{r}]->(c:{self.childlabel} {self.childproperties})' for p, r in zip(self.parents, self.reltypes)])
         query = [
             f"WITH * CALL {{",
                 f"\t WITH {','.join(map(str, self.parents))}, {self.child}",
@@ -459,9 +460,9 @@ def merge_node_relationship(labels: List[str], properties: dict,
     query.add_statement(statement)
     return statement.out
 
-def set_version(parents, reltypes, childlabel, child):
+def set_version(parents, reltypes, childlabel, child, childproperties):
     query = CypherQuery.get_context() # type: CypherQuery
-    statement = SetVersion(parents, reltypes, childlabel, child)
+    statement = SetVersion(parents, reltypes, childlabel, child, childproperties)
     query.add_statement(statement)
 
 

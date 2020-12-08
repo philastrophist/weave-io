@@ -1,6 +1,6 @@
 from collections import defaultdict
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Union
 
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
@@ -8,12 +8,12 @@ from astropy.table import Table as AstropyTable
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, unwind, collect
+from weaveio.hierarchy import Multiple, unwind, collect, merge_relationship
 from weaveio.oldproduct import Header, Array, Table
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
-    WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp,\
+    WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
     OBSpec, OB, Exposure, Run, L1SingleSpectrum, RawSpectrum, L1StackSpectrum, \
-    L1SuperStackSpectrum, L1SuperTargetSpectrum
+    L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU, Simulator, System, Observation
 from weaveio.writequery import groupby, CypherData
 
 
@@ -40,7 +40,17 @@ class HeaderFibinfoFile(File):
         return tuple(header[c] for c in self.concatenation_constant_names[product_name])
 
     @classmethod
-    def make_fibretargets(cls, df_svryinfo, df_fibinfo):
+    def read_fibinfo_dataframe(cls, fname):
+        fibinfo = AstropyTable(fits.open(fname)[cls.fibinfo_i].data).to_pandas().sort_values('FIBREID')
+        fibinfo.columns = [i.lower() for i in fibinfo.columns]
+        return fibinfo
+
+    @classmethod
+    def read_surveyinfo(cls, df_fibinfo):
+        return df_fibinfo[['targsrvy', 'targprog', 'targcat']].drop_duplicates()
+
+    @classmethod
+    def read_fibretargets(cls, df_svryinfo, df_fibinfo):
         srvyinfo = CypherData(df_svryinfo)  # surveys split inline
         fibinfo = CypherData(df_fibinfo)
         with unwind(srvyinfo) as svryrow:
@@ -60,19 +70,7 @@ class HeaderFibinfoFile(File):
         return collect(fibtarget)
 
     @classmethod
-    def read_fibinfo_dataframe(cls, fname):
-        fibinfo = AstropyTable(fits.open(fname)[cls.fibinfo_i].data).to_pandas().sort_values('FIBREID')
-        fibinfo.columns = [i.lower() for i in fibinfo.columns]
-        return fibinfo
-
-    @classmethod
-    def read_surveyinfo(cls, df_fibinfo):
-        return df_fibinfo[['targsrvy', 'targprog', 'targcat']].drop_duplicates()
-
-    @classmethod
-    def read_hierarchy(cls, directory: Path, fname: Path):
-        fullpath = directory / fname
-        header = fits.open(fullpath)[0].header
+    def read_hierarchy(cls, header):
         runid = int(header['RUN'])
         camera = str(header['CAMERA'].lower()[len('WEAVE'):])
         expmjd = str(header['MJD-OBS'])
@@ -87,58 +85,59 @@ class HeaderFibinfoFile(File):
                                   & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
-
-        cls.make_surveys(fullpath)
-        with cls.each_fibinfo_row(fullpath) as row:
-            fibretarget = cls.each_fibretarget(row)
-            fibreset = FibreSet(fibretargets=fibretarget)
-        obspec = OBSpec(xml=xml, fibreset=fibreset, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
-        obrealisation = OB(obid=obid, obstartmjd=obstart, obspec=obspec)
-        exposure = Exposure(expmjd=expmjd, obrealisation=obrealisation)
+        obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp, fibretargets=[])
+        ob = OB(obid=obid, obstartmjd=obstart, obspec=obspec)
+        exposure = Exposure(expmjd=expmjd, ob=ob)
         run = Run(runid=runid, armconfig=arm, exposure=exposure)
-        return {'run': run, 'obrealisation': obrealisation, 'obspec': obspec, 'armconfig': arm}
-
+        observation = Observation.from_header(run, header)
+        return {'run': run, 'ob': ob, 'obspec': obspec, 'armconfig': arm, 'observation': observation}
 
     @classmethod
-    def read_l1single(cls, raw, fibrow):
-        fibretarget = cls.each_fibretarget(fibrow)
-        return L1SingleSpectrum(fibretarget=fibretarget, raw=raw, findex=fibrow['_input_index'])
+    def read_schema(cls, path: Path):
+        header = cls.read_header(path)
+        fibinfo = cls.read_fibinfo_dataframe(path)
+        hiers = cls.read_hierarchy(header)
+        srvyinfo = cls.read_surveyinfo(fibinfo)
+        fibretarget_collection = cls.read_fibretargets(srvyinfo, fibinfo)
+        with unwind(fibretarget_collection, enumerated=True) as (fibretarget, i):
+            merge_relationship(fibretarget, hiers['obspec'], 'is_required_by', {'order': i})
+        return hiers, header, fibinfo
 
-    def read_primary(self):
-        return Header(fits.open(self.fname)[0].header, self.index)
+    @classmethod
+    def read_header(cls, path: Path):
+        return fits.open(path)[0].header
 
-    def read_fluxes(self):
-        return Array(fits.open(self.fname)[1].data, self.index)
+    @classmethod
+    def read_fibtable(cls, path: Path):
+        return AstropyTable(fits.open(path)[cls.fibinfo_i].data)
 
-    def read_ivars(self):
-        return Array(fits.open(self.fname)[2].data, self.index)
-
-    def read_fluxes_noss(self):
-        return Array(fits.open(self.fname)[3].data, self.index)
-
-    def read_ivars_noss(self):
-        return Array(fits.open(self.fname)[4].data, self.index)
-
-    def read_sens_funcs(self):
-        return Array(fits.open(self.fname)[5].data, self.index)
-
-    def _read_fibtable(self):
-        return AstropyTable(fits.open(self.fname)[self.fibinfo_i].data)
-
-    def read_fibtable(self):
-        return Table(self._read_fibtable(), self.index)
+    @classmethod
+    def read(cls, directory: Path, fname: Path) -> 'File':
+        raise NotImplementedError
 
 
 class RawFile(HeaderFibinfoFile):
-    parents = [RawSpectrum]
+    parents = [Multiple(RawSpectrum, 2, 2), Observation]
     fibinfo_i = 3
     match_pattern = 'r*.fit'
 
     @classmethod
-    def read(cls, directory: Path, fname: Path):
-        hiers = cls.read_hierarchy(directory, fname)
-        raw = RawSpectrum(run=hiers['run'])
-        return  cls(fname=fname, raw=raw)
+    def read_hdus(cls, path: Path):
+        return [i for i in fits.open(path)]
+
+    @classmethod
+    def read_spectra(cls, path):
+        hiers, header, fibinfo = cls.read_schema(path)
+        observation = hiers['observation']
+        hdus = cls.read_hdus(path)
+        datahdus = {h.name.split('_')[0].lower(): fits.open(path)[i] for i, h in enumerate(hdus) if '_DATA' in h.name}
+        return observation, [RawSpectrum(casu=observation.casu, observation=observation, detector=i, hashid=hdu.header['checksum']) for i, hdu in datahdus.items()]
+
+    @classmethod
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
+        path = Path(directory) / Path(fname)
+        observation, raws = cls.read_spectra(path)
+        return  cls(fname=fname, rawspectra=raws, observation=observation)
 
 
 class L1SingleFile(HeaderFibinfoFile):
