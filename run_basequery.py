@@ -4,10 +4,10 @@ from weaveio.opr3.file import RawFile
 import pandas as pd
 
 data = OurData('data', port=7687, write=True)
-data.plot_relations()
+data.plot_relations(show_hdus=True)
 
-deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
-assert np.all(deletion == 0)
+# deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
+# assert np.all(deletion == 0)
 # data.drop_all_constraints()
 # data.apply_constraints()
 

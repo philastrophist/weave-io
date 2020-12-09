@@ -1,5 +1,5 @@
 import inspect
-from functools import wraps
+from functools import wraps, partial
 from typing import Tuple, Dict, Type, Union, List
 from warnings import warn
 
@@ -75,6 +75,11 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
+class Indexed:
+    def __init__(self, name):
+        self.name = name
+
+
 class GraphableMeta(type):
     def __new__(meta, name: str, bases, _dct):
         dct = {'is_template': False}
@@ -147,6 +152,23 @@ class GraphableMeta(type):
             if not (len(cls.indexes) or cls.idname or
                     (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
                 raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
+        if len(cls.hdus):
+            hduclasses = {}
+            for i, (hduname, hdu) in enumerate(cls.hdus.items()):
+                if hdu is not None:
+                    typename = name+hduname[0].upper()+hduname[1:]
+                    typename = typename.replace('_', '')
+                    hduclass = type(typename, (hdu, ), {'parents': [cls], 'identifier_builder': [cls.singular_name, 'extn']})
+                    hduclasses[hduname] = hduclass
+                    if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
+                        raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")
+                    for base in bases:
+                        if (hduname in base.factors or hduname in base.parents or hasattr(base, hduname)) and hduname not in base.hdus:
+                            raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {base}->{name}")
+                    setattr(cls, hduname, hduclass)  # add as an attribute
+            cls.hdus = hduclasses  # overwrite hdus
+        if cls.concatenation_constants is not None:
+            cls.factors = cls.factors + cls.concatenation_constants
         super().__init__(name, bases, dct)
 
 
@@ -168,6 +190,9 @@ class Graphable(metaclass=GraphableMeta):
     indexes = []
     identifier_builder = None
     version_on = []
+    hdus = {}
+    produces = []
+    concatenation_constants = []
 
     @property
     def node(self):
@@ -333,6 +358,16 @@ class Graphable(metaclass=GraphableMeta):
             elif cls.has_parent_identity():
                 return 'NODE+RELATIONSHIP'
         return 'NODE FIRST'
+
+    def attach_products(self, file, index=None, **hdus):
+        """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
+        for name in self.products:
+            hdu = hdus[name]
+            props = {'index': index, 'name': name}
+            if index is None:
+                del props['index']
+            merge_relationship(hdu, self.node, 'product', props)
+        merge_relationship(file, self.node, 'product', {'name': 'file'})
 
 
 class Hierarchy(Graphable):

@@ -16,8 +16,8 @@ from weaveio.address import Address
 from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.graph import Graph
 from weaveio.writequery import Unwind
-from weaveio.hierarchy import Multiple
-from weaveio.file import File
+from weaveio.hierarchy import Multiple, Hierarchy, Indexed
+from weaveio.file import File, HDU
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
@@ -68,16 +68,39 @@ def process_neo4j_error(data: 'Data', file: File, msg):
 
 def get_all_subclasses(cls):
     all_subclasses = []
-
     for subclass in cls.__subclasses__():
         all_subclasses.append(subclass)
         all_subclasses.extend(get_all_subclasses(subclass))
-
     return all_subclasses
+
+
+def find_children_of(parent):
+    hierarchies = get_all_subclasses(Hierarchy)
+    children = set()
+    for h in hierarchies:
+        if len(h.parents):
+            if any(p is parent if isinstance(p, type) else p.node is parent for p in h.parents):
+                children.add(h)
+    return children
+
 
 
 class Data:
     filetypes = []
+
+    def read_in_filetype(self, filetype: File):
+        todo = set(filetype.produces + list(filetype.hdus.values()))
+        todo.add(filetype)
+        while len(todo):
+            thing = todo.pop()
+            if not thing.is_template:
+                self.hierarchies.add(thing)
+                for hier in thing.parents:
+                    if not thing.is_template:
+                        if isinstance(hier, Multiple):
+                            todo.add(hier.node)
+                        else:
+                            todo.add(hier)
 
     def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False):
         self.handler = Handler(self)
@@ -89,18 +112,8 @@ class Data:
         self.rootdir = Path(rootdir)
         self.address = Address()
         self.hierarchies = set()
-        todo = set(self.filetypes.copy())
-        while len(todo):
-            thing = todo.pop()
-            if not thing.is_template:
-                self.hierarchies.add(thing)
-                for hier in thing.parents:
-                    if not thing.is_template:
-                        if isinstance(hier, Multiple):
-                            todo.add(hier.node)
-                        else:
-                            todo.add(hier)
-        self.hierarchies |= set(self.filetypes)
+        for f in self.filetypes:
+            self.read_in_filetype(f)
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -141,7 +154,7 @@ class Data:
                 is_file = issubclass(h, File)
             except:
                 is_file = False
-            self.relation_graph.add_node(h.singular_name, is_file=is_file,
+            self.relation_graph.add_node(h.singular_name, is_file=is_file, is_hdu=issubclass(h, HDU),
                                          factors=h.factors+[h.idname], idname=h.idname)
             for parent in h.parents:
                 multiplicity = isinstance(parent, Multiple)
@@ -166,13 +179,28 @@ class Data:
                 subclasses = [parent] + get_all_subclasses(parent)
                 for subclass in subclasses:
                     if not subclass.is_template:
-                        self.relation_graph.add_node(subclass.singular_name, is_file=is_file,
+                        self.relation_graph.add_node(subclass.singular_name, is_file=is_file, is_hdu=issubclass(subclass, HDU),
                                                      factors=subclass.factors+[subclass.idname],
                                                      idname=subclass.idname)
                         self.relation_graph.add_edge(subclass.singular_name, h.singular_name,
                                                      multiplicity=multiplicity, number=number,
                                                      label=numberlabel)
                         d.append(subclass)
+            for hier in h.produces:
+                self.relation_graph.add_edge(h.singular_name, hier.singular_name,
+                                             multiplicity=False, number=1, index=False, name='file',
+                                             label='=1')
+                for product_name in hier.products:
+                    if isinstance(product_name, Indexed):
+                        index = True
+                        product_name = product_name.name
+                    else:
+                         index = False
+                    product = h.hdus[product_name]
+                    self.relation_graph.add_edge(product.singular_name, hier.singular_name,
+                                                 multiplicity=False, number=1, index=index, name=product_name,
+                                                 label='=1')
+
 
     def make_constraints_cypher(self):
         return [hierarchy.make_schema() for hierarchy in self.hierarchies]
@@ -378,9 +406,12 @@ class Data:
     def __getattr__(self, item):
         return self.handler.begin_with_heterogeneous().__getattr__(item)
 
-    def plot_relations(self, fname='relations.pdf'):
+    def plot_relations(self, show_hdus=True, fname='relations.pdf'):
         from networkx.drawing.nx_agraph import to_agraph
-        G = self.relation_graph
+        if not show_hdus:
+            G = nx.subgraph_view(self.relation_graph, lambda n: not self.relation_graph.nodes[n]['is_hdu'])
+        else:
+            G = self.relation_graph
         A = to_agraph(G)
         A.layout('dot')
         A.draw(fname)

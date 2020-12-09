@@ -1,5 +1,5 @@
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed
 
 
 class Author(Hierarchy):
@@ -152,7 +152,6 @@ class Observation(Hierarchy):
         sys = System(sysver=header['sysver'])
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
 
-
 class Spectrum(Hierarchy):
     plural_name = 'spectra'
     is_template = True
@@ -161,10 +160,9 @@ class Spectrum(Hierarchy):
 
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
-    factors = ['detector']
     parents = [Observation, CASU]
-    products = ['header', 'counts']
-    version_on = ['observation', 'detector']
+    products = ['primary', 'guidinfo', 'metinfo', 'counts1', 'counts2']
+    version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
 
@@ -172,7 +170,7 @@ class RawSpectrum(Spectrum):
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
-    products = ['flux', 'ivar', 'noss_flux', 'noss_ivar']
+    products = ['primary', Indexed('flux'), Indexed('ivar'), Indexed('flux_noss'), Indexed('ivar_noss'), 'sensfunc']
 
 
 class L1SingleSpectrum(L1SpectrumRow):
@@ -222,7 +220,6 @@ class L2RowHDU(L2):
     parents = [Multiple(L1SpectrumRow, 2, 3), APS]
     products = []
     version_on = ['l1spectrumrows']
-
 
 # class Classifications(L2RowHDU):
 #     pass

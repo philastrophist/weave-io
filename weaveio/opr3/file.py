@@ -1,43 +1,21 @@
-from collections import defaultdict
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Union
 
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
 
 from weaveio.config_tables import progtemp_config
-from weaveio.file import File
-from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, unwind, collect, merge_relationship
-from weaveio.oldproduct import Header, Array, Table
+from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, DataHDU
+from weaveio.hierarchy import unwind, collect, merge_relationship
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
-    OBSpec, OB, Exposure, Run, L1SingleSpectrum, RawSpectrum, L1StackSpectrum, \
-    L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU, Simulator, System, Observation
+    OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum
 from weaveio.writequery import groupby, CypherData
 
 
 class HeaderFibinfoFile(File):
     is_template = True
     fibinfo_i = -1
-    spectral_concatenation_constants = ['CRVAL1', 'CD1_1', 'NAXIS1']
-    products = {'primary': Header, 'fluxes': Array, 'ivars': Array, 'fluxes_noss': Array,
-                'ivars_noss': Array, 'sensfuncs': Array, 'fibtable': Table}
-    concatenation_constant_names = {'primary': True, 'fluxes': spectral_concatenation_constants,
-                               'ivars': spectral_concatenation_constants,
-                               'fluxes_noss': spectral_concatenation_constants,
-                               'ivars_noss': spectral_concatenation_constants,
-                               'sens_funcs': spectral_concatenation_constants,
-                               'fibtable': ['NAXIS1']}
-    product_indexables = {'primary': None, 'fluxes': 'cname',
-                          'ivars':  'cname', 'fluxes_noss':  'cname',
-                          'ivars_noss':  'cname',
-                          'sensfuncs':  'cname', 'fibtable':  'cname'}
-    hdus = ['primary', 'fluxes', 'ivars', 'fluxes_noss', 'ivars_noss', 'sensfuncs', 'fibtable']
-
-    def read_concatenation_constants(self, product_name) -> Tuple:
-        header = fits.open(self.fname)[self.hdus.index(product_name)].header
-        return tuple(header[c] for c in self.concatenation_constant_names[product_name])
 
     @classmethod
     def read_fibinfo_dataframe(cls, fname):
@@ -116,33 +94,34 @@ class HeaderFibinfoFile(File):
         raise NotImplementedError
 
 
+
 class RawFile(HeaderFibinfoFile):
-    parents = [Multiple(RawSpectrum, 2, 2), Observation]
     fibinfo_i = 3
     match_pattern = 'r*.fit'
-
-    @classmethod
-    def read_hdus(cls, path: Path):
-        return [i for i in fits.open(path)]
-
-    @classmethod
-    def read_spectra(cls, path):
-        hiers, header, fibinfo = cls.read_schema(path)
-        observation = hiers['observation']
-        hdus = cls.read_hdus(path)
-        datahdus = {h.name.split('_')[0].lower(): fits.open(path)[i] for i, h in enumerate(hdus) if '_DATA' in h.name}
-        return observation, [RawSpectrum(casu=observation.casu, observation=observation, detector=i, hashid=hdu.header['checksum']) for i, hdu in datahdus.items()]
+    hdus = {'primary': PrimaryHDU, 'counts1': SpectralBlockHDU, 'counts2': SpectralBlockHDU, 'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
+    produces = [RawSpectrum]
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
         path = Path(directory) / Path(fname)
-        observation, raws = cls.read_spectra(path)
-        return  cls(fname=fname, rawspectra=raws, observation=observation)
+        hiers, header, fibinfo = cls.read_schema(path)
+        observation = hiers['observation']
+        hdus, file = cls.read_hdus(directory, fname)
+        hashid = header['checksum']
+        raw = RawSpectrum(hashid=hashid, casu=observation.casu, observation=observation)
+        raw.attach_products(file, **hdus)
+        return file
 
 
-class L1SingleFile(HeaderFibinfoFile):
-    parents = [Multiple(L1SingleSpectrum, constrain=[RawSpectrum])]
+class L1File(HeaderFibinfoFile):
+    is_template = True
+    hdus = {'primary': PrimaryHDU, 'flux': SpectralRowableBlock, 'ivar': SpectralRowableBlock,
+            'flux_noss': SpectralRowableBlock, 'ivar_noss': SpectralRowableBlock, 'sensfunc': DataHDU, 'fibtable': TableHDU}
+
+
+class L1SingleFile(L1File):
     match_pattern = 'single_*.fit'
+    produces = [L1SingleSpectrum]
 
     @classmethod
     def read(cls, directory: Path, fname: Path):
@@ -157,10 +136,13 @@ class L1SingleFile(HeaderFibinfoFile):
         return cls(fname=fname, l1singlespectra=single_spectra)
 
 
-class L1StackFile(HeaderFibinfoFile):
-    parents = [Multiple(L1StackSpectrum, constrain=[Exposure, ArmConfig])]
-    dependencies = [Run]
+class L1StackedFile(L1File):
+    pass
+
+
+class L1StackFile(L1StackedFile):
     match_pattern = 'stacked_*.fit'
+    produces = [L1StackSpectrum]
 
     @classmethod
     def make_spectra_from_single(cls, singles):
@@ -191,18 +173,18 @@ class L1StackFile(HeaderFibinfoFile):
         return cls(fname=fname, **data)
 
 
-class L1SuperStackFile(L1StackFile):
-    parents = [Multiple(L1SuperStackSpectrum, constrain=[OBSpec, ArmConfig])]
+class L1SuperStackFile(L1StackedFile):
     match_pattern = 'superstacked_*.fit'
+    produces = [L1SuperStackSpectrum]
 
     @classmethod
     def match(cls, directory):
         return directory.glob()
 
 
-class L1SuperTargetFile(L1StackFile):
-    parents = [L1SuperTargetSpectrum]
+class L1SuperTargetFile(L1StackedFile):
     match_pattern = 'WVE_*.fit'
+    produces = [L1SuperTargetSpectrum]
 
 
 class L2HeaderFibinfoFile(HeaderFibinfoFile):
@@ -233,3 +215,5 @@ class L2HeaderFibinfoFile(HeaderFibinfoFile):
 
 class L2File(HeaderFibinfoFile):
     match_pattern = '*aps.fit'
+
+

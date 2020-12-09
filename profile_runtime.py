@@ -7,6 +7,11 @@ from tqdm import tqdm
 graph = py2neo.Graph(host='host.docker.internal')
 deletion = graph.run('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
 assert np.all(deletion == 0)
+graph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
+graph.run('CREATE CONSTRAINT File ON (n:File}) ASSERT (n.fname) IS NODE KEY')
+graph.run('CREATE CONSTRAINT Hierarchy ON (n:Hierarchy}) ASSERT (n.id) IS NODE KEY')
+graph.run('CREATE INDEX HDU FOR (n:HDU) ON (n.extn)')
+graph.run('CREATE INDEX Product FOR (n:Product) ON (n.name)')
 
 times = []
 xs = range(1, 200)
@@ -43,6 +48,10 @@ for i in tqdm(xs):
         MERGE (ft)-[:req]->(spec:L1SingleSpectrum {checksum: uniquei, otherthing: uniquei})<-[:req]-(raw)
         
     
+    """
+    query = """
+    MERGE (f:File
+    (hierarchy)<-[:IS_REQUIRED_BY]-(flux: Product {name: 'flux'})<-[:Contains]-(hdu {concatenation-constants})<-[:CONTAINS {extn: 0}]-(file)
     """
     graph.run(query, parameters={'a': i, 'length': 1000})
     times.append(clock() - start)
