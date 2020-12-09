@@ -200,8 +200,8 @@ class Condition(Copyable):
 
 
     def stringify(self):
-        a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'name', quote(str(self.a)))
-        b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'name', quote(str(self.b)))
+        a = self.a.stringify() if isinstance(self.a, Condition) else getattr(self.a, 'name', quote(self.a))
+        b = self.b.stringify() if isinstance(self.b, Condition) else getattr(self.b, 'name', quote(self.b))
         return f"({a} {self.comparison} {b})"
 
     def __repr__(self):
