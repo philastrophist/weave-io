@@ -124,16 +124,20 @@ class L1SingleFile(L1File):
     produces = [L1SingleSpectrum]
 
     @classmethod
-    def read(cls, directory: Path, fname: Path):
-        """L1Single inherits all header data from raw so we can construct both when needed"""
-        hiers = cls.read_hierarchy(directory, fname)
-        inferred_raw_fname = fname.with_name(fname.name.replace('single', 'r'))
-        hiers['raw'] = raw = RawSpectrum(run=hiers['run'])
-        inferred_rawfile = RawFile(inferred_raw_fname, **hiers)
-        hiers['rawfile'] = inferred_rawfile
-        with cls.each_fibinfo_row(fname) as row:
-            single_spectra = cls.read_l1single(raw, row)
-        return cls(fname=fname, l1singlespectra=single_spectra)
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
+        path = Path(directory) / Path(fname)
+        hiers, header, fibinfo = cls.read_schema(path)
+
+
+
+        # hiers = cls.read_hierarchy(directory, fname)
+        # inferred_raw_fname = fname.with_name(fname.name.replace('single', 'r'))
+        # hiers['raw'] = raw = RawSpectrum(run=hiers['run'])
+        # inferred_rawfile = RawFile(inferred_raw_fname, **hiers)
+        # hiers['rawfile'] = inferred_rawfile
+        # with cls.each_fibinfo_row(fname) as row:
+        #     single_spectra = cls.read_l1single(raw, row)
+        # return cls(fname=fname, l1singlespectra=single_spectra)
 
 
 class L1StackedFile(L1File):

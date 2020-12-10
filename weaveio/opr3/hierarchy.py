@@ -147,7 +147,7 @@ class Observation(Hierarchy):
     @classmethod
     def from_header(cls, run, header):
         factors = {f: header[f] for f in cls.factors}
-        casu = CASU(casuid=header['casuid'])
+        casu = CASU(casuid=header.get('casuvers', header.get('casuid')))
         sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
         sys = System(sysver=header['sysver'])
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
