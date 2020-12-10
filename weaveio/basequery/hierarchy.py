@@ -6,7 +6,8 @@ import py2neo
 
 from .common import FrozenQuery
 from .factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery, TableFactorFrozenQuery
-from .query import AmbiguousPathError, FullQuery, Path, Condition, Collection
+from .query import AmbiguousPathError, FullQuery
+from .query_objects import Collection, Path, Condition
 from ..hierarchy import Hierarchy, Multiple
 from ..utilities import quote
 

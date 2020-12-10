@@ -1,7 +1,6 @@
 from collections import defaultdict
 from typing import Dict, Any, Union, List, Type
 
-from weaveio.file import File
 from weaveio.hierarchy import Hierarchy
 
 

@@ -1,48 +1,44 @@
 import inspect
+from functools import wraps, partial
 from typing import Tuple, Dict, Type, Union, List
 from warnings import warn
 
-import networkx as nx
-import xxhash
-from graphviz import Source
-from tqdm import tqdm
-
-from .config_tables import progtemp_config
-from .graph import Graph, Node, Relationship, ContextError, Unwind
+from . import writequery
+from .writequery import CypherQuery, Unwind, Collection, CypherVariable
+from .context import ContextError
 from .utilities import Varname
+
+def _convert_types_to_node(x):
+    if isinstance(x, dict):
+        return {_convert_types_to_node(k): _convert_types_to_node(v) for k, v in x.items()}
+    elif isinstance(x, (list, set, tuple)):
+        return x.__class__([_convert_types_to_node(i) for i in x])
+    elif isinstance(x, Graphable):
+        return x.node
+    else:
+        return x
+
+def hierarchy_query_decorator(function):
+    @wraps(function)
+    def inner(*args, **kwargs):
+        args = _convert_types_to_node(args)
+        kwargs = _convert_types_to_node(kwargs)
+        return function(*args, **kwargs)
+    return inner
+
+
+unwind = hierarchy_query_decorator(writequery.unwind)
+merge_node = hierarchy_query_decorator(writequery.merge_node)
+collect = hierarchy_query_decorator(writequery.collect)
+merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
+merge_node_relationship = hierarchy_query_decorator(writequery.merge_node_relationship)
+set_version = hierarchy_query_decorator(writequery.set_version)
 
 
 def chunker(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-def graph2pdf(graph, ftitle):
-    dot = nx.nx_pydot.to_pydot(graph)
-    dot.set_strict(False)
-    # dot.obj_dict['attributes']['splines'] = 'ortho'
-    dot.obj_dict['attributes']['nodesep'] = '0.5'
-    dot.obj_dict['attributes']['ranksep'] = '0.75'
-    dot.obj_dict['attributes']['overlap'] = False
-    dot.obj_dict['attributes']['penwidth'] = 18
-    dot.obj_dict['attributes']['concentrate'] = False
-    Source(dot).render(ftitle, cleanup=True, format='pdf')
-
-
-lightblue = '#69A3C3'
-lightgreen = '#71C2BF'
-red = '#D08D90'
-orange = '#DFC6A1'
-purple = '#a45fed'
-pink = '#d50af5'
-
-hierarchy_attrs = {'type': 'hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
-abstract_hierarchy_attrs = {'type': 'hierarchy', 'style': 'filled', 'fillcolor': red, 'shape': 'box', 'edgecolor': red}
-factor_attrs = {'type': 'factor', 'style': 'filled', 'fillcolor': orange, 'shape': 'box', 'edgecolor': orange}
-identity_attrs = {'type': 'id', 'style': 'filled', 'fillcolor': purple, 'shape': 'box', 'edgecolor': purple}
-product_attrs = {'type': 'factor', 'style': 'filled', 'fillcolor': pink, 'shape': 'box', 'edgecolor': pink}
-l1file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightblue, 'shape': 'box', 'edgecolor': lightblue}
-l2file_attrs = {'type': 'file', 'style': 'filled', 'fillcolor': lightgreen, 'shape': 'box', 'edgecolor': lightgreen}
-rawfile_attrs = l1file_attrs
 
 FORBIDDEN_LABELS = []
 FORBIDDEN_PROPERTY_NAMES = []
@@ -56,7 +52,7 @@ class RuleBreakingException(Exception):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None):
+    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None):
         self.node = node
         self.minnumber = minnumber
         self.maxnumber = maxnumber
@@ -64,6 +60,7 @@ class Multiple:
         self.singular_name = node.singular_name
         self.plural_name = node.plural_name
         self.idname = self.node.idname
+        self.relation_idname = idname
         try:
             self.factors =  self.node.factors
         except AttributeError:
@@ -72,22 +69,35 @@ class Multiple:
             self.parents = self.node.parents
         except AttributeError:
             self.parents = []
+        self.constrain = [] if constrain is None else constrain
 
     def __repr__(self):
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
+class Indexed:
+    def __init__(self, name):
+        self.name = name
+
+
 class GraphableMeta(type):
-    def __new__(meta, name: str, bases, dct):
+    def __new__(meta, name: str, bases, _dct):
+        dct = {'is_template': False}
+        dct.update(_dct)
+        dct['aliases'] = dct.get('aliases', [])
+        dct['aliases'] += [a for base in bases for a in base.aliases]
         if dct.get('plural_name', None) is None:
             dct['plural_name'] = name.lower() + 's'
         dct['singular_name'] = name.lower()
-        dct['plural_name'] = dct['plural_name'].lower()
-        dct['singular_name'] = dct['singular_name'].lower()
-        if dct.get('idname', '') in FORBIDDEN_IDNAMES:
+        if dct['plural_name'] != dct['plural_name'].lower():
+            raise RuleBreakingException(f"plural_name must be lowercase")
+        if dct['singular_name'] != dct['singular_name'].lower():
+            raise RuleBreakingException(f"singular_name must be lowercase")
+        idname = dct.get('idname', None)
+        if idname in FORBIDDEN_IDNAMES:
             raise RuleBreakingException(f"You may not name an id as one of {FORBIDDEN_IDNAMES}")
-        if not isinstance(dct.get('idname', ''), str):
-            raise RuleBreakingException(f"{name}.idname must be a string")
+        if not (isinstance(idname, str) or idname is None):
+            raise RuleBreakingException(f"{name}.idname ({idname}) must be a string or None")
         if name[0] != name.capitalize()[0] or '_' in name:
             raise RuleBreakingException(f"{name} must have `CamelCaseName` style name")
         for factor in dct.get('factors', []) + ['idname'] + [dct['singular_name'], dct['plural_name']]:
@@ -100,9 +110,70 @@ class GraphableMeta(type):
         r = super(GraphableMeta, meta).__new__(meta, name, bases, dct)
         return r
 
+    def __init__(cls, name, bases, dct):
+        if cls.idname is not None and cls.identifier_builder is not None:
+            raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
+        if cls.indexes and (cls.idname is not None or cls.identifier_builder is not None):
+            raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
+        nparents_in_id = 0
+        parentnames = {}
+        for i in cls.parents:
+            if isinstance(i, Multiple):
+                parentnames[i.plural_name] = (i.minnumber, i.maxnumber)
+            else:
+                parentnames[i.singular_name] = (1, 1)
+        if cls.identifier_builder is not None:
+            for p in cls.identifier_builder:
+                if p in parentnames:
+                    mn, mx = parentnames[p]
+                    if mn == 0:
+                        raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
+                    if mx != mn:
+                        raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
+                    nparents_in_id += mx
+                elif p in cls.factors:
+                    pass
+                else:
+                    raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
+            if nparents_in_id > 2:
+                raise RuleBreakingException(f"Cannot create an id using more than 2 parents")
+        version_parents = []
+        version_factors = []
+        for i in cls.version_on:
+            if i in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
+                version_parents.append(i)
+            elif i in cls.factors:
+                version_factors.append(i)
+            else:
+                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must refer to a parent or factor.")
+        if len(version_factors) > 1 and len(version_parents) == 0:
+            raise RuleBreakingException(f"Cannot build a version relative to nothing. You must version on at least one parent.")
+        if not cls.is_template:
+            if not (len(cls.indexes) or cls.idname or
+                    (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
+                raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
+        if len(cls.hdus):
+            hduclasses = {}
+            for i, (hduname, hdu) in enumerate(cls.hdus.items()):
+                if hdu is not None:
+                    typename = name+hduname[0].upper()+hduname[1:]
+                    typename = typename.replace('_', '')
+                    hduclass = type(typename, (hdu, ), {'parents': [cls], 'identifier_builder': [cls.singular_name, 'extn']})
+                    hduclasses[hduname] = hduclass
+                    if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
+                        raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")
+                    for base in bases:
+                        if (hduname in base.factors or hduname in base.parents or hasattr(base, hduname)) and hduname not in base.hdus:
+                            raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {base}->{name}")
+                    setattr(cls, hduname, hduclass)  # add as an attribute
+            cls.hdus = hduclasses  # overwrite hdus
+        if cls.concatenation_constants is not None:
+            cls.factors = cls.factors + cls.concatenation_constants
+        super().__init__(name, bases, dct)
+
 
 class Graphable(metaclass=GraphableMeta):
-    idname = 'id'
+    idname = None
     name = None
     identifier = None
     indexer = None
@@ -114,6 +185,23 @@ class Graphable(metaclass=GraphableMeta):
     factors = []
     data = None
     query = None
+    is_template = True
+    products = []
+    indexes = []
+    identifier_builder = None
+    version_on = []
+    hdus = {}
+    produces = []
+    concatenation_constants = []
+
+    @property
+    def node(self):
+        return self._node
+
+    @node.setter
+    def node(self, value):
+        assert isinstance(value, CypherVariable)
+        self._node = value
 
     @classmethod
     def requirement_names(cls):
@@ -152,83 +240,149 @@ class Graphable(metaclass=GraphableMeta):
 
     @property
     def neoproperties(self):
-        if self.identifier is None:
+        d = {}
+        if self.identifier is None and self.idname is not None:
             raise ValueError(f"{self} must have an identifier")
-        else:
-            d = {self.idname: self.identifier}
+        if self.idname is None and self.identifier is not None:
+            raise ValueError(f"{self} must have an idname to be given an identifier")
+        elif self.idname is not None:
+            d[self.idname] = self.identifier
             d['id'] = self.identifier
         for f in self.factors:
-                d[f.lower()] = getattr(self, f.lower())
+            value = getattr(self, f.lower())
+            if value is not None:
+                d[f.lower()] = value
         return d
 
     def __init__(self, **predecessors):
         self.predecessors = predecessors
         self.data = None
         try:
-            graph = Graph.get_context()  # type: Graph
-            self.node = graph.add_node(*self.neotypes, **self.neoproperties)
-            for k, node_list in predecessors.items():
-                if self.indexer is None:
-                    type = 'is_required_by'
-                elif k in self.indexer.lower():
-                    type = 'indexes'
-                else:
-                    type = 'is_required_by'
-                if isinstance(node_list, (list, tuple)):
-                    for inode, node in enumerate(node_list):
-                        graph.add_relationship(node.node, self.node, type, order=inode)
-                else:
-                    graph.add_relationship(node_list.node, self.node, type, order=None)
+            query = CypherQuery.get_context()  # type: CypherQuery
         except ContextError:
-            pass
+            return
+        merge_strategy = self.__class__.merge_strategy()
+        version_parents = []
+        if  merge_strategy == 'NODE FIRST':
+            self.node = child = merge_node(self.neotypes, self.neoproperties)
+            for k, parent_list in predecessors.items():
+                type = 'is_required_by'
+                if isinstance(parent_list, Collection):
+                    with unwind(parent_list, enumerated=True) as (parent, i):
+                        props = {'order': i}
+                        merge_relationship(parent, child, type, props)
+                    parent_list = collect(parent)
+                    if k in self.version_on:
+                        raise RuleBreakingException(f"Cannot version on a collection of nodes")
+                else:
+                    for parent in parent_list:
+                        props = {'order': 0}
+                        merge_relationship(parent, child, type, props)
+                        if k in self.version_on:
+                            version_parents.append(parent)
+        elif merge_strategy == 'NODE+RELATIONSHIP':
+            parentnames = [p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
+            parents = []
+            others = []
+            for k, parent_list in predecessors.items():
+                if isinstance(parent_list, Collection):
+                    raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
+                if k in parentnames and k in self.identifier_builder:
+                    parents += [p for p in parent_list]
+                else:
+                    others += [(i, p) for i, p in enumerate(parent_list)]
+                if k in self.version_on:
+                    version_parents += parent_list
+            reltype = 'is_required_by'
+            relparents = [(p, reltype, {'order': 0}) for p in parents]
+            child = self.node = merge_node_relationship(self.neotypes, self.neoproperties, relparents)
+            for i, other in others:
+                merge_relationship(other, child, reltype, {'order': i})
+        else:
+            ValueError(f"Merge strategy not known: {merge_strategy}")
+        if len(version_parents):
+            version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
+            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child, version_factors)
+
+    @classmethod
+    def has_factor_identity(cls):
+        if cls.identifier_builder is None:
+            return False
+        if len(cls.identifier_builder) == 0:
+            return False
+        for p in cls.parents:
+            if isinstance(p, Multiple):
+                if p.plural_name in cls.identifier_builder:
+                    return False
+            elif p.singular_name in cls.identifier_builder:
+                return False
+        return True
+
+    @classmethod
+    def has_parent_identity(cls):
+        if cls.identifier_builder is None:
+            return False
+        if len(cls.identifier_builder) == 0:
+            return False
+        for p in cls.parents:
+            if isinstance(p, Multiple):
+                if p.plural_name in cls.identifier_builder:
+                    return True
+            elif p.singular_name in cls.identifier_builder:
+                return True
+        return False
+
+    @classmethod
+    def make_schema(cls):
+        name = cls.__name__
+        if cls.idname is not None:
+            prop = cls.idname
+            return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY'
+        elif cls.identifier_builder:
+            if cls.has_factor_identity():
+                key = ', '.join([f'n.{f}' for f in cls.identifier_builder])
+                return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT ({key}) IS NODE KEY'
+            elif cls.has_parent_identity():
+                key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
+                return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+        key = ', '.join([f'n.{i}' for i in cls.indexes])
+        return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+
+    @classmethod
+    def merge_strategy(cls):
+        if cls.idname is not None:
+            return 'NODE FIRST'
+        elif cls.identifier_builder:
+            if cls.has_factor_identity():
+                return 'NODE FIRST'
+            elif cls.has_parent_identity():
+                return 'NODE+RELATIONSHIP'
+        return 'NODE FIRST'
+
+    def attach_products(self, file, index=None, **hdus):
+        """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
+        for name in self.products:
+            hdu = hdus[name]
+            props = {'index': index, 'name': name}
+            if index is None:
+                del props['index']
+            merge_relationship(hdu, self.node, 'product', props)
+        merge_relationship(file, self.node, 'product', {'name': 'file'})
 
 
 class Hierarchy(Graphable):
-    identifier_builder = []
     parents = []
     factors = []
-    indexer = None
-    type_graph_attrs = hierarchy_attrs
+    is_template = True
 
     def __repr__(self):
         return self.name
-
-    def generate_identifier(self):
-        """
-        if `idname` is set, then return the identifier set at instantiation
-        otherwise, make an identifier by stitching together identifiers of its input
-        """
-        if self.identifier is not None:
-            return self.identifier
-        elif len(self.identifier_builder):
-            strings = []
-            identifiers = []
-            for i in self.identifier_builder:
-                obj = getattr(self, i)  # type: Union[List[Union[Hierarchy, str]], Hierarchy, str]
-                if not isinstance(obj, (list, tuple)):
-                    obj = [obj]
-                for o in obj:
-                    if isinstance(o, Hierarchy):
-                        identifiers.append(o.identifier)
-                    else:
-                        identifiers.append(o)
-            for i in identifiers:
-                if isinstance(i, (Unwind, Varname)):
-                    s = str(i)
-                    strings += ['+', s, '+']
-                else:
-                    s = str(i)
-                    strings.append(f"+'{s}'+")
-            final = ''.join(strings).strip('+').replace('++', '+').replace("''", "")
-            return Varname(final)
-        else:
-            return None
 
     def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str]]:
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
-        parents = {p.__name__.lower() if isinstance(p, type) else p.name: p for p in self.parents}
+        parents = {p.singular_name if isinstance(p, type) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
@@ -244,21 +398,17 @@ class Hierarchy(Graphable):
                     self.uses_tables = value.uses_tables
         else:
             self.uses_tables = True
-        if self.idname not in kwargs:
-            self.identifier = None
-        else:
-            self.identifier = kwargs.pop(self.idname)
-        specification, factors = self.make_specification()
+        self.identifier = kwargs.pop(self.idname, None)
+        self.specification, factors = self.make_specification()
         # add any data held in a neo4j unwind table
-        for k, v in specification.items():
+        for k, v in self.specification.items():
             if k not in kwargs:
                 if tables is not None:
-                    if k in tables:
-                        kwargs[k] = tables[k]
+                    kwargs[k] = tables[k]
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
-        for name, nodetype in specification.items():
+        for name, nodetype in self.specification.items():
             value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
@@ -273,126 +423,12 @@ class Hierarchy(Graphable):
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors
-        if self.identifier is None:
-            self.identifier = self.generate_identifier()
-        setattr(self, self.idname, self.identifier)
+        if self.identifier_builder is not None:
+            if self.identifier is not None:
+                raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
+        if self.idname is not None:
+            setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(**predecessors)
 
 
-class ArmConfig(Hierarchy):
-    factors = ['resolution', 'vph', 'camera', 'colour']
-    idname = 'armcode'
-    identifier_builder = ['resolution', 'vph', 'camera']
-
-    def __init__(self, tables=None, **kwargs):
-        if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
-            kwargs['colour'] = 'green'
-        else:
-            kwargs['colour'] = kwargs['camera']
-        super().__init__(tables, **kwargs)
-
-    @classmethod
-    def from_progtemp_code(cls, progtemp_code):
-        config = progtemp_config.loc[progtemp_code[0]]
-        red = cls(resolution=str(config.resolution), vph=int(config.red_vph), camera='red')
-        blue = cls(resolution=str(config.resolution), vph=int(config.blue_vph), camera='blue')
-        return red, blue
-
-
-class ObsTemp(Hierarchy):
-    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky']
-    idname = 'obstemp_code'
-
-    @classmethod
-    def from_header(cls, header):
-        names = [f.lower() for f in cls.factors]
-        obstemp_code = list(header['OBSTEMP'])
-        return cls(obstemp_code=''.join(obstemp_code), **{n: v for v, n in zip(obstemp_code, names)})
-
-
-class Survey(Hierarchy):
-    idname = 'surveyname'
-
-
-class WeaveTarget(Hierarchy):
-    idname = 'cname'
-    factors = []
-    parents = [Multiple(Survey)]
-
-
-class Fibre(Hierarchy):
-    idname = 'fibreid'
-
-
-class FibreAssignment(Hierarchy):
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition', 'orientat', 'retries']
-    parents = [Fibre, WeaveTarget]
-    identifier_builder = ['fibre', 'weavetarget', 'status', 'xposition', 'yposition']
-
-
-class OBSpecTarget(Hierarchy):
-    factors = ['obid', 'targid', 'targname', 'targra', 'targdec', 'targx', 'targy', 'targepoch', 'targcat',
-               'targpmra', 'targpmdec', 'targparal', 'targuse', 'targprog', 'targprio',
-               'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
-               'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
-    identifier_builder = ['obid', 'targid', 'targname', 'targprog', 'targuse', 'targx', 'targy']
-
-
-class FibreTarget(Hierarchy):
-    parents = [FibreAssignment, OBSpecTarget]
-    identifier_builder = ['fibreassignment', 'obspectarget']
-
-
-class FibreSet(Hierarchy):
-    idname = 'obid'
-    parents = [Multiple(FibreTarget)]
-
-
-class InstrumentConfiguration(Hierarchy):
-    factors = ['mode', 'binning']
-    parents = [Multiple(ArmConfig, 2, 2)]
-    identifier_builder = ['mode', 'binning', 'armconfigs']
-
-
-class ProgTemp(Hierarchy):
-    parents = [InstrumentConfiguration]
-    factors = ['length', 'exposure_code']
-    idname = 'progtemp_code'
-
-    @classmethod
-    def from_progtemp_code(cls, progtemp_code):
-        progtemp_code = progtemp_code.split('.')[0]
-        progtemp_code_list = list(map(int, progtemp_code))
-        configs = ArmConfig.from_progtemp_code(progtemp_code_list)
-        mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
-        binning = progtemp_code_list[3]
-        config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
-        exposure_code = progtemp_code[2:4]
-        length = progtemp_code_list[1]
-        return cls(progtemp_code=progtemp_code, length=length, exposure_code=exposure_code,
-                   instrumentconfiguration=config)
-
-
-class OBSpec(Hierarchy):
-    idname = 'catname'
-    factors = ['obtitle']
-    parents = [ObsTemp, FibreSet, ProgTemp]
-
-
-class OBRealisation(Hierarchy):
-    idname = 'obid'
-    factors = ['obstartmjd']
-    parents = [OBSpec]
-
-
-class Exposure(Hierarchy):
-    parents = [OBRealisation]
-    factors = ['expmjd']
-    identifier_builder = ['expmjd']
-
-
-class Run(Hierarchy):
-    idname = 'runid'
-    parents = [ArmConfig, Exposure]
-    indexer = 'armconfig'

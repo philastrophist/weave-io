@@ -4,7 +4,7 @@ from weaveio.address import Address
 
 logging.basicConfig(level=logging.INFO)
 
-from weaveio.data import OurData
+from weaveio.opr3 import OurData
 
 data = OurData('data/', port=11007)
 # data.directory_to_neo4j()

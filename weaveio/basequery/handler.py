@@ -5,7 +5,8 @@ import networkx as nx
 
 from .hierarchy import *
 from .factor import *
-from .query import Path, AmbiguousPathError, FullQuery, Generator
+from .query import AmbiguousPathError, FullQuery
+from .query_objects import Path, Generator
 from ..utilities import quote
 
 
