@@ -31,7 +31,7 @@ unwind = hierarchy_query_decorator(writequery.unwind)
 merge_node = hierarchy_query_decorator(writequery.merge_node)
 collect = hierarchy_query_decorator(writequery.collect)
 merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
-merge_node_relationship = hierarchy_query_decorator(writequery.merge_node_relationship)
+merge_node_relationship = hierarchy_query_decorator(writequery.merge_dependent_node)
 set_version = hierarchy_query_decorator(writequery.set_version)
 
 

@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 
-from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, merge_node_relationship, set_version
+from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, merge_dependent_node, set_version
 from weaveio.graph import Graph
 
 
@@ -332,7 +332,7 @@ def test_merge_relationship():
 def test_merge_node_relationship_with_one():
     with CypherQuery() as query:
         a = merge_node(['a'], {})
-        merge_node_relationship(['b'], {'prop': 'b'},  [(a, 'rel', {'prop': 'a'})])
+        merge_dependent_node(['b'], {'prop': 'b'}, [(a, 'rel', {'prop': 'a'})])
     cypher = query.render_query()[0]
     assert cypher == '\n'.join([PREFIX,
                                 "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
@@ -346,8 +346,8 @@ def test_merge_node_relationship_with_two():
     with CypherQuery() as query:
         a = merge_node(['a'], {})
         b = merge_node(['b'], {})
-        merge_node_relationship(['c'], {'prop': 'c'},  [(a, 'rel', {'prop': 'a'}),
-                                                        (b, 'rel', {'prop': 'b'})])
+        merge_dependent_node(['c'], {'prop': 'c'}, [(a, 'rel', {'prop': 'a'}),
+                                                    (b, 'rel', {'prop': 'b'})])
     cypher = query.render_query()[0]
     assert cypher == '\n'.join([PREFIX,
                                 "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
@@ -362,14 +362,14 @@ def test_versioning(write_database):
     with CypherQuery() as query:
         a = merge_node(['a'], {})
         b = merge_node(['b'], {})
-        c1 = merge_node_relationship(['c'], {'prop': 'c1'},  [(a, 'rel', {'prop': 'a'}),
-                                                        (b, 'rel', {'prop': 'b'})])
+        c1 = merge_dependent_node(['c'], {'prop': 'c1'}, [(a, 'rel', {'prop': 'a'}),
+                                                          (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c1, {})
-        c2 = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
-                                                            (b, 'rel', {'prop': 'b'})])
+        c2 = merge_dependent_node(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
+                                                          (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c2, {})
-        c2dupl = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
-                                                            (b, 'rel', {'prop': 'b'})])
+        c2dupl = merge_dependent_node(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
+                                                              (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c2dupl, {})
     cypher = query.render_query()[0]
     write_database.neograph.run(cypher)
