@@ -102,12 +102,15 @@ class Data:
                         else:
                             todo.add(hier)
 
-    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False):
+    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False,
+                 password=None, user=None):
         self.handler = Handler(self)
         self.host = host
         self.port = port
         self.write_allowed = write
         self._graph = None
+        self.password = password
+        self.user = user
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.address = Address()
@@ -142,7 +145,12 @@ class Data:
     @property
     def graph(self):
         if self._graph is None:
-            self._graph = Graph(host=self.host, port=self.port, write=self.write)
+            d = {}
+            if self.password is not None:
+                d['password'] = self.password
+            if self.user is not None:
+                d['user'] = self.user
+            self._graph = Graph(host=self.host, port=self.port, write=self.write, **d)
         return self._graph
 
     def make_relation_graph(self):

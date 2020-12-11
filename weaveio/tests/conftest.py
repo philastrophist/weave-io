@@ -5,7 +5,7 @@ import pytest
 from py2neo.wiring import WireError
 
 from weaveio.graph import Graph
-from weaveio.neo4jquery.make_procedure import get_all_procedures
+from weaveio.neo4jquery.procedures.make_procedure import get_all_procedures
 
 
 @pytest.fixture(scope='module')

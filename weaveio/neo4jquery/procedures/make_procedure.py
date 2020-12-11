@@ -45,8 +45,3 @@ def get_all_procedures(mode, tag=''):
         name = f.name.replace('.cql', '')
         procedures.append(make_procedure(name, str(f), mode, tag))
     return procedures
-
-
-if __name__ == '__main__':
-    p = make_procedure('multimerge', 'multimerge.cql', 'write')
-    print(p)

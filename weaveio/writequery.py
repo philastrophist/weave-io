@@ -235,7 +235,8 @@ class GetItemStatement(Statement):
         ins = [mapping]
         if isinstance(item, CypherVariable):
             ins.append(item)
-        self.out = CypherVariable(mapping.namehint + '_' +item.namehint)
+        itemname = getattr(item, 'namehint', 'item') if not isinstance(item, str) else item
+        self.out = CypherVariable(mapping.namehint + '_' + itemname)
         super(GetItemStatement, self).__init__(ins, [self.out])
 
     def to_cypher(self):

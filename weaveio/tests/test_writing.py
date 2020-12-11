@@ -80,7 +80,7 @@ def test_merge_many2one_with_mixture_run(procedure_tag, write_database):
 def test_getitem():
     with CypherQuery() as query:
         parent1 = merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2})
-    query.returns(parent1['a'], parent1['b'])
+        query.returns(parent1['a'], parent1['b'])
     cypher = query.render_query()[0]
     assert cypher.split('\n')[-1] == "RETURN b0['a'], b0['b']"
 
@@ -90,7 +90,7 @@ def test_input_data_retrievable(input_data):
     with CypherQuery() as query:
         data1 = CypherData(input_data, 'mydata')
         data2 = CypherData(input_data, 'mydata')
-    query.returns(data1, data2)
+        query.returns(data1, data2)
     cypher = query.render_query()[0]
     assert cypher == PREFIX + '\nRETURN $mydata0, $mydata1'
 
@@ -102,7 +102,7 @@ def test_unwind_input_list():
         with unwind(data) as number:
             node = merge_node(['A'], {'a': number})
         nodes = collect(node)
-    query.returns(nodes)
+        query.returns(nodes)
     cypher = query.render_query()[0]
     expected = [
         PREFIX,
@@ -124,7 +124,7 @@ def test_unwind_nested_contexts():
                 node = merge_node(['A'], {'a': number1, 'b': number2})
             nodelist = collect(node)
         nodelistlist = collect(nodelist)
-    query.returns(nodelistlist)
+        query.returns(nodelistlist)
     cypher = query.render_query()[0]
     expected = [
         PREFIX,
@@ -235,7 +235,7 @@ def test_groupby_makes_dict(procedure_tag, write_database):
             node = merge_node(['A'], {'a': number})
         nodes = collect(node)
         nodedict = groupby(nodes, 'a')
-    query.returns(nodedict['1'].a, nodedict['2']['a'], nodedict['3']['a'], nodedict['0']['a'])
+        query.returns(nodedict['1']['a'], nodedict['2']['a'], nodedict['3']['a'], nodedict['0']['a'])
     cypher, parameters = query.render_query(procedure_tag)
     result = write_database.neograph.run(cypher, parameters=parameters).to_table()
     assert result[0] == ('1', '2', '3', None)
@@ -364,13 +364,13 @@ def test_versioning(write_database):
         b = merge_node(['b'], {})
         c1 = merge_node_relationship(['c'], {'prop': 'c1'},  [(a, 'rel', {'prop': 'a'}),
                                                         (b, 'rel', {'prop': 'b'})])
-        set_version([a, b], ['rel', 'rel'], 'C', c1)
+        set_version([a, b], ['rel', 'rel'], 'C', c1, {})
         c2 = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
                                                             (b, 'rel', {'prop': 'b'})])
-        set_version([a, b], ['rel', 'rel'], 'C', c2)
+        set_version([a, b], ['rel', 'rel'], 'C', c2, {})
         c2dupl = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
                                                             (b, 'rel', {'prop': 'b'})])
-        set_version([a, b], ['rel', 'rel'], 'C', c2dupl)
+        set_version([a, b], ['rel', 'rel'], 'C', c2dupl, {})
     cypher = query.render_query()[0]
     write_database.neograph.run(cypher)
     results = write_database.neograph.run('MATCH (c:C) return c.prop, c.version ORDER BY c.version').to_table()
