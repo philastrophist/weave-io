@@ -73,9 +73,9 @@ class CypherQuery(metaclass=ContextMeta):
     def add_data(self, data):
         self.data.append(data)
 
-    def returns(self, *args):
+    def returns(self, *args, **kwargs):
         if not isinstance(self.statements[-1], Returns):
-            self.statements.append(Returns(*args))
+            self.statements.append(Returns(*args, **kwargs))
         else:
             raise ValueError(f"Cannot have more than one return")
 
@@ -103,12 +103,16 @@ class Statement:
 
 
 class Returns(Statement):
-    def __init__(self, *input_variables):
-        self.input_variables = list(input_variables)
+    def __init__(self, *unnamed_variables, **named_variables):
+        self.unnamed_variables = unnamed_variables
+        self.named_variables = named_variables
+        self.input_variables = list(unnamed_variables) + list(named_variables.values())
         self.output_variables = []
 
     def to_cypher(self):
-        return 'RETURN ' + ', '.join(map(str, self.input_variables))
+        l = list(map(str, self.unnamed_variables))
+        l += [f'{v} as {k}' for k, v in self.named_variables.items()]
+        return 'RETURN ' + ', '.join(l)
 
 
 class TimeStamp(Statement):

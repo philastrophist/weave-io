@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import List, Dict, Union
+from typing import List, Dict, Union, Tuple, Optional
 
 from . import CypherQuery
 from .base import camelcase, Varname, Statement, CypherVariable
@@ -105,7 +105,7 @@ class CollisionManager(Statement):
             CALL apoc.do.when(size({self.colliding_keys}) > 0, 
                 "{self.collision_record} SET c = $collisions SET c._dbcreated = $time RETURN $time", 
                 "RETURN $time",
-                {{{self.collision_record_input}, collisions: apoc.map.fromLists({self.colliding_keys}, apoc.map.values({self.propvar}, {self.colliding_keys})), time:time0}}) yield {self.value}
+                {{{self.collision_record_input}, collisions: apoc.map.fromLists({self.colliding_keys}, apoc.map.values({self.propvar}, {self.colliding_keys})), time:time0}}) yield value as {self.value}
             """
         return dedent(query)
 
@@ -208,7 +208,8 @@ class MergeDependentNode(CollisionManager):
                 SET {self.dummy} += ${self.propvar}
                 RETURN {self.dummy} as {self.out}",   // created
             "RETURN $d as {self.out}",  // matched 
-            {{d:{self.dummy}, {parent_dict}, {self.propvar}:{self.propvar}}}) yield {self.out} 
+            {{d:{self.dummy}, {parent_dict}, {self.propvar}:{self.propvar}}}) yield value as {self.value}
+        WITH *, {self.value}.{self.out} as {self.out} 
         """
         return dedent(query)
 
@@ -295,7 +296,7 @@ def match_relationship(parent, child, reltype, properties):
     return statement.out
 
 
-def merge_node(labels, identproperties, properties, collision_manager='track&flag'):
+def merge_single_node(labels, identproperties, properties, collision_manager='track&flag'):
     query = CypherQuery.get_context()  # type: CypherQuery
     statement = MergeNode(labels, identproperties, properties, collision_manager)
     query.add_statement(statement)
@@ -322,3 +323,41 @@ def set_version(parents, reltypes, childlabel, child, childproperties):
     query = CypherQuery.get_context()  # type: CypherQuery
     statement = SetVersion(parents, reltypes, childlabel, child, childproperties)
     query.add_statement(statement)
+
+
+def merge_node(labels, identproperties, properties=None,
+               parents: Dict[CypherVariable, Union[Tuple[str, Optional[Dict], Optional[Dict]], str]] = None,
+               versioned_label=None,
+               versioned_properties=None,
+               collision_manager='track&flag'):
+    if properties is None:
+        properties = {}
+    if parents is None:
+        parents = {}
+    parent_list = []
+    reltype_list = []
+    relidentproperties_list = []
+    relproperties_list = []
+    for parent, reldata in parents.items():
+        if isinstance(reldata, str):
+            reldata = [reldata]
+        parent_list.append(parent)
+        reltype_list.append(reldata[0])
+        if len(reldata) == 2:
+            relidentproperties_list.append(reldata[1])
+        else:
+            relidentproperties_list.append({})
+        if len(reldata) == 3:
+            relproperties_list.append(reldata[2])
+        else:
+            relproperties_list.append({})
+    if len(parents):
+        node = merge_dependent_node(labels, identproperties, properties, parent_list,
+                             reltype_list, relidentproperties_list, relproperties_list, collision_manager)
+    else:
+        node = merge_single_node(labels, identproperties, properties, collision_manager)
+    if versioned_label is not None:
+        if versioned_properties is None:
+            versioned_properties = {}
+        set_version(parent_list, reltype_list, versioned_label, node, versioned_properties)
+    return node
