@@ -1,6 +1,7 @@
 from collections import defaultdict
 from contextlib import contextmanager
-from typing import Dict, Union, List, Tuple
+from textwrap import dedent
+from typing import Dict, Union, List
 
 import re
 
@@ -264,47 +265,6 @@ class Varname:
         return self.key
 
 
-class MergeMany2One(Statement):
-    def __init__(self, parents: Dict[Union[CypherVariable, Collection], str], labels: List[str], properties: dict, versioned_labels: List[str]):
-        self.parents = parents
-        self.labels = [camelcase(l) for l in labels]
-        self.properties = {Varname(k): v for k, v in properties.items()}
-        self.versioned_labels = [camelcase(l) for l in versioned_labels]
-        self.child = CypherVariable(labels[-1])
-        self.speclist = [CypherVariable(p.namehint+'spec') for p in self.parents]
-        self.specs = CypherVariable('specs')
-        factors = [v for v in properties.values() if isinstance(v, CypherVariable)]
-        super().__init__(factors + list(parents.keys()), [self.child] + self.speclist + [self.specs])
-        if len(versioned_labels):
-            self.version = CypherVariable('version')
-            self.output_variables.append(self.version)
-
-    def make_specs(self):
-        lines = []
-        specs = []
-        for (parent, reltype), spec in zip(self.parents.items(), self.speclist):
-            if isinstance(parent, Collection):
-                lines.append(f"WITH *, [i in range(0, size({parent}) - 1) | [{parent}[i], '{reltype}', {{order: i}}]] as {spec}")
-            else:
-                lines.append(f"WITH *, [[{parent}, '{reltype}', {{order: 0}}]] as {spec}")
-            specs.append(spec)
-        return '\n'.join(lines) + f'\nWITH *, {"+".join(map(str, specs))} as {self.specs}'
-
-    def to_cypher(self):
-        merge = self.make_specs()
-        merge += f"\nCALL custom.multimerge({self.specs}, {self.labels}, {self.properties}, {{dbcreated: {self.timestamp}}}, {{dbcreated: {self.timestamp}}}) YIELD child as {self.child}"
-        if len(self.versioned_labels):
-            merge += f"\nCALL custom.version({self.specs}, {self.child}, {self.versioned_labels}, 'version') YIELD version as {self.version}"
-        return merge
-
-
-class MatchMany2One(MergeMany2One):
-    def to_cypher(self):
-        match = self.make_specs()
-        match += f"\nCALL custom.multimatch({self.specs}, {self.labels}, {self.properties}, false, false) YIELD child as {self.child}"
-        return match
-
-
 class MatchNode(Statement):
     keyword = 'MATCH'
 
@@ -320,16 +280,7 @@ class MatchNode(Statement):
         return f"{self.keyword} ({self.out}:{labels} {self.properties})"
 
 
-class MergeNode(MatchNode):
-    keyword = 'MERGE'
-
-    def to_cypher(self):
-        return super().to_cypher() + f" ON CREATE SET {self.out}.dbcreated = {self.timestamp}"
-
-
 class MatchRelationship(Statement):
-    keyword = 'MATCH'
-
     def __init__(self, parent, child, reltype: str, properties: dict):
         self.parent = parent
         self.child = child
@@ -341,43 +292,227 @@ class MatchRelationship(Statement):
 
     def to_cypher(self):
         reldata = f'[{self.out}:{self.reltype} {self.properties}]'
-        return f"{self.keyword} ({self.parent})-{reldata}->({self.child})"
+        return f"MATCH ({self.parent})-{reldata}->({self.child})"
 
 
-class MergeRelationship(MatchRelationship):
-    keyword = 'MERGE'
-
-    def to_cypher(self):
-        return super().to_cypher() + f' ON CREATE SET {self.out}.dbcreated = time0'
-
-
-class MergeDependentNode(Statement):
-    keyword = 'MERGE'
-
-    def __init__(self, labels: List[str], properties: dict, parents: List[Tuple[CypherVariable, str, dict]]):
-        if len(parents) > 2:
-            raise ValueError(f"Cannot perform dependent node merge for more than 2 parent nodes. "
-                             f"This is a restriction of neo4j.")
-        self.labels = [camelcase(l) for l in labels]
+class CollisionManager(Statement):
+    def __init__(self, out, identproperties: Dict[str, Union[str, int, float, CypherVariable]],
+                 properties: Dict[str, Union[str, int, float, CypherVariable]], collision_manager='track&flag'):
+        self.out = out
         self.properties = {Varname(k): v for k, v in properties.items()}
-        self.parents = [(p[0], p[1], {Varname(k): v for k, v in p[2].items()}) for p in parents]
+        self.identproperties = {Varname(k): v for k, v in identproperties.items()}
+        self.propvar = CypherVariable('props')
+        self.colliding_keys = CypherVariable('colliding_keys')
+        self.value = CypherVariable('unnamed')
         inputs = [v for v in properties.values() if isinstance(v, CypherVariable)]
-        inputs += [p[0] for p in parents]
-        self.out = CypherVariable(labels[-1])
-        self.rels = [CypherVariable('rel') for p in parents]
-        super().__init__(inputs, [self.out] + self.rels)
+        inputs += [v for v in identproperties.values() if isinstance(v, CypherVariable)]
+        outputs = [self.out, self.propvar]
+        if collision_manager == 'track&flag':
+            outputs += [self.value, self.colliding_keys]
+        self.collision_manager = collision_manager
+        super().__init__(inputs, outputs)
+
+    @property
+    def on_match(self):
+        if self.collision_manager == 'overwrite':
+            return f"SET {self.out} += {self.propvar}   // overwrite with new colliding properties"
+        return f"SET {self.out} = apoc.map.merge({self.propvar}, properties({self.out}))   // update, keeping the old colliding properties"
+
+    @property
+    def on_create(self):
+        return f"SET {self.out}._dbcreated = time0, {self.out} += {self.propvar}  // setup as standard"
+
+    @property
+    def on_run(self):
+        return f'SET {self.out}._dbupdated = time0  // always set updated time '
+
+    @property
+    def merge_statement(self):
+        raise NotImplementedError
+
+    @property
+    def collision_record(self):
+        raise NotImplementedError
+
+    @property
+    def collision_record_input(self):
+        raise NotImplementedError
+
+    @property
+    def post_merge(self):
+        return dedent(f"""
+    ON MATCH {self.on_match}
+    ON CREATE {self.on_create}
+    {self.on_run}""")
+
+    @property
+    def pre_merge(self):
+        return f"WITH *, {self.properties} as {self.propvar}"
+
+    @property
+    def merge_paragraph(self):
+        return f"""
+        {self.pre_merge}
+        {self.merge_statement}
+        {self.post_merge}
+        """
 
     def to_cypher(self):
+        query = self.merge_paragraph
+        if self.collision_manager == 'track&flag':
+            query += f"""
+            WITH *, [x in apoc.coll.intersection(keys({self.propvar}), keys(properties({self.out}))) where {self.propvar}[x] <> {self.out}[x]] as {self.colliding_keys}
+            CALL apoc.do.when(size({self.colliding_keys}) > 0, 
+                "{self.collision_record} SET c = $collisions SET c._dbcreated = $time RETURN $time", 
+                "RETURN $time",
+                {{{self.collision_record_input}, collisions: apoc.map.fromLists({self.colliding_keys}, apoc.map.values({self.propvar}, {self.colliding_keys})), time:time0}}) yield {self.value}
+            """
+        return dedent(query)
+
+
+class MergeNode(CollisionManager):
+    def __init__(self, labels: List[str], identproperties: Dict[str, Union[str, int, float, CypherVariable]],
+                 properties: Dict[str, Union[str, int, float, CypherVariable]], collision_manager='track&flag'):
+        self.labels = [camelcase(l) for l in labels]
+        out = CypherVariable(labels[-1])
+        super().__init__(out, identproperties, properties, collision_manager)
+
+    @property
+    def merge_statement(self):
         labels = ':'.join(map(str, self.labels))
-        child = f'({self.out}:{labels} {self.properties})'
-        statement = f'({self.parents[0][0]})-[{self.rels[0]}:{self.parents[0][1]} {self.parents[0][2]}]->{child}'
-        if len(self.parents) > 1:
-            statement += f'<-[{self.rels[1]}:{self.parents[1][1]} {self.parents[1][2]}]-({self.parents[1][0]})'
-        statement = f"{self.keyword} {statement} ON CREATE SET {self.rels[0]}.dbcreated = time0, " \
-                    f"{self.out}.dbcreated = time0"
-        if len(self.parents) > 1:
-            statement += f", {self.rels[1]}.dbcreated = time0"
-        return statement
+        return f'MERGE ({self.out}: {labels} {self.identproperties})'
+
+    @property
+    def collision_record(self):
+        return f"WITH $innode as innode CREATE (c:_Collision)-[:COLLIDES]->(innode)"
+
+    @property
+    def collision_record_input(self):
+        return f"innode: {self.out}"
+
+
+class MergeRelationship(CollisionManager):
+    def __init__(self, parent, child, reltype: str, identproperties: dict, properties: dict, collision_manager='track&flag'):
+        self.parent = parent
+        self.child = child
+        self.reltype = reltype
+        out = CypherVariable(reltype)
+        super().__init__(out, identproperties, properties, collision_manager)
+
+    @property
+    def merge_statement(self):
+        return f'MERGE ({self.parent})-[{self.out}:{self.reltype} {self.identproperties}]->({self.child})'
+
+    @property
+    def collision_record(self):
+        return f"WITH $a as a, $b as b CREATE (a)-[c:COLLIDES]->(b)"
+
+    @property
+    def collision_record_input(self):
+        return f"a:{self.parent}, b:{self.child}"
+
+
+class MergeDependentNode(CollisionManager):
+    def __init__(self, labels: List[str], identproperties: Dict[str, Union[str, int, float, CypherVariable]],
+                 properties: Dict[str, Union[str, int, float, CypherVariable]],
+                 parents: List[CypherVariable],
+                 reltypes: List[str],
+                 relidentproperties: List[Dict[str, Union[str, int, float, CypherVariable]]],
+                 relproperties: List[Dict[str, Union[str, int, float, CypherVariable]]],
+                 collision_manager='track&flag'):
+        if not (len(parents) == len(reltypes) == len(relproperties) == len(relidentproperties)):
+            raise ValueError(f"Parents must have the same length as reltypes, relproperties, relidentproperties")
+        self.labels = [camelcase(l) for l in labels]
+        self.relidentproperties = relidentproperties
+        self.relproperties = relproperties
+        self.parents = parents
+        self.outnode = CypherVariable(labels[-1])
+        self.rels = [CypherVariable(reltype) for reltype in reltypes]
+        self.dummy = CypherVariable('dummy')
+        self.reltypes = reltypes
+        self.relpropsvars = [CypherVariable('rel') for _ in relproperties]
+        super().__init__(self.outnode, identproperties, properties, collision_manager)
+        self.input_variables += parents
+        self.output_variables += self.rels
+        self.output_variables.append(self.dummy)
+
+    @property
+    def pre_merge(self):
+        line = f"WITH *, {self.properties} as {self.propvar}"
+        for relprop, relpropsvar in zip(self.relproperties, self.relpropsvars):
+            line += f', {relprop} as {relpropsvar}'
+        return line
+
+    @property
+    def merge_statement(self):
+        labels = ':'.join(map(str, self.labels))
+        relations = []
+        for i, (parent, reltype, relidentprop) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties)):
+            rel = f'({parent})-[:{reltype} {relidentprop}]->'
+            if i == 0:
+                child = f'({self.dummy}: {labels} {self.identproperties})'
+            else:
+                child = f'({self.dummy})'
+            relations.append(rel + child)
+        optional_match = 'OPTIONAL MATCH ' + ',\n'.join(relations)
+        create = 'CREATE ' + ',\n'.join(relations)
+        parent_dict = ','.join([f'{p}:{p}' for p in self.parents])
+        parent_alias = ','.join([f'${p} as {p}' for p in self.parents])
+        query = f"""
+        WITH *, {self.properties} as {self.propvar}
+        CALL apoc.lock.nodes([{self.parents}]) // let's lock ahead this time
+        {optional_match}
+        call apoc.do.when({self.dummy} IS NULL, 
+                "WITH {parent_alias}
+                {create}
+                SET {self.dummy} += ${self.propvar}
+                RETURN {self.dummy} as {self.out}",   // created
+            "RETURN $d as {self.out}",  // matched 
+            {{d:{self.dummy}, {parent_dict}, {self.propvar}:{self.propvar}}}) yield {self.out} 
+        """
+        return dedent(query)
+
+    @property
+    def on_match(self):
+        if self.collision_manager == 'overwrite':
+            query = f"SET {self.out} += {self.propvar}   // overwrite with new colliding properties"
+        else:
+            query = f"SET {self.out} = apoc.map.merge({self.propvar}, properties({self.out}))   // update, keeping the old colliding properties"
+        for r, rprops in zip(self.rels, self.relpropsvars):
+            if self.collision_manager == 'overwrite':
+                query += f"\nSET {r} += {rprops}"
+            else:
+                query += f"\nSET {r} = apoc.map.merge({rprops}, properties({r}))"
+        return query
+
+    @property
+    def on_create(self):
+        query = f"SET {self.out}._dbcreated = time0, {self.out} += {self.propvar}  // setup as standard"
+        for r, rprops in zip(self.rels, self.relpropsvars):
+            query += f'\nSET {r}._dbupdated = time0, {r} += {rprops}'
+        return query
+
+    @property
+    def on_run(self):
+        query = f"SET {self.out}._dbupdated = time0  // always set updated time"
+        for r in self.rels:
+            query += f'\nSET {r}._dbupdated = time0'
+        return query
+
+    @property
+    def post_merge(self):
+        return dedent(f"""call apoc.do.when({self.dummy} IS NULL, 
+            "{self.on_create}",
+            "{self.on_match}"
+            {self.on_run}""")
+
+    @property
+    def collision_record(self):
+        return f"WITH $innode as innode CREATE (c:_Collision)-[:COLLIDES]->(innode)"
+
+    @property
+    def collision_record_input(self):
+        return f"innode: {self.out}"
 
 
 class SetVersion(Statement):
@@ -406,63 +541,45 @@ class SetVersion(Statement):
         return '\n'.join(query)
 
 
-
-def _mergematch_node(labels, properties, parents=None, versioned_labels=None, merge=False):
-    query = CypherQuery.get_context()
-    if parents is None:
-        parents = {}
-    if versioned_labels is None:
-        versioned_labels = []
-    if not parents:
-        if merge:
-            statement = MergeNode(labels, properties)
-        else:
-            statement = MatchNode(labels, properties)
-    else:
-        if merge:
-            statement = MergeMany2One(parents, labels, properties, versioned_labels)
-        else:
-            statement = MatchMany2One(parents, labels, properties, versioned_labels)
-    query.add_statement(statement)
-    return statement.output_variables[0]
-
-
-def match_node(labels, properties, parents=None, versioned_labels=None):
-    return _mergematch_node(labels, properties, parents, versioned_labels, merge=False)
-
-
-def merge_node(labels, properties, parents=None, versioned_labels=None):
-    return _mergematch_node(labels, properties, parents, versioned_labels, merge=True)
-
-
-def _mergematch_relationship(parent, child, reltype, properties, merge=True):
+def match_node(labels, properties):
     query = CypherQuery.get_context()  # type: CypherQuery
-    if merge:
-        statement = MergeRelationship(parent, child, reltype, properties)
-    else:
-        statement = MatchRelationship(parent, child, reltype, properties)
-    returned = statement.output_variables[0]
-    query.add_statement(statement)
-    return returned
-
-
-def merge_relationship(parent, child, reltype, properties):
-    return _mergematch_relationship(parent, child, reltype, properties, True)
-
-
-def match_relationship(parent, child, reltype, properties):
-    return _mergematch_relationship(parent, child, reltype, properties, False)
-
-
-def merge_node_relationship(labels: List[str], properties: dict,
-                            parents: List[Tuple[CypherVariable, str, dict]]):
-    query = CypherQuery.get_context()  # type: CypherQuery
-    statement = MergeDependentNode(labels, properties, parents)
+    statement = MatchNode(labels, properties)
     query.add_statement(statement)
     return statement.out
 
+
+def match_relationship(parent, child, reltype, properties):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MatchRelationship(parent, child, reltype, properties)
+    query.add_statement(statement)
+    return statement.out
+
+
+def merge_node(labels, identproperties, properties, collision_manager='track&flag'):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MergeNode(labels, identproperties, properties, collision_manager)
+    query.add_statement(statement)
+    return statement.out
+
+
+def merge_relationship(parent, child, reltype, identproperties, properties, collision_manager='track&flag'):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MergeRelationship(parent, child, reltype, identproperties, properties, collision_manager)
+    query.add_statement(statement)
+    return statement.out
+
+
+def merge_dependent_node(labels, identproperties, properties, parents, reltypes, relidentproperties, relproperties,
+                         collision_manager='track&flag'):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MergeDependentNode(labels, identproperties, properties, parents, reltypes, relidentproperties, relproperties,
+                                   collision_manager)
+    query.add_statement(statement)
+    return statement.outnode
+
+
 def set_version(parents, reltypes, childlabel, child, childproperties):
-    query = CypherQuery.get_context() # type: CypherQuery
+    query = CypherQuery.get_context()  # type: CypherQuery
     statement = SetVersion(parents, reltypes, childlabel, child, childproperties)
     query.add_statement(statement)
 
