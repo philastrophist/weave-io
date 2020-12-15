@@ -1,5 +1,9 @@
 import pytest
+from hypothesis import given
+import hypothesis.strategies as st
+
 import numpy as np
+from hypothesis.strategies import composite
 
 from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, set_version
 from weaveio.graph import Graph
@@ -47,6 +51,57 @@ def test_match_node(write_database):
     assert row["a"] == 1
     assert row["b"] == 2
     assert row["c"] == [1,2,3]
+
+baseproperty = st.text() | st.floats(allow_nan=True, allow_infinity=True) | st.integers()
+property = baseproperty | st.lists(baseproperty)
+
+@composite
+def node(draw, labels=st.lists(st.text()), properties=st.dictionaries(st.text(), property), identproperties=baseproperty):
+    return (draw(labels), draw(identproperties), draw(properties))
+
+@composite
+def relation(draw, reltype=st.text(), properties=st.dictionaries(st.text(), property), identproperties=baseproperty):
+    return (draw(reltype), draw(identproperties), draw(properties))
+
+
+@pytest.mark.parametrize('collision_manager', ['track&flag', 'ignore', 'overwrite'])
+@pytest.mark.parametrize('different_parents', [True, False])
+@pytest.mark.parametrize('different_identproperties', [True, False])
+@pytest.mark.parametrize('different_properties', [True, False])
+@pytest.mark.parametrize('different_reltype', [True, False])
+@pytest.mark.parametrize('different_relidentproperties', [True, False])
+@pytest.mark.parametrize('different_relproperties', [True, False])
+@given(parents=st.lists(st.tuples(node(), relation()), min_size=0, max_size=5, unique=True))
+class TestDependentMergeWithOneParent:
+    @pytest.fixture(autouse=True)
+    def database(self, write_database):
+        """setup the parent nodes in the database first"""
+
+    @pytest.fixture(autouse=True)
+    def after_first(self):
+        """Run the first command (i.e. the first merge to setup the test)"""
+        # do something
+        return self.database
+
+    @pytest.fixture(autouse=True)
+    def after_second(self):
+        """Run the second command (i.e. the merge that should have some expected result, which is tested for)"""
+        # do something
+        self.first
+        return self.first
+
+    def test_merged_node_or_nodes_exist_as_expected(self):
+        """Standard cypher query to check that all properties etc exist"""
+        assert False
+
+    def test_node_collisions_exist_if_necessary(self):
+        assert False
+
+    def test_rel_collisions_exist_if_necessary(self):
+        assert False
+
+
+
 
 
 def test_merge_many2one_with_one(write_database):

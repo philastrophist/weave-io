@@ -49,6 +49,8 @@ class CollisionManager(Statement):
         outputs = [self.out, self.propvar]
         if collision_manager == 'track&flag':
             outputs += [self.value, self.colliding_keys]
+        if collision_manager not in ['overwrite', 'ignore']:
+            raise ValueError(f"Unknown collision_manager {collision_manager}")
         self.collision_manager = collision_manager
         super().__init__(inputs, outputs)
 
