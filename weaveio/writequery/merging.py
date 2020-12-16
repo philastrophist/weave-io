@@ -192,8 +192,15 @@ class MergeDependentNode(CollisionManager):
         if not (len(parents) == len(reltypes) == len(relproperties) == len(relidentproperties)):
             raise ValueError(f"Parents must have the same length as reltypes, relproperties, relidentproperties")
         self.labels = [camelcase(l) for l in labels]
-        self.relidentproperties, relidentpropins = neo4j_dictionary(relidentproperties)
-        self.relproperties, relpropins = neo4j_dictionary(relproperties)
+        self.relidentproperties, relidentpropins = [], []
+        self.relproperties, relpropins = [], []
+        for ident, prop in zip(relidentproperties, relproperties):
+            identdict, identpropins = neo4j_dictionary(ident)
+            propdict, propins = neo4j_dictionary(prop)
+            self.relidentproperties.append(identdict)
+            self.relproperties.append(propdict)
+            relidentpropins += identpropins
+            relpropins += propins
         self.parents = parents
         self.outnode = CypherVariable(labels[-1])
         self.rels = [CypherVariable(reltype) for reltype in reltypes]
@@ -209,8 +216,9 @@ class MergeDependentNode(CollisionManager):
 
     def validate_properties(self):
         super(MergeDependentNode, self).validate_properties()
-        if any(p in self.relidentproperties for p in self.relproperties.keys()):
-            raise ValueError(f"Cannot have the same key in both properties and identproperties")
+        for idents, props in zip(self.relidentproperties, self.relproperties):
+            if any(p in idents for p in props.keys()):
+                raise ValueError(f"Cannot have the same key in both properties and identproperties")
 
     @property
     def pre_merge(self):
@@ -235,7 +243,6 @@ class MergeDependentNode(CollisionManager):
         parent_dict = ','.join([f'{p}:{p}' for p in self.parents])
         parent_alias = ','.join([f'${p} as {p}' for p in self.parents])
         query = f"""
-        WITH *, {self.properties} as {self.propvar}
         CALL apoc.lock.nodes([{self.parents}]) // let's lock ahead this time
         {optional_match}
         call apoc.do.when({self.dummy} IS NULL, 
@@ -251,22 +258,26 @@ class MergeDependentNode(CollisionManager):
 
     @property
     def on_match(self):
+        rprop_dict = ', '.join([f'${xi} as {xi}' for x in zip(self.rels, self.relpropsvars) for xi in x])
+        query = f"WITH ${self.out} as {self.out} {rprop_dict}\n"
         if self.collision_manager == 'overwrite':
-            query = f"SET {self.out} += {self.propvar}   // overwrite with new colliding properties"
+            query += f"SET {self.out} += ${self.propvar}   // overwrite with new colliding properties"
         else:
-            query = f"SET {self.out} = apoc.map.merge({self.propvar}, properties({self.out}))   // update, keeping the old colliding properties"
+            query += f"SET {self.out} = apoc.map.merge(${self.propvar}, properties({self.out}))   // update, keeping the old colliding properties"
         for r, rprops in zip(self.rels, self.relpropsvars):
             if self.collision_manager == 'overwrite':
-                query += f"\nSET {r} += {rprops}"
+                query += f"\nSET {r} += ${rprops}"
             else:
-                query += f"\nSET {r} = apoc.map.merge({rprops}, properties({r}))"
+                query += f"\nSET {r} = apoc.map.merge(${rprops}, properties({r}))"
         return query
 
     @property
     def on_create(self):
-        query = f"SET {self.out}._dbcreated = time0, {self.out} += {self.propvar}  // setup as standard"
+        rprop_dict = ', '.join([f'${xi} as {xi}' for x in zip(self.rels, self.relpropsvars) for xi in x])
+        query = f"WITH ${self.out} as {self.out} {rprop_dict}\n"
+        query += f"SET {self.out}._dbcreated = time0, {self.out} += ${self.propvar}  // setup as standard"
         for r, rprops in zip(self.rels, self.relpropsvars):
-            query += f'\nSET {r}._dbupdated = time0, {r} += {rprops}'
+            query += f'\nSET {r}._dbupdated = time0, {r} += ${rprops}'
         return query
 
     @property
@@ -278,9 +289,10 @@ class MergeDependentNode(CollisionManager):
 
     @property
     def post_merge(self):
+        rprop_dict = ', '.join([f'{xi}:{xi}' for x in zip(self.rels, self.relpropsvars) for xi in x])
         return dedent(f"""call apoc.do.when({self.dummy} IS NULL, 
             "{self.on_create}",
-            "{self.on_match}"
+            "{self.on_match}", {{ {self.out}:{self.out}, {self.propvar}:{self.propvar}, {rprop_dict} }})
             {self.on_run}""")
 
     @property
@@ -290,6 +302,9 @@ class MergeDependentNode(CollisionManager):
     @property
     def collision_record_input(self):
         return f"innode: {self.out}"
+
+    def to_cypher(self):
+        return super().to_cypher()
 
 
 class SetVersion(Statement):
@@ -366,7 +381,7 @@ def merge_node(labels, identproperties, properties=None,
                parents: Dict[CypherVariable, Union[Tuple[str, Optional[Dict], Optional[Dict]], str]] = None,
                versioned_label=None,
                versioned_properties=None,
-               collision_manager='track&flag'):
+               collision_manager='track&flag') -> CypherVariable:
     if properties is None:
         properties = {}
     if parents is None:
@@ -380,11 +395,11 @@ def merge_node(labels, identproperties, properties=None,
             reldata = [reldata]
         parent_list.append(parent)
         reltype_list.append(reldata[0])
-        if len(reldata) == 2:
+        if len(reldata) > 1:
             relidentproperties_list.append(reldata[1])
         else:
             relidentproperties_list.append({})
-        if len(reldata) == 3:
+        if len(reldata) > 2:
             relproperties_list.append(reldata[2])
         else:
             relproperties_list.append({})

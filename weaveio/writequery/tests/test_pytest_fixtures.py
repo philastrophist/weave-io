@@ -27,6 +27,12 @@ def assert_dictionary_equal(a, b):
     b = _convert_nans_in_dict(b)
     assert a == b
 
+
+def test_nans(write_database):
+    r = write_database.execute('return {a: $nan}', nan=np.nan).to_table()[0][0]
+    assert_dictionary_equal({'a': np.nan}, r)
+
+
 def assert_overlapping_properties(write_database, time, node1, node2, collision_manager):
     """
     Once node1 and node2 have been identified as the same, assert that the set properties are correct
@@ -136,6 +142,17 @@ def test_node_pair(node, sampler, different_properties, different_identpropertie
     assert_tests(node1, node2, collision_manager, write_database, time)
 
 
-def test_nans(write_database):
-    r = write_database.execute('return {a: $nan}', nan=np.nan).to_table()[0][0]
-    assert_dictionary_equal({'a': np.nan}, r)
+def test_node_pair_with_parents(write_database):
+    """
+    create the nparent nodes
+    """
+    write_database.neograph.run('MATCH (n) DETACH DELETE n')
+    write_database.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
+    write_database.neograph.run('call db.clearQueryCaches')
+    with CypherQuery() as query:
+        a = merge_node(['A'], {})
+        b = merge_node(['B'], {})
+        child = merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: ['rel', {'a': 1}, {'b': 1}],
+                                                                b: ['rel', {'a': 2}, {'b': 2}]})
+    cypher, params = query.render_query()
+    pass

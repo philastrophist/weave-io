@@ -24,7 +24,7 @@ label_strategy = _label_strategy()
 labels_strategy = st.lists(label_strategy, min_size=1, max_size=5, unique=True)
 
 _basic_types = [st.integers(min_value=-9999, max_value=999), st.text(alphabet=ascii_letters+digits), st.floats(allow_nan=False, allow_infinity=False)]
-_list_types = [st.lists(x) for x in _basic_types]
+_list_types = [st.lists(x, max_size=10) for x in _basic_types]  # limited to prevent long waits
 
 baseproperty_strategy = st.one_of(*_basic_types)
 neo4jproperty_strategy = st.one_of(*_basic_types+_list_types)
