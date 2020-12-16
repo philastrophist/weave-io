@@ -5,7 +5,6 @@ import pytest
 from py2neo.wiring import WireError
 
 from weaveio.graph import Graph
-from weaveio.neo4jquery.procedures.make_procedure import get_all_procedures
 
 
 @pytest.fixture(scope='module')
@@ -21,8 +20,6 @@ def write_database(procedure_tag) -> py2neo.Graph:
         graph.neograph.run('MATCH (n) DETACH DELETE n')
         graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
         graph.neograph.run('call db.clearQueryCaches')
-        for text in get_all_procedures('write', procedure_tag):
-            graph.neograph.run(text)
         return graph
     except (AssertionError, WireError):
         pytest.xfail("unsupported configuration of testing database")

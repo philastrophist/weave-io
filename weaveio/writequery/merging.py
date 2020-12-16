@@ -2,7 +2,28 @@ from textwrap import dedent
 from typing import List, Dict, Union, Tuple, Optional
 
 from . import CypherQuery
-from .base import camelcase, Varname, Statement, CypherVariable
+from .base import camelcase, Varname, Statement, CypherVariable, CypherData
+
+
+def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, CypherVariable], List[CypherVariable]]:
+    """
+    If d is a cyphervariable, return it
+    If not, then we submit all the individual entries as data params to neo4j
+    This avoids translating the data types ourselves!
+    """
+    if isinstance(d, CypherVariable):
+        return d, [d]
+    assert all(isinstance(k, str) for k in d.keys()), "keys must be strings"
+    newd = {}
+    ins = []
+    for k, v in d.items():
+        assert v is not None
+        k = Varname(k)
+        if not isinstance(v, CypherVariable):
+            v = CypherData(v)
+        ins.append(v)
+        newd[k] = v
+    return newd, ins
 
 
 class MatchNode(Statement):
@@ -10,9 +31,8 @@ class MatchNode(Statement):
 
     def __init__(self, labels: List[str], properties: dict):
         self.labels = [camelcase(l) for l in labels]
-        self.properties = {Varname(k): v for k, v in properties.items()}
+        self.properties, inputs = neo4j_dictionary(properties)
         self.out = CypherVariable(labels[-1])
-        inputs = [v for v in properties.values() if isinstance(v, CypherVariable)]
         super(MatchNode, self).__init__(inputs, [self.out])
 
     def to_cypher(self):
@@ -25,8 +45,8 @@ class MatchRelationship(Statement):
         self.parent = parent
         self.child = child
         self.reltype = reltype
-        self.properties = {Varname(k): v for k, v in properties.items()}
-        inputs = [self.parent, self.child] + [v for v in properties.values() if isinstance(v, CypherVariable)]
+        self.properties, inputs = neo4j_dictionary(properties)
+        inputs += [self.parent, self.child]
         self.out = CypherVariable(reltype)
         super().__init__(inputs, [self.out])
 
@@ -35,24 +55,31 @@ class MatchRelationship(Statement):
         return f"MATCH ({self.parent})-{reldata}->({self.child})"
 
 
+class PropertyOverlapError(Exception):
+    pass
+
 class CollisionManager(Statement):
     def __init__(self, out, identproperties: Dict[str, Union[str, int, float, CypherVariable]],
                  properties: Dict[str, Union[str, int, float, CypherVariable]], collision_manager='track&flag'):
         self.out = out
-        self.properties = {Varname(k): v for k, v in properties.items()}
-        self.identproperties = {Varname(k): v for k, v in identproperties.items()}
+        self.properties, propinputs = neo4j_dictionary(properties)
+        self.identproperties, identinputs = neo4j_dictionary(identproperties)
+        self.validate_properties()
         self.propvar = CypherVariable('props')
         self.colliding_keys = CypherVariable('colliding_keys')
         self.value = CypherVariable('unnamed')
-        inputs = [v for v in properties.values() if isinstance(v, CypherVariable)]
-        inputs += [v for v in identproperties.values() if isinstance(v, CypherVariable)]
+        inputs = propinputs + identinputs
         outputs = [self.out, self.propvar]
         if collision_manager == 'track&flag':
             outputs += [self.value, self.colliding_keys]
-        if collision_manager not in ['overwrite', 'ignore']:
+        elif collision_manager not in ['overwrite', 'ignore']:
             raise ValueError(f"Unknown collision_manager {collision_manager}")
         self.collision_manager = collision_manager
         super().__init__(inputs, outputs)
+
+    def validate_properties(self):
+        if any(p in self.identproperties for p in self.properties.keys()):
+            raise PropertyOverlapError(f"Cannot have the same key in both properties and identproperties")
 
     @property
     def on_match(self):
@@ -165,8 +192,8 @@ class MergeDependentNode(CollisionManager):
         if not (len(parents) == len(reltypes) == len(relproperties) == len(relidentproperties)):
             raise ValueError(f"Parents must have the same length as reltypes, relproperties, relidentproperties")
         self.labels = [camelcase(l) for l in labels]
-        self.relidentproperties = relidentproperties
-        self.relproperties = relproperties
+        self.relidentproperties, relidentpropins = neo4j_dictionary(relidentproperties)
+        self.relproperties, relpropins = neo4j_dictionary(relproperties)
         self.parents = parents
         self.outnode = CypherVariable(labels[-1])
         self.rels = [CypherVariable(reltype) for reltype in reltypes]
@@ -175,8 +202,15 @@ class MergeDependentNode(CollisionManager):
         self.relpropsvars = [CypherVariable('rel') for _ in relproperties]
         super().__init__(self.outnode, identproperties, properties, collision_manager)
         self.input_variables += parents
+        self.input_variables += relidentpropins
+        self.input_variables += relpropins
         self.output_variables += self.rels
         self.output_variables.append(self.dummy)
+
+    def validate_properties(self):
+        super(MergeDependentNode, self).validate_properties()
+        if any(p in self.relidentproperties for p in self.relproperties.keys()):
+            raise ValueError(f"Cannot have the same key in both properties and identproperties")
 
     @property
     def pre_merge(self):
@@ -265,9 +299,10 @@ class SetVersion(Statement):
         self.parents = parents
         self.reltypes = reltypes
         self.childlabel = camelcase(childlabel)
-        self.childproperties = {Varname(k): v for k, v in childproperties.items()}
+        self.childproperties, other_ins = neo4j_dictionary(childproperties)
         self.child = child
-        super(SetVersion, self).__init__(self.parents, [])
+        other_ins.append(child)
+        super(SetVersion, self).__init__(self.parents+other_ins, [])
 
     def to_cypher(self):
         matches = ', '.join([f'({p})-[:{r}]->(c:{self.childlabel} {self.childproperties})' for p, r in zip(self.parents, self.reltypes)])

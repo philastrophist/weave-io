@@ -7,7 +7,9 @@ from ..context import ContextMeta
 
 
 def camelcase(x):
-    return x[0].upper() + x[1:]
+    if x[0] != x[0].upper():
+        raise ValueError(f"Labels must be camelcase")
+    return x
 
 
 class CypherQuery(metaclass=ContextMeta):
@@ -89,6 +91,12 @@ class Varname:
 
     def __repr__(self):
         return self.key
+
+    def __eq__(self, other):
+        return getattr(other, 'key', other) == self.key
+
+    def __hash__(self):
+        return hash(hash(self.key) + hash('varname'))
 
 
 class Statement:
