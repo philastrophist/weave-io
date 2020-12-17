@@ -352,10 +352,10 @@ class MergeDependentNode(CollisionManager):
         return dedent(f"""
         // post merge
         call apoc.do.when({self.dummy} IS NULL,
-        "WITH {aliases}\n{self.on_create} RETURN $time0",
-        "WITH {aliases}\n{self.on_match} RETURN $time0",
+        "WITH {aliases}\n{self.on_create}\n RETURN $time0",
+        "WITH {aliases}\n{self.on_match}\n RETURN $time0",
         {{ {dct} }}) yield value as {self.unnamed}
-        {self.on_run}""")
+        {self.on_run}\n""")
 
     @property
     def collision_record(self):
