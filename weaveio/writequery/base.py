@@ -1,4 +1,5 @@
 from collections import defaultdict
+from textwrap import dedent
 from typing import List
 
 import re
@@ -63,7 +64,7 @@ class CypherQuery(metaclass=ContextMeta):
         self.make_variable_names()
         q = '\n'.join([s.to_cypher() for s in self.statements])
         datadict = {d.name: d.data for d in self.data}
-        return re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', ''), datadict
+        return dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')), datadict
 
     def open_context(self):
         self.open_contexts.append([])
