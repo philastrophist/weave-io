@@ -152,11 +152,12 @@ def test_node_pair_with_parents(write_database):
     with CypherQuery() as query:
         a = merge_node(['A'], {})
         b = merge_node(['B'], {})
-        child = merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: ['rel', {'a': 1}, {'b': 1}],
-                                                                b: ['rel', {'a': 2}, {'b': 2}]}, collision_manager='overwrite')
+        for i in range(2):
+            merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: ['rel', {'a': 1}, {'b': 1}],
+                                                            b: ['rel', {'a': 2}, {'b': 2}]}, collision_manager='track&flag')
     cypher, params = query.render_query()
-    cypher = cypher.replace('rel_props1 RETURN $time0', 'rel_props1 RETURN rel1')
-    cypher = cypher.replace('RETURN time0', 'RETURN unnamed2')
+    # cypher = cypher.replace('rel_props1 RETURN $time0', 'rel_props1 RETURN rel1')
+    # cypher = cypher.replace('RETURN time0', 'RETURN unnamed2')
     cursor = write_database.execute(cypher, **params)
     result = cursor.to_data_frame()
     result

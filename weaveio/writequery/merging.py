@@ -283,11 +283,11 @@ class MergeDependentNode(CollisionManager):
         for dummy, real in zip(self.dummyrelvars, self.relvars):
             create = create.replace(f'[{dummy}:', f'[{real}:')
         create = create.replace(f'{self.dummy}', f'{self.out}')
-        aliases = expand_to_cypher_alias(self.identproperties, *self.parents+self.relidentproperties)
-        dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents+self.relidentproperties)
         on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
         on_match_rel_returns = ', '.join([f'{dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
+        aliases = expand_to_cypher_alias(self.identproperties, *self.parents+self.relidentproperties+self.dummyrelvars)
+        dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents+self.relidentproperties+self.dummyrelvars)
         query = f"""
         CALL apoc.lock.nodes({self.parents}) // let's lock ahead this time
         {optional_match}
