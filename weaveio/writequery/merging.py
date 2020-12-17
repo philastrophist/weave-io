@@ -241,6 +241,7 @@ class MergeDependentNode(CollisionManager):
         self.dummy = CypherVariable('dummy')
         self.reltypes = reltypes
         self.relpropsvars = [CypherVariable(f'{t}_props') for t in reltypes]
+        self.colliding_rel_keys = [CypherVariable('colliding_rel_keys') for _ in reltypes]
         super().__init__(self.outnode, identproperties, properties, collision_manager)
         self.child_holder = CypherVariable('child_holder')
         self.unnamed = CypherVariable('unnamed')
@@ -250,6 +251,7 @@ class MergeDependentNode(CollisionManager):
         self.output_variables += self.relvars
         self.output_variables += self.dummyrelvars
         self.output_variables += self.relpropsvars
+        self.output_variables += self.colliding_rel_keys
         self.output_variables.append(self.dummy)
         self.output_variables.append(self.child_holder)
         self.output_variables.append(self.unnamed)
@@ -303,27 +305,38 @@ class MergeDependentNode(CollisionManager):
         return dedent(query)
 
     @property
-    def on_match(self):
-        if self.collision_manager == 'overwrite':
-            query = f"SET {self.out} += {self.propvar}   // overwrite with new colliding properties"
-        else:
-            query = f"SET {self.out} = apoc.map.merge({self.propvar}, properties({self.out}))   // update, keeping the old colliding properties"
-        for r, rprops in zip(self.relvars, self.relpropsvars):
-            if self.collision_manager == 'overwrite':
-                query += f"\nSET {r} += {rprops}"
+    def on_match(self):  # remember, we are in a call context
+        query = ''
+        for i, (r, rprops, colliding_keys) in enumerate(zip(self.relvars+[self.out], self.relpropsvars+[self.propvar], self.colliding_rel_keys+[self.colliding_keys])):
+            if self.collision_manager == 'track&flag':
+                if r != self.out:  # handled by the base class above
+                    query += dedent(f"""
+                        WITH *, [x in apoc.coll.intersection(keys({rprops}), keys(properties({r}))) where {rprops}[x] <> {r}[x]] as {colliding_keys}
+                        CALL apoc.do.when(size({colliding_keys}) > 0, 
+                            'WITH $inrel as inrel 
+                             MATCH (a)-[inrel]->(b)  
+                             CREATE (a)-[c:_Collision]->(b) SET c = $collisions 
+                             SET c._dbcreated = $time
+                             SET c._reltype = type(inrel)
+                             RETURN $time', 
+                            'RETURN $time',
+                            {{inrel: {r}, collisions: apoc.map.fromLists({colliding_keys}, apoc.map.values({rprops}, {colliding_keys})), time:$time0}}) yield value as _{i}{self.value}
+                    """)
+            elif self.collision_manager == 'overwrite':
+                query += f"\nSET {r} += {rprops}   // overwrite with new colliding properties"
             else:
-                query += f"\nSET {r} = apoc.map.merge({rprops}, properties({r}))"
+                query += f"\nSET {r} = apoc.map.merge({rprops}, properties({r}))  // update, keeping the old colliding properties"
         return query
 
     @property
-    def on_create(self):
+    def on_create(self):  # remember, we are in a call context
         query = f"SET {self.out}._dbcreated = $time0, {self.out} += {self.propvar}  // setup as standard"
         for r, rprops in zip(self.relvars, self.relpropsvars):
-            query += f'\nSET {r}._dbupdated = $time0, {r} += {rprops}'
+            query += f'\nSET {r}._dbupdated = $time0, {r}._dbcreated = $time0, {r} += {rprops}'
         return query
 
     @property
-    def on_run(self):
+    def on_run(self):  # remember, we are in a call context
         query = f"SET {self.out}._dbupdated = time0  // always set updated time"
         for r in self.relvars:
             query += f'\nSET {r}._dbupdated = time0'
@@ -338,9 +351,9 @@ class MergeDependentNode(CollisionManager):
         aliases = expand_to_cypher_alias(self.out, self.propvar, *self.relvars+self.relpropsvars)
         return dedent(f"""
         // post merge
-        call apoc.do.when({self.dummy} IS NULL, 
+        call apoc.do.when({self.dummy} IS NULL,
         "WITH {aliases}\n{self.on_create} RETURN $time0",
-        "WITH {aliases}\n{self.on_match} RETURN $time0", 
+        "WITH {aliases}\n{self.on_match} RETURN $time0",
         {{ {dct} }}) yield value as {self.unnamed}
         {self.on_run}""")
 

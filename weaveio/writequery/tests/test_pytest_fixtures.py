@@ -7,6 +7,7 @@ from .test_hypo import create_node_from_node, node_strategy, is_null, Node
 from .. import CypherQuery, merge_node
 from ..base import Varname
 from ..merging import PropertyOverlapError
+from ...graph import Graph
 
 SYSTEM_PROPERTIES = ['_dbupdated', '_dbcreated']
 
@@ -142,7 +143,8 @@ def test_node_pair(node, sampler, different_properties, different_identpropertie
     assert_tests(node1, node2, collision_manager, write_database, time)
 
 
-def test_node_pair_with_parents(write_database):
+@pytest.mark.parametrize('collision_manager', ['track&flag', 'overwrite', 'ignore'])
+def test_node_pair_with_parents_different_rels_properties(write_database: Graph, collision_manager):
     """
     create the nparent nodes
     """
@@ -152,12 +154,33 @@ def test_node_pair_with_parents(write_database):
     with CypherQuery() as query:
         a = merge_node(['A'], {})
         b = merge_node(['B'], {})
-        for i in range(2):
-            merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: ['rel', {'a': 1}, {'b': 1}],
-                                                            b: ['rel', {'a': 2}, {'b': 2}]}, collision_manager='track&flag')
+        for i in range(3):
+            merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: [f'arel', {'a': 1}, {'b': i}],
+                                                            b: ['brel', {'a': 2}, {'b': i}]},
+                       collision_manager=collision_manager)
     cypher, params = query.render_query()
-    # cypher = cypher.replace('rel_props1 RETURN $time0', 'rel_props1 RETURN rel1')
-    # cypher = cypher.replace('RETURN time0', 'RETURN unnamed2')
-    cursor = write_database.execute(cypher, **params)
-    result = cursor.to_data_frame()
-    result
+    time = write_database.execute(cypher, **params).to_table()[0][0]
+    assert len(write_database.execute('MATCH (c:_Collision) RETURN c').to_table()) == 0
+    collision_result = write_database.execute('MATCH ()-[c:_Collision]->() RETURN c ORDER BY c.b, c._reltype').to_series()
+    if collision_manager == 'track&flag':
+        assert len(collision_result) == 4  # one is create, the other 2 collide, times by 2 and so there should be 4
+        assert [i['b'] for i in collision_result.values] == [1, 1, 2, 2]  #  two collisions, two properties in each
+        assert [i['_reltype'] for i in collision_result.values] == ['arel', 'brel', 'arel', 'brel']  #  two collisions, two properties in each
+    else:
+        assert len(collision_result) == 0
+    result = write_database.execute('MATCH (a:A)-[ar:arel]->(c:C)<-[br:brel]-(b:B) '
+                                    'RETURN properties(a) as a, properties(b) as b, properties(c) as c, '
+                                    'properties(ar) as ar, properties(br) as br').to_data_frame()
+    assert len(result) == 1
+    result = result.iloc[0]
+    assert result['c'] == {'c': 1, 'id': 1, '_dbupdated': time, '_dbcreated': time}
+    if collision_manager == 'overwrite':
+        assert result['ar'] == {'a': 1, 'b': 2, '_dbupdated': time, '_dbcreated': time}
+        assert result['br'] == {'a': 2, 'b': 2, '_dbupdated': time, '_dbcreated': time}
+    else:
+        assert result['ar'] == {'a': 1, 'b': 0, '_dbupdated': time, '_dbcreated': time}
+        assert result['br'] == {'a': 2, 'b': 0, '_dbupdated': time, '_dbcreated': time}
+
+
+
+
