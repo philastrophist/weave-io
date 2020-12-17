@@ -91,6 +91,10 @@ class PropertyOverlapError(Exception):
     pass
 
 
+class NullPropertyError(Exception):
+    pass
+
+
 class CollisionManager(Statement):
     def __init__(self, out, identproperties: Dict[str, Union[str, int, float, CypherVariable]],
                  properties: Dict[str, Union[str, int, float, CypherVariable]], collision_manager='track&flag'):
@@ -113,6 +117,9 @@ class CollisionManager(Statement):
     def validate_properties(self):
         if any(p in self.identproperties for p in self.properties.keys()):
             raise PropertyOverlapError(f"Cannot have the same key in both properties and identproperties")
+        for k, v in self.identproperties.items():
+            if v != v:
+                raise NullPropertyError(f"Cannot assign a nan to a node identify property")
 
     @property
     def on_match(self):
@@ -163,7 +170,7 @@ class CollisionManager(Statement):
         query = self.merge_paragraph
         if self.collision_manager == 'track&flag':
             query += f"""
-            WITH *, [x in apoc.coll.intersection(keys({self.propvar}), keys(properties({self.out}))) where {self.propvar}[x] <> {self.out}[x]] as {self.colliding_keys}
+            WITH *, [x in apoc.coll.intersection(keys({self.propvar}), keys(properties({self.out}))) where ({self.propvar}[x] is null or {self.out}[x] is null) or {self.propvar}[x] <> {self.out}[x]] as {self.colliding_keys}
             CALL apoc.do.when(size({self.colliding_keys}) > 0, 
                 "{self.collision_record} SET c = $collisions SET c._dbcreated = $time RETURN $time", 
                 "RETURN $time",
@@ -261,6 +268,9 @@ class MergeDependentNode(CollisionManager):
         for idents, props in zip(self.relidentproperties, self.relproperties):
             if any(p in idents for p in props.keys()):
                 raise ValueError(f"Cannot have the same key in both properties and identproperties")
+            for k, v in idents.items():
+                if v != v:
+                    raise NullPropertyError(f"Cannot assign a nan to a node identify property")
 
     @property
     def pre_merge(self):
@@ -311,7 +321,7 @@ class MergeDependentNode(CollisionManager):
             if self.collision_manager == 'track&flag':
                 if r != self.out:  # handled by the base class above
                     query += dedent(f"""
-                        WITH *, [x in apoc.coll.intersection(keys({rprops}), keys(properties({r}))) where {rprops}[x] <> {r}[x]] as {colliding_keys}
+                        WITH *, [x in apoc.coll.intersection(keys({rprops}), keys(properties({r}))) where ({rprops}[x] is null or {r}[x] is null) or {rprops}[x] <> {r}[x]] as {colliding_keys}
                         CALL apoc.do.when(size({colliding_keys}) > 0, 
                             'WITH $inrel as inrel 
                              MATCH (a)-[inrel]->(b)  
