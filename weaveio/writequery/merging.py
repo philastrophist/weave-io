@@ -7,13 +7,7 @@ from .base import camelcase, Varname, Statement, CypherVariable, CypherData
 
 def are_different(a: CypherVariable, b: CypherVariable, out: CypherVariable) -> str:
     return dedent(f"""with *, [{a}, {b}] as xi
-                        with *, CASE 
-                            WHEN apoc.meta.type(xi[0]) <> apoc.meta.type(xi[1]) THEN true
-                            WHEN xi[0] <> xi[0] xor xi[1] <> xi[1] THEN true
-                            WHEN xi[0] <> xi[0] or xi[1] <> xi[1] THEN false
-                            WHEN xi[0] = xi[1] THEN false
-                            ELSE true
-                            END as {out}""")
+                        with *, NOT ((NOT (apoc.meta.type(xi[0]) <> apoc.meta.type(xi[1]))) AND (NOT (xi[0] <> xi[0] xor xi[1] <> xi[1])) AND (( xi[0] <> xi[0] or xi[1] <> xi[1]) OR (xi[0] = xi[1]))) as {out}""")
 
 
 def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, CypherVariable], List[CypherVariable]]:
