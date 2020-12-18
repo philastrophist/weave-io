@@ -6,19 +6,16 @@ from .base import camelcase, Varname, Statement, CypherVariable, CypherData
 
 
 def are_different(a: CypherVariable, b: CypherVariable, out: CypherVariable) -> str:
-    return dedent(f"""with *, apoc.coll.flatten(collect([{a}])) as a,  apoc.coll.flatten(collect([{b}])) as b
-                      with *, apoc.coll.zip(a, b) as zipped
-                      CALL {{ WITH zipped
-                            unwind zipped as xi
-                            with CASE 
-                                WHEN xi[0] <> xi[0] xor xi[1] <> xi[1] THEN true
-                                WHEN xi[0] <> xi[0] or xi[1] <> xi[1] THEN false
-                                WHEN xi[0] = xi[1] THEN false
-                                ELSE true
-                                END as is_different
-                            with collect(is_different) as is_different
-                            return any(x in is_different where x) as {out}
-                            }}""")
+    return dedent(f"""with *, [{a}, {b}] as xi
+                        with *, CASE 
+                            WHEN apoc.meta.type(xi[0]) <> apoc.meta.type(xi[1]) THEN true
+                            WHEN xi[0] is null xor xi[1] is null THEN true
+                            WHEN xi[0] is null or xi[1] is null THEN false
+                            WHEN xi[0] <> xi[0] xor xi[1] <> xi[1] THEN true
+                            WHEN xi[0] <> xi[0] or xi[1] <> xi[1] THEN false
+                            WHEN xi[0] = xi[1] THEN false
+                            ELSE true
+                            END as {out}""")
 
 
 def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, CypherVariable], List[CypherVariable]]:
