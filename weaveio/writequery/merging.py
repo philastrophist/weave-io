@@ -9,8 +9,6 @@ def are_different(a: CypherVariable, b: CypherVariable, out: CypherVariable) -> 
     return dedent(f"""with *, [{a}, {b}] as xi
                         with *, CASE 
                             WHEN apoc.meta.type(xi[0]) <> apoc.meta.type(xi[1]) THEN true
-                            WHEN xi[0] is null xor xi[1] is null THEN true
-                            WHEN xi[0] is null or xi[1] is null THEN false
                             WHEN xi[0] <> xi[0] xor xi[1] <> xi[1] THEN true
                             WHEN xi[0] <> xi[0] or xi[1] <> xi[1] THEN false
                             WHEN xi[0] = xi[1] THEN false

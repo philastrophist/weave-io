@@ -201,19 +201,22 @@ datum = st.integers(min_value=-100000, max_value=100000) | st.floats(allow_nan=T
 data = datum | st.lists(datum)
 
 @pytest.mark.diff
-@settings(deadline=500, max_examples=80, verbosity=Verbosity.normal)
+@settings(deadline=500, max_examples=100, verbosity=Verbosity.normal)
 @example(x=np.nan)
+@example(x=[np.nan])
 @given(x=data)
 def test_not_different(write_database, x):
     are_actually_different = _test_difference(write_database, x, x)
     assert are_actually_different == False
 
 @pytest.mark.diff
-@settings(deadline=500, max_examples=80, verbosity=Verbosity.normal)
+@settings(deadline=500, max_examples=100, verbosity=Verbosity.normal)
 @example(x=np.nan, y=1)
+@example(x=np.nan, y=[np.nan])
+@example(x=[1, np.nan], y=[1, 2])
 @given(x=data, y=data)
 def test_different(write_database, x, y):
-    assume(x != y and not (x != x and y != y))
+    assume(x != y and not (np.all(np.array(x) != np.array(x)) and np.all(np.array(y) != np.array(y))))
     are_actually_different = _test_difference(write_database, x, y)
     assert are_actually_different == True
 
