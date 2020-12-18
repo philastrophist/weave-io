@@ -13,7 +13,7 @@ def procedure_tag():
 
 
 @pytest.fixture(scope='function')
-def write_database(procedure_tag) -> py2neo.Graph:
+def write_database(procedure_tag) -> Graph:
     try:
         graph = Graph(port=7687, host='host.docker.internal')
         assert graph.neograph.name == 'testweaveiodonotuse', "I will not run tests on this database as a safety measure"

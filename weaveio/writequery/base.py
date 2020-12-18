@@ -1,6 +1,6 @@
 from collections import defaultdict
 from textwrap import dedent
-from typing import List
+from typing import List, Callable
 
 import re
 
@@ -109,6 +109,15 @@ class Statement:
 
     def to_cypher(self):
         raise NotImplementedError
+
+
+class CustomStatement(Statement):
+    def __init__(self, statement: Callable, input_variables, output_variables):
+        super().__init__(input_variables, output_variables)
+        self.statement = statement
+
+    def to_cypher(self):
+        return self.statement(*self.input_variables, *self.output_variables)
 
 
 class Returns(Statement):

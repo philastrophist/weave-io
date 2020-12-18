@@ -1,3 +1,6 @@
+from time import sleep
+from warnings import warn
+
 import py2neo
 from py2neo import Graph as NeoGraph
 
@@ -33,6 +36,17 @@ class Graph(metaclass=ContextMeta):
     def write(self):
         return CypherQuery()
 
+    def _execute(self, cypher, parameters, backoff=1, limit=10):
+        try:
+            return self.neograph.run(cypher, parameters=parameters)
+        except RuntimeError as e:
+            if backoff >= limit:
+                raise e
+            warn(f'Connection possibly busy, waiting {backoff} seconds to retry')
+            sleep(backoff)
+            backoff *= 2
+            return self._execute(cypher, parameters, backoff, limit)
+
     def execute(self, cypher, **payload):
         import pandas as pd
         d = {}
@@ -40,7 +54,7 @@ class Graph(metaclass=ContextMeta):
             if isinstance(v, (pd.DataFrame, pd.Series)):
                 v = pd.DataFrame(v).reset_index().to_dict('records')
             d[k] = v
-        return self.neograph.run(cypher, parameters=d)
+        return self._execute(cypher, d)
 
 Graph._context_class = Graph
 

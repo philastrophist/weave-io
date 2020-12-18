@@ -1,12 +1,13 @@
 import numpy as np
 import pytest
-from hypothesis import given, settings, note, Verbosity, HealthCheck, example, reproduce_failure
+from hypothesis import given, settings, note, Verbosity, HealthCheck, example, reproduce_failure, assume
 from hypothesis import strategies as st
 
 from .test_hypo import create_node_from_node, node_strategy, is_null, Node
 from .. import CypherQuery, merge_node
-from ..base import Varname
-from ..merging import PropertyOverlapError
+from ..actions import custom
+from ..base import Varname, CypherData
+from ..merging import PropertyOverlapError, are_different
 from ...graph import Graph
 
 SYSTEM_PROPERTIES = ['_dbupdated', '_dbcreated']
@@ -182,5 +183,45 @@ def test_node_pair_with_parents_different_rels_properties(write_database: Graph,
         assert result['br'] == {'a': 2, 'b': 0, '_dbupdated': time, '_dbcreated': time}
 
 
+def _test_difference(write_database, a, b):
+    with CypherQuery() as query:
+        _a = CypherData(a, 'a')
+        _b = CypherData(b, 'b')
+        diff = custom(are_different, [_a, _b], ['diff'])[0]
+        query.returns(diff=diff, a=_a, b=_b)
+    cypher, params = query.render_query()
+    are_actually_different, neoa, neob = write_database.execute(cypher, **params).to_table()[0]
+    note(f'a was input as {a} and output as {neoa}')
+    note(f'b was input as {b} and output as {neob}')
+    note(cypher)
+    return are_actually_different
 
+
+datum = st.integers(min_value=-100000, max_value=100000) | st.floats(allow_nan=True, allow_infinity=True) | st.text()
+data = datum | st.lists(datum)
+
+@pytest.mark.diff
+@settings(deadline=500, max_examples=80, verbosity=Verbosity.normal)
+@example(x=np.nan)
+@given(x=data)
+def test_not_different(write_database, x):
+    are_actually_different = _test_difference(write_database, x, x)
+    assert are_actually_different == False
+
+@pytest.mark.diff
+@settings(deadline=500, max_examples=80, verbosity=Verbosity.normal)
+@example(x=np.nan, y=1)
+@given(x=data, y=data)
+def test_different(write_database, x, y):
+    assume(x != y and not (x != x and y != y))
+    are_actually_different = _test_difference(write_database, x, y)
+    assert are_actually_different == True
+
+
+def test_null_returns_none(write_database):
+    assert write_database.execute('RETURN null').to_table()[0][0] is None
+
+
+def test_input_none_returns_none(write_database):
+    assert write_database.execute('RETURN $n', n=None).to_table()[0][0] is None
 
