@@ -220,3 +220,64 @@ def test_node_pair_with_parents_different_rels_properties(write_database: Graph,
         assert result['br'] == {'a': 2, 'b': 0, '_dbupdated': time, '_dbcreated': time}
 
 
+@pytest.mark.parametrize('collision_manager', ['track&flag', 'overwrite', 'ignore'])
+def test_node_pair_with_parents_different_parents(write_database: Graph, collision_manager):
+    """
+    create the nparent nodes
+    """
+    write_database.neograph.run('MATCH (n) DETACH DELETE n')
+    write_database.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
+    write_database.neograph.run('call db.clearQueryCaches')
+    with CypherQuery() as query:
+        a = merge_node(['A'], {})
+        b1 = merge_node(['B'], {'id': 1})
+        b2 = merge_node(['B'], {'id': 2})
+        merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: [f'arel', {'a': 1}, {'b': 1}],
+                                                        b1: ['brel', {'a': 2}, {'b': 1}]},
+                   collision_manager=collision_manager)
+        merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: [f'arel', {'a': 1}, {'b': 1}],
+                                                        b2: ['brel', {'a': 2}, {'b': 1}]},
+                   collision_manager=collision_manager)
+    cypher, params = query.render_query()
+    time = write_database.execute(cypher, **params).to_table()[0][0]
+    assert len(write_database.execute('MATCH (c:_Collision) RETURN c').to_table()) == 0
+    collision_result = write_database.execute('MATCH ()-[c:_Collision]->() RETURN c ORDER BY c.b, c._reltype').to_series()
+    assert len(collision_result) == 0
+    result = write_database.execute('MATCH (a:A)-[ar:arel]->(c:C)<-[br:brel]-(b:B) '
+                                    'RETURN properties(a) as a, properties(b) as b, properties(c) as c, '
+                                    'properties(ar) as ar, properties(br) as br').to_data_frame()
+    assert len(result) == 2
+
+
+@pytest.mark.parametrize('collision_manager', ['track&flag', 'overwrite', 'ignore'])
+def test_node_pair_with_parents_different_childprops(write_database: Graph, collision_manager):
+    """
+    create the nparent nodes
+    """
+    write_database.neograph.run('MATCH (n) DETACH DELETE n')
+    write_database.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
+    write_database.neograph.run('call db.clearQueryCaches')
+    with CypherQuery() as query:
+        a = merge_node(['A'], {})
+        b1 = merge_node(['B'], {'id': 1})
+        random = merge_node(['B'], {'id': 2})
+        merge_node(['C'], {'id': 1}, {'c': 1}, parents={a: [f'arel', {'a': 1}, {'b': 1}],
+                                                        b1: ['brel', {'a': 2}, {'b': 1}]},
+                   collision_manager=collision_manager)
+        merge_node(['C'], {'id': 2}, {'c': 1}, parents={a: [f'arel', {'a': 1}, {'b': 1}],
+                                                        b1: ['brel', {'a': 2}, {'b': 1}]},
+                   collision_manager=collision_manager)
+    cypher, params = query.render_query()
+    time = write_database.execute(cypher, **params).to_table()[0][0]
+    assert len(write_database.execute('MATCH (c:_Collision) RETURN c').to_table()) == 0
+    collision_result = write_database.execute('MATCH ()-[c:_Collision]->() RETURN c ORDER BY c.b, c._reltype').to_series()
+    assert len(collision_result) == 0
+    result = write_database.execute('MATCH (a:A)-[ar:arel]->(c:C)<-[br:brel]-(b:B) '
+                                    'RETURN properties(a) as a, properties(b) as b, properties(c) as c, '
+                                    'properties(ar) as ar, properties(br) as br').to_data_frame()
+    assert len(result) == 2
+
+
+@pytest.mark.parametrize('collision_manager', ['track&flag', 'overwrite', 'ignore'])
+def test_node_pair_with_parents_different_rels_properties_and_childprops(write_database: Graph, collision_manager):
+    assert False
