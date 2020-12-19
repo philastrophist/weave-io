@@ -1,11 +1,61 @@
+from datetime import datetime
 from time import sleep
 from warnings import warn
 
 import py2neo
 from py2neo import Graph as NeoGraph
 
+import numpy as np
+import pandas as pd
 from weaveio.context import ContextMeta
 from weaveio.writequery import CypherQuery
+
+missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.inf, None: np.inf, bool: np.inf, datetime: datetime(1900, 1, 1, 0, 0)}
+convert_types = {int:  float, float: float, str: str, type(None): float, None: float, bool: float,
+                 datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
+                 list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series}
+
+def is_null(x):
+    try:
+        return np.all(x != x)
+    except TypeError:
+        pass
+    return x is None
+
+
+def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=None):
+    if isinstance(x, (tuple, list)):
+        types = set(convert_types[type(i)] for i in x if not is_null(i))
+        if len(types) == 0:
+            acceptable_type = str
+        elif len(types) == 1:
+            acceptable_type = types.pop()
+        else:
+            raise TypeError(f"Lists must be of homogeneous type")
+        r = [_convert_datatypes(xi, nan2missing, none2missing, surrounding_type=acceptable_type) for xi in x]
+        if isinstance(x, tuple):
+            r = tuple(r)
+        return r
+    elif isinstance(x, dict):
+        return {_convert_datatypes(k, nan2missing, none2missing): _convert_datatypes(v, nan2missing, none2missing) for k, v in x.items()}
+    elif isinstance(x, (pd.DataFrame, pd.Series)):
+        return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
+    elif isinstance(x, np.ndarray):
+        return _convert_datatypes(x.tolist(), nan2missing, none2missing)
+    if not (none2missing or nan2missing):
+        return x
+    elif none2missing:
+        if x is None:
+            return missing_types[surrounding_type]
+    if nan2missing:
+        try:
+            if np.isnan(x):
+                return missing_types[surrounding_type]
+        except TypeError:
+            pass
+    if surrounding_type is not None:
+        return convert_types[surrounding_type](x)
+    return x
 
 
 class Graph(metaclass=ContextMeta):
@@ -48,14 +98,7 @@ class Graph(metaclass=ContextMeta):
             return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
-        import pandas as pd
-        d = {}
-        for k, v in payload.items():
-            if isinstance(v, (pd.DataFrame, pd.Series)):
-                v = pd.DataFrame(v).reset_index().to_dict('records')
-            d[k] = v
+        d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
         return self._execute(cypher, d)
 
 Graph._context_class = Graph
-
-

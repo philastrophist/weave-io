@@ -1,12 +1,14 @@
 from dataclasses import dataclass
-from string import ascii_letters, ascii_uppercase, digits, printable
+from string import ascii_letters, ascii_uppercase, digits
 from typing import Dict, List, Any
 
 import hypothesis.strategies as st
-from hypothesis import given, note, settings, reproduce_failure
+from hypothesis import given, note, settings
 from hypothesis.strategies import builds, data, composite
 from pytest import mark
-import numpy as np
+
+from weaveio.graph import _convert_datatypes, is_null
+
 
 @composite
 def _key_strategy(draw, start=st.text(min_size=1, max_size=1, alphabet=ascii_letters),
@@ -24,10 +26,12 @@ label_strategy = _label_strategy()
 labels_strategy = st.lists(label_strategy, min_size=1, max_size=5, unique=True)
 
 _basic_types = [st.integers(min_value=-9999, max_value=999), st.text(alphabet=ascii_letters+digits), st.floats(allow_nan=False, allow_infinity=False)]
+_nan_basic_types = [st.integers(min_value=-9999, max_value=999), st.text(alphabet=ascii_letters+digits), st.floats(allow_nan=True, allow_infinity=False)]
 _list_types = [st.lists(x, max_size=10) for x in _basic_types]  # limited to prevent long waits
+_nan_list_types = [st.lists(x, max_size=10) for x in _nan_basic_types]  # limited to prevent long waits
 
 baseproperty_strategy = st.one_of(*_basic_types)
-neo4jproperty_strategy = st.one_of(*_basic_types+_list_types)
+neo4jproperty_strategy = st.one_of(*_nan_basic_types+_nan_list_types)
 properties_strategy = st.dictionaries(key_strategy, neo4jproperty_strategy)
 identproperties_strategy = st.dictionaries(key_strategy, baseproperty_strategy)
 
@@ -149,16 +153,45 @@ def test_labels_from_labels(labels, different_labels, sampler):
         assert newlabels[0] == labels[0]  # at least one is the same
 
 
-def is_null(x):
-    try:
-        return np.all(x != x)
-    except TypeError:
-        pass
-    return x is None
+def is_equal(x, y):
+    x = _convert_datatypes(x)
+    y = _convert_datatypes(y)
+    return x == y or x is y
 
 
-def is_equal_or_null(x, y):
-    return x == y or (is_null(x) and is_null(y))
+all_types_dict = {int: st.integers(), float: st.floats(allow_nan=True, allow_infinity=True),
+                  str: st.text(), bool: st.booleans(), type(None): st.none(),
+                  dict: st.dictionaries(st.text(), neo4jproperty_strategy | st.lists(neo4jproperty_strategy))}
+
+def alter(x, sampler):
+    if isinstance(x, (tuple, list)):
+        if len(x) > 0:
+            n = sampler.draw(st.integers(0, len(x)-1))
+            other = sampler.draw(all_types_dict[type(x[n])])
+            y = x.copy()
+            y[n] = other
+            return x, y
+        else:
+            other = sampler.draw(neo4jproperty_strategy)
+            return x, [other]
+    other = sampler.draw(all_types_dict[type(x)])
+    return x, other
+
+
+@settings(max_examples=1000)
+@given(a=neo4jproperty_strategy)
+def test_is_equal(a):
+    assert is_equal(a, a)
+
+
+@settings(max_examples=1000)
+@given(a=neo4jproperty_strategy, sampler=st.data())
+def test_is_not_equal(a, sampler):
+    b = alter(a, sampler)
+    note(f'a is {a}')
+    note(f'b is {b}')
+    assert not is_equal(a, b)
+
 
 
 @settings(print_blob=True)
@@ -177,14 +210,22 @@ def test_properties_from_properties(properties, different_properties, sampler):
         assert not any(e in newprops for e in excluded)
     elif different_properties == 'crop':
         assert len(newprops) < len(properties) or len(properties) == 0
-        assert all(is_equal_or_null(properties[k], v) for k, v in newprops.items())
+        assert all(is_equal(properties[k], v) for k, v in newprops.items())
     elif different_properties == 'addkeys':
-        assert all(is_equal_or_null(newprops[k], v) for k, v in properties.items())
+        assert all(is_equal(newprops[k], v) for k, v in properties.items())
         assert len(newprops) > len(properties)
-        assert not any(e in newprops for e in excluded)
     elif different_properties == 'overwritekeys':
         assert len(newprops) == len(properties)
         if len(properties) > 0:
             # at least one different
-            assert any(not is_equal_or_null(newprops[k], v) for k, v in properties.items())
+            assert any(not is_equal(newprops[k], v) for k, v in properties.items())
 
+
+@given(x=neo4jproperty_strategy)
+def test_convert(x):
+    y = _convert_datatypes(x)
+    if isinstance(x, (tuple, list)):
+        assert all(isinstance(yi, type(y[0])) for yi in y), "Not a homogeneous list"
+        assert not any(is_null(yi) for yi in y), "List contained nulls"
+    else:
+        assert not is_null(y)
