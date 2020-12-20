@@ -1,11 +1,19 @@
 import pytest
-import numpy as np
+from hypothesis import given
+import hypothesis.strategies as st
 
-from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, merge_node_relationship, set_version
+import numpy as np
+from hypothesis.strategies import composite
+
+from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, set_version
 from weaveio.graph import Graph
 
 
 PREFIX = "WITH *, timestamp() as time0"
+
+def run_test_query(query, graph: Graph):
+    cypher, params = query.render_query()
+    return graph.execute(cypher, **params)
 
 
 def test_context_compatibility():
@@ -17,37 +25,108 @@ def test_context_compatibility():
             assert Graph.get_context() is graph
 
 
-def test_merge_node():
+def test_merge_node(write_database: Graph):
+    for i in range(2):
+        with CypherQuery() as query:
+            merge_node(labels=['A', 'B'], identproperties={'a': 1, 'b': 2, 'c': [1,2,3]})
+        run_test_query(query, write_database)
+    t = write_database.execute('MATCH (n) return labels(n) as labels, n.a, n.b, n.c').to_data_frame()
+    assert len(t) == 1
+    row = t.iloc[0]
+    assert sorted(row['labels']) == ['A', 'B']
+    assert row['n.a'] == 1
+    assert row['n.b'] == 2
+    assert row['n.c'] == [1,2,3]
+
+
+def test_match_node(write_database):
     with CypherQuery() as query:
-        merge_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1,2,3]})
-    cypher = query.render_query()[0].split('\n')
-    assert cypher[-2] == "MERGE (b0:A:B {a: 1, b: 2, c: [1, 2, 3]}) ON CREATE SET b0.dbcreated = time0"
+        merge_node(labels=['A', 'B'], identproperties={'a': 1, 'b': 2, 'c': [1, 2, 3]})
+        node = match_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1, 2, 3]})
+        query.returns(a=node['a'], b=node['b'], c=node['c'])
+    result = run_test_query(query, write_database)
+    t = result.to_data_frame()
+    assert len(t) == 1
+    row = t.iloc[0]
+    assert row["a"] == 1
+    assert row["b"] == 2
+    assert row["c"] == [1,2,3]
+
+baseproperty = st.text() | st.floats(allow_nan=True, allow_infinity=True) | st.integers()
+property = baseproperty | st.lists(baseproperty)
+
+@composite
+def node(draw, labels=st.lists(st.text()), properties=st.dictionaries(st.text(), property), identproperties=baseproperty):
+    return (draw(labels), draw(identproperties), draw(properties))
+
+@composite
+def relation(draw, reltype=st.text(), properties=st.dictionaries(st.text(), property), identproperties=baseproperty):
+    return (draw(reltype), draw(identproperties), draw(properties))
 
 
-def test_match_node():
+@pytest.mark.parametrize('collision_manager', ['track&flag', 'ignore', 'overwrite'])
+@pytest.mark.parametrize('different_parents', [True, False])
+@pytest.mark.parametrize('different_identproperties', [True, False])
+@pytest.mark.parametrize('different_properties', [True, False])
+@pytest.mark.parametrize('different_reltype', [True, False])
+@pytest.mark.parametrize('different_relidentproperties', [True, False])
+@pytest.mark.parametrize('different_relproperties', [True, False])
+@given(parents=st.lists(st.tuples(node(), relation()), min_size=0, max_size=5, unique=True))
+class TestDependentMergeWithOneParent:
+    @pytest.fixture(autouse=True)
+    def database(self, write_database):
+        """setup the parent nodes in the database first"""
+
+    @pytest.fixture(autouse=True)
+    def after_first(self):
+        """Run the first command (i.e. the first merge to setup the test)"""
+        # do something
+        return self.database
+
+    @pytest.fixture(autouse=True)
+    def after_second(self):
+        """Run the second command (i.e. the merge that should have some expected result, which is tested for)"""
+        # do something
+        self.first
+        return self.first
+
+    def test_merged_node_or_nodes_exist_as_expected(self):
+        """Standard cypher query to check that all properties etc exist"""
+        assert False
+
+    def test_node_collisions_exist_if_necessary(self):
+        assert False
+
+    def test_rel_collisions_exist_if_necessary(self):
+        assert False
+
+
+
+
+
+def test_merge_many2one_with_one(write_database):
     with CypherQuery() as query:
-        match_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1,2,3]})
-    cypher = query.render_query()[0].split('\n')
-    assert cypher[-2] == "MATCH (b0:A:B {a: 1, b: 2, c: [1, 2, 3]})"
-
-
-def test_merge_many2one_with_one():
-    with CypherQuery() as query:
-        parent = match_node(labels=['A', 'B'], properties={'a': 1, 'b': 2, 'c': [1,2,3]})
-        child = merge_node(['C'], {'p': 1}, parents={parent: 'req'}, versioned_labels=['A'])
-    cypher = query.render_query()[0].split('\n')
-    assert cypher[1] == "MATCH (b0:A:B {a: 1, b: 2, c: [1, 2, 3]})"
-    assert cypher[2] == "WITH *, [[b0, 'req', {order: 0}]] as bspec0"
-    assert cypher[3] == "WITH *, bspec0 as specs0"
-    assert cypher[-3] == "CALL custom.multimerge(specs0, ['C'], {p: 1}, {dbcreated: time0}, {dbcreated: time0}) YIELD child as c0"
-    assert cypher[-2] == "CALL custom.version(specs0, c0, ['A'], 'version') YIELD version as version0"
+        parent = merge_node(labels=['A', 'B'], identproperties={'a': 1, 'b': 2, 'c': [1, 2, 3]})
+        child = merge_node(['C'], {'p': 1}, parents={parent: ['req', {'a': 1, 'b': 2}]})
+        result = run_test_query(query, write_database)
+    t = write_database.execute('MATCH (n: C)<-[r]-(p) return labels(n) as labels, n.a, n.b, n.c, p.p, type(r), r.a, r.b').to_data_frame()
+    assert len(t) == 1
+    row = t[0]
+    assert row['n.a'] == 1
+    assert row['n.b'] == 2
+    assert row['n.c'] == [1,2,3]
+    assert row['p.p'] == 1
+    assert row['r.a'] == 1
+    assert row['r.b'] == 2
+    assert row['type(r)'] == 'req'
+    assert row['labels(n)'] == ['C']
 
 
 def test_merge_many2one_with_mixture():
     with CypherQuery() as query:
         parent1 = match_node(labels=['A', 'B'], properties={'a': 1})
         parent2 = match_node(labels=['A', 'B', 'other'], properties={'a': 2})
-        child = merge_node(['C'], {'p': 1}, parents={parent1: 'req1', parent2: 'req2'}, versioned_labels=['other'])
+        child = merge_node(['C'], {'p': 1}, parents={parent1: 'req1', parent2: 'req2'}, versioned_label='other')
     cypher = query.render_query()[0]
     expected = [PREFIX,
         "MATCH (b0:A:B {a: 1})",
@@ -332,7 +411,7 @@ def test_merge_relationship():
 def test_merge_node_relationship_with_one():
     with CypherQuery() as query:
         a = merge_node(['a'], {})
-        merge_node_relationship(['b'], {'prop': 'b'},  [(a, 'rel', {'prop': 'a'})])
+        merge_dependent_node(['b'], {'prop': 'b'}, [(a, 'rel', {'prop': 'a'})])
     cypher = query.render_query()[0]
     assert cypher == '\n'.join([PREFIX,
                                 "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
@@ -346,8 +425,8 @@ def test_merge_node_relationship_with_two():
     with CypherQuery() as query:
         a = merge_node(['a'], {})
         b = merge_node(['b'], {})
-        merge_node_relationship(['c'], {'prop': 'c'},  [(a, 'rel', {'prop': 'a'}),
-                                                        (b, 'rel', {'prop': 'b'})])
+        merge_dependent_node(['c'], {'prop': 'c'}, [(a, 'rel', {'prop': 'a'}),
+                                                    (b, 'rel', {'prop': 'b'})])
     cypher = query.render_query()[0]
     assert cypher == '\n'.join([PREFIX,
                                 "MERGE (a0:A {}) ON CREATE SET a0.dbcreated = time0",
@@ -362,14 +441,14 @@ def test_versioning(write_database):
     with CypherQuery() as query:
         a = merge_node(['a'], {})
         b = merge_node(['b'], {})
-        c1 = merge_node_relationship(['c'], {'prop': 'c1'},  [(a, 'rel', {'prop': 'a'}),
-                                                        (b, 'rel', {'prop': 'b'})])
+        c1 = merge_dependent_node(['c'], {'prop': 'c1'}, [(a, 'rel', {'prop': 'a'}),
+                                                          (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c1, {})
-        c2 = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
-                                                            (b, 'rel', {'prop': 'b'})])
+        c2 = merge_dependent_node(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
+                                                          (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c2, {})
-        c2dupl = merge_node_relationship(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
-                                                            (b, 'rel', {'prop': 'b'})])
+        c2dupl = merge_dependent_node(['c'], {'prop': 'c2'}, [(a, 'rel', {'prop': 'a'}),
+                                                              (b, 'rel', {'prop': 'b'})])
         set_version([a, b], ['rel', 'rel'], 'C', c2dupl, {})
     cypher = query.render_query()[0]
     write_database.neograph.run(cypher)

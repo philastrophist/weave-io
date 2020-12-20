@@ -18,7 +18,6 @@ def read_procedure_text(cql_fname):
     description = 'no description given'
     for l in header:
         if '//' in l:
-            print(l)
             l = l.split('//')[1].strip()
             if l.startswith('param:'):
                 params.append([i.strip() for i in l[len('param:'):].split('=>')])
