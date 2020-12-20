@@ -29,6 +29,8 @@ def hierarchy_query_decorator(function):
 
 unwind = hierarchy_query_decorator(writequery.unwind)
 merge_node = hierarchy_query_decorator(writequery.merge_node)
+match_node = hierarchy_query_decorator(writequery.match_node)
+match_pattern_node = hierarchy_query_decorator(writequery.match_pattern_node)
 collect = hierarchy_query_decorator(writequery.collect)
 merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
 set_version = hierarchy_query_decorator(writequery.set_version)
@@ -168,6 +170,9 @@ class GraphableMeta(type):
             cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
             cls.factors = cls.factors + cls.concatenation_constants
+        clses = [i.__name__ for i in inspect.getmro(cls)]
+        clses = clses[:clses.index('Graphable')]
+        cls.neotypes = clses[::-1]
         super().__init__(name, bases, dct)
 
 
@@ -230,12 +235,6 @@ class Graphable(metaclass=GraphableMeta):
             setattr(self, item, attribute)
             return attribute
         raise AttributeError(f"Query not added to {self}, cannot search for {self}.{item}")
-
-    @property
-    def neotypes(self):
-        clses = [i.__name__ for i in inspect.getmro(self.__class__)]
-        clses = clses[:clses.index('Graphable')]
-        return clses[::-1]
 
     @property
     def neoproperties(self):
@@ -379,12 +378,33 @@ class Graphable(metaclass=GraphableMeta):
         """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
         collision_manager = CypherQuery.get_context().collision_manager
         for name in self.products:
+            props = {'name': name}
+            if isinstance(name, Indexed):
+                name = name.name
+                if index is None:
+                    raise IndexError(f"{self} requires an index for {file} product {name}")
+                props['index'] = index
             hdu = hdus[name]
-            props = {'index': index, 'name': name}
-            if index is None:
-                del props['index']
             merge_relationship(hdu, self.node, 'product', props, {}, collision_manager=collision_manager)
         merge_relationship(file, self.node, 'product', {'name': 'file'}, {}, collision_manager=collision_manager)
+
+
+    @classmethod
+    def find(cls, children=None, parents=None, **kwargs):
+        parents = [] if parents is None else parents
+        children = [] if children is None else children
+        factors = {}
+        for k, v in kwargs.items():
+            if k in cls.factors:
+                factors[k] = v
+            elif k in parents:
+                if not isinstance(v, list):
+                    v = [v]
+                for vi in v:
+                    parents.append(vi)
+            else:
+                raise ValueError(f"Unknown name {k} for {cls}")
+        return match_pattern_node(labels=cls.neotypes, properties=factors, parents=parents, children=children)
 
 
 class Hierarchy(Graphable):

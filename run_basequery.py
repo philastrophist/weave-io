@@ -15,8 +15,8 @@ data = OurData('data', port=7687, write=True)
 
 print('start write')
 with data.write() as query:
-    # L1SingleFile.read(data.rootdir, 'single_1002813.fit')
-    RawFile.read(data.rootdir, 'r1002813.fit')
+    L1SingleFile.read(data.rootdir, 'single_1002813.fit')
+    # RawFile.read(data.rootdir, 'r1002813.fit')
     cypher, params = query.render_query()
 
 r = data.graph.execute(cypher, **params)

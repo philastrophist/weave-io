@@ -45,7 +45,7 @@ class HeaderFibinfoFile(File):
             surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
             fibre = Fibre(fibreid=fibrow['fibreid'])
             fibtarget = FibreTarget(obspec=obspec, surveytarget=surveytarget, fibre=fibre, tables=fibrow)
-        return collect(fibtarget)
+        return collect(fibtarget), collect(fibrow)
 
     @classmethod
     def read_hierarchy(cls, header):
@@ -76,8 +76,8 @@ class HeaderFibinfoFile(File):
         fibinfo = cls.read_fibinfo_dataframe(path)
         hiers = cls.read_hierarchy(header)
         srvyinfo = cls.read_surveyinfo(fibinfo)
-        fibretarget_collection = cls.read_fibretargets(hiers['obspec'], srvyinfo, fibinfo)
-        return hiers, header, fibinfo, fibretarget_collection
+        fibretarget_collection, fibrows = cls.read_fibretargets(hiers['obspec'], srvyinfo, fibinfo)
+        return hiers, header, fibinfo, fibretarget_collection, fibrows
 
     @classmethod
     def read_header(cls, path: Path):
@@ -102,7 +102,7 @@ class RawFile(HeaderFibinfoFile):
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
         path = Path(directory) / Path(fname)
-        hiers, header, fibinfo, fibretarget_collection = cls.read_schema(path)
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path)
         observation = hiers['observation']
         hdus, file = cls.read_hdus(directory, fname)
         hashid = header['checksum']
@@ -122,24 +122,28 @@ class L1SingleFile(L1File):
     produces = [L1SingleSpectrum]
 
     @classmethod
+    def hash_spectra(cls, path):
+        raise NotImplementedError
+
+    @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
         path = Path(directory) / Path(fname)
-        hiers, header, fibinfo, fibretarget_collection = cls.read_schema(path)
-
-
-
-        # hiers = cls.read_hierarchy(directory, fname)
-        # inferred_raw_fname = fname.with_name(fname.name.replace('single', 'r'))
-        # hiers['raw'] = raw = RawSpectrum(run=hiers['run'])
-        # inferred_rawfile = RawFile(inferred_raw_fname, **hiers)
-        # hiers['rawfile'] = inferred_rawfile
-        # with cls.each_fibinfo_row(fname) as row:
-        #     single_spectra = cls.read_l1single(raw, row)
-        # return cls(fname=fname, l1singlespectra=single_spectra)
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path)
+        observation = hiers['observation']
+        inferred_raw_fname = fname.with_name(fname.name.replace('single', 'r'))
+        rawfile = RawFile(inferred_raw_fname)
+        raw = RawSpectrum.find(casu=hiers['obervation'].casu, observation=hiers['observation'], parents=[rawfile])
+        hdus, file = cls.read_hdus(directory, fname)
+        hashes = CypherData(cls.hash_spectra(path), 'hashes')
+        with unwind(fibretarget_collection, fibrow_collection, hashes, enumerated=True) as (fibretarget, fibrow, hsh, i):
+            single_spectrum = cls.read_l1single_spectrum(hsh, observation, raw, fibretarget, observation.casu, tables=fibrow)
+            single_spectrum.attach_products(file, index=i, **hdus)
+        single_spectra = collect(single_spectrum)
+        return file
 
 
 class L1StackedFile(L1File):
-    pass
+    is_template = True
 
 
 class L1StackFile(L1StackedFile):
