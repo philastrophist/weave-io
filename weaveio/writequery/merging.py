@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import List, Dict, Union, Tuple, Optional
+from typing import List, Dict, Union, Tuple, Optional, Iterable
 
 from . import CypherQuery
 from .base import camelcase, Varname, Statement, CypherVariable, CypherData

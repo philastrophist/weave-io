@@ -48,12 +48,21 @@ class Node:
         props.update(self.identproperties)
         return props
 
+    def __eq__(self, other):
+        return set(self.labels) == set(other.labels) and is_equal(self.allproperties, other.allproperties)
+
 
 @dataclass
 class Relation:
     reltype: str
     properties: Dict[str, Any]
     identproperties: Dict[str, Any]
+
+    @property
+    def allproperties(self):
+        props = self.properties.copy()
+        props.update(self.identproperties)
+        return props
 
 
 node_strategy = builds(Node, labels=labels_strategy, properties=properties_strategy, identproperties=identproperties_strategy)
@@ -121,7 +130,6 @@ def properties_from_properties(properties: Dict, how, sampler, properties_strate
     else:
         raise ValueError(f"Method to change properties {how} is unknown")
 
-
 def create_node_from_node(node, sampler, different_labels, different_properties, different_identproperties):
     new_identproperties = properties_from_properties(node.identproperties, different_identproperties,
                                                      sampler, identproperties_strategy, baseproperty_strategy)
@@ -130,6 +138,17 @@ def create_node_from_node(node, sampler, different_labels, different_properties,
                                                 list(new_identproperties.keys()))
     new_labels = labels_from_labels(node.labels, different_labels, sampler)
     return Node(new_labels, identproperties=new_identproperties, properties=new_properties)
+
+
+def create_rel_from_rel(rel, sampler, different_labels, different_properties, different_identproperties):
+    new_identproperties = properties_from_properties(rel.identproperties, different_identproperties,
+                                                     sampler, identproperties_strategy, baseproperty_strategy)
+    new_properties = properties_from_properties(rel.properties, different_properties, sampler,
+                                                properties_strategy, neo4jproperty_strategy,
+                                                list(new_identproperties.keys()))
+    new_reltype = labels_from_labels([rel.reltype], different_labels, sampler)[0]
+    return Relation(new_reltype, identproperties=new_identproperties, properties=new_properties)
+
 
 
 @given(labels=labels_strategy.filter(lambda x: len(x) > 1), sampler=data())
