@@ -13,7 +13,8 @@ from weaveio.writequery import CypherQuery
 missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.inf, None: np.inf, bool: np.inf, datetime: datetime(1900, 1, 1, 0, 0)}
 convert_types = {int:  float, float: float, str: str, type(None): float, None: float, bool: float,
                  datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
-                 list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series}
+                 list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
+                 dict: dict}
 
 def is_null(x):
     try:
@@ -83,8 +84,8 @@ class Graph(metaclass=ContextMeta):
         except py2neo.database.work.DatabaseError:
             pass
 
-    def write(self):
-        return CypherQuery()
+    def write(self, collision_manager):
+        return CypherQuery(collision_manager)
 
     def _execute(self, cypher, parameters, backoff=1, limit=10):
         try:

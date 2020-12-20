@@ -134,9 +134,9 @@ class Data:
         self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
         self.make_relation_graph()
 
-    def write(self):
+    def write(self, collision_manager='track&flag'):
         if self.write_allowed:
-            return self.graph.write()
+            return self.graph.write(collision_manager)
         raise IOError(f"You have not allowed write operations in this instance of data (write=False)")
 
     def is_unique_factor(self, name):

@@ -239,6 +239,18 @@ class Graphable(metaclass=GraphableMeta):
 
     @property
     def neoproperties(self):
+        identifier_builder = [] if self.identifier_builder is None else self.identifier_builder
+        d = {}
+        for f in self.factors:
+            if f not in identifier_builder and f != self.idname:
+                value = getattr(self, f.lower())
+                if value is not None:
+                    d[f.lower()] = value
+        return d
+
+    @property
+    def neoidentproperties(self):
+        identifier_builder = [] if self.identifier_builder is None else self.identifier_builder
         d = {}
         if self.identifier is None and self.idname is not None:
             raise ValueError(f"{self} must have an identifier")
@@ -248,35 +260,39 @@ class Graphable(metaclass=GraphableMeta):
             d[self.idname] = self.identifier
             d['id'] = self.identifier
         for f in self.factors:
-            value = getattr(self, f.lower())
-            if value is not None:
-                d[f.lower()] = value
+            if f in identifier_builder:
+                value = getattr(self, f.lower())
+                if value is not None:
+                    d[f.lower()] = value
         return d
+
 
     def __init__(self, **predecessors):
         self.predecessors = predecessors
         self.data = None
         try:
             query = CypherQuery.get_context()  # type: CypherQuery
+            collision_manager = query.collision_manager
         except ContextError:
             return
         merge_strategy = self.__class__.merge_strategy()
         version_parents = []
         if  merge_strategy == 'NODE FIRST':
-            self.node = child = merge_node(self.neotypes, self.neoproperties)
+            self.node = child = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
+                                           collision_manager=collision_manager)
             for k, parent_list in predecessors.items():
                 type = 'is_required_by'
                 if isinstance(parent_list, Collection):
                     with unwind(parent_list, enumerated=True) as (parent, i):
                         props = {'order': i}
-                        merge_relationship(parent, child, type, props)
+                        merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
                     parent_list = collect(parent)
                     if k in self.version_on:
                         raise RuleBreakingException(f"Cannot version on a collection of nodes")
                 else:
                     for parent in parent_list:
                         props = {'order': 0}
-                        merge_relationship(parent, child, type, props)
+                        merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
                         if k in self.version_on:
                             version_parents.append(parent)
         elif merge_strategy == 'NODE+RELATIONSHIP':
@@ -293,10 +309,11 @@ class Graphable(metaclass=GraphableMeta):
                 if k in self.version_on:
                     version_parents += parent_list
             reltype = 'is_required_by'
-            relparents = [(p, reltype, {'order': 0}) for p in parents]
-            child = self.node = merge_node_relationship(self.neotypes, self.neoproperties, relparents)
+            relparents = {p: (reltype, {'order': 0}, {}) for p in parents}
+            child = self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
+                                           parents=relparents, collision_manager=collision_manager)
             for i, other in others:
-                merge_relationship(other, child, reltype, {'order': i})
+                merge_relationship(other, child, reltype, {'order': i}, {}, collision_manager=collision_manager)
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
@@ -360,13 +377,14 @@ class Graphable(metaclass=GraphableMeta):
 
     def attach_products(self, file, index=None, **hdus):
         """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
+        collision_manager = CypherQuery.get_context().collision_manager
         for name in self.products:
             hdu = hdus[name]
             props = {'index': index, 'name': name}
             if index is None:
                 del props['index']
-            merge_relationship(hdu, self.node, 'product', props)
-        merge_relationship(file, self.node, 'product', {'name': 'file'})
+            merge_relationship(hdu, self.node, 'product', props, {}, collision_manager=collision_manager)
+        merge_relationship(file, self.node, 'product', {'name': 'file'}, {}, collision_manager=collision_manager)
 
 
 class Hierarchy(Graphable):

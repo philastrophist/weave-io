@@ -108,17 +108,17 @@ class ProgTemp(Hierarchy):
                    instrumentconfiguration=config)
 
 
+class OBSpec(Hierarchy):
+    factors = ['obtitle']
+    parents = [ObsTemp, ProgTemp]
+    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
+
+
 class FibreTarget(Hierarchy):
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget]
+    parents = [OBSpec, Fibre, SurveyTarget]
     identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-
-
-class OBSpec(Hierarchy):
-    factors = ['obtitle']
-    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget, 0)]
-    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
 class OB(Hierarchy):
@@ -151,6 +151,7 @@ class Observation(Hierarchy):
         sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
         sys = System(sysver=header['sysver'])
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
+
 
 class Spectrum(Hierarchy):
     plural_name = 'spectra'

@@ -28,7 +28,7 @@ class HeaderFibinfoFile(File):
         return df_fibinfo[['targsrvy', 'targprog', 'targcat']].drop_duplicates()
 
     @classmethod
-    def read_fibretargets(cls, df_svryinfo, df_fibinfo):
+    def read_fibretargets(cls, obspec, df_svryinfo, df_fibinfo):
         srvyinfo = CypherData(df_svryinfo)  # surveys split inline
         fibinfo = CypherData(df_fibinfo)
         with unwind(srvyinfo) as svryrow:
@@ -44,7 +44,7 @@ class HeaderFibinfoFile(File):
             weavetarget = WeaveTarget(cname=fibrow['cname'])
             surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
             fibre = Fibre(fibreid=fibrow['fibreid'])
-            fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre, tables=fibrow)
+            fibtarget = FibreTarget(obspec=obspec, surveytarget=surveytarget, fibre=fibre, tables=fibrow)
         return collect(fibtarget)
 
     @classmethod
@@ -63,7 +63,7 @@ class HeaderFibinfoFile(File):
                                   & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
-        obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp, fibretargets=[])
+        obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp)
         ob = OB(obid=obid, obstartmjd=obstart, obspec=obspec)
         exposure = Exposure(expmjd=expmjd, ob=ob)
         run = Run(runid=runid, armconfig=arm, exposure=exposure)
@@ -76,10 +76,8 @@ class HeaderFibinfoFile(File):
         fibinfo = cls.read_fibinfo_dataframe(path)
         hiers = cls.read_hierarchy(header)
         srvyinfo = cls.read_surveyinfo(fibinfo)
-        fibretarget_collection = cls.read_fibretargets(srvyinfo, fibinfo)
-        with unwind(fibretarget_collection, enumerated=True) as (fibretarget, i):
-            merge_relationship(fibretarget, hiers['obspec'], 'is_required_by', {'order': i})
-        return hiers, header, fibinfo
+        fibretarget_collection = cls.read_fibretargets(hiers['obspec'], srvyinfo, fibinfo)
+        return hiers, header, fibinfo, fibretarget_collection
 
     @classmethod
     def read_header(cls, path: Path):
@@ -104,7 +102,7 @@ class RawFile(HeaderFibinfoFile):
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
         path = Path(directory) / Path(fname)
-        hiers, header, fibinfo = cls.read_schema(path)
+        hiers, header, fibinfo, fibretarget_collection = cls.read_schema(path)
         observation = hiers['observation']
         hdus, file = cls.read_hdus(directory, fname)
         hashid = header['checksum']
@@ -126,7 +124,7 @@ class L1SingleFile(L1File):
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
         path = Path(directory) / Path(fname)
-        hiers, header, fibinfo = cls.read_schema(path)
+        hiers, header, fibinfo, fibretarget_collection = cls.read_schema(path)
 
 
 

@@ -261,7 +261,7 @@ class MergeDependentNode(CollisionManager):
         self.output_variables += self.relvars
         self.output_variables += self.dummyrelvars
         self.output_variables += self.relpropsvars
-        self.output_variables += self.colliding_rel_keys
+        self.hidden_variables += self.colliding_rel_keys
         self.output_variables.append(self.dummy)
         self.output_variables.append(self.child_holder)
         self.output_variables.append(self.unnamed)
@@ -403,7 +403,7 @@ class SetVersion(Statement):
                 f"\t WHERE id(c) <> id({self.child})",
                 f"\t WITH {self.child}, max(c.version) as maxversion",
                 f"\t SET {self.child}.version = coalesce({self.child}['version'], maxversion + 1, 0)",
-                f"\t RETURN {self.child['version']}",
+                f"\t RETURN {self.child}['version']",
             f"}}"
         ]
         return '\n'.join(query)
