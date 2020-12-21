@@ -93,7 +93,7 @@ class Graph(metaclass=ContextMeta):
         except RuntimeError as e:
             if backoff >= limit:
                 raise e
-            warn(f'Connection possibly busy, waiting {backoff} seconds to retry')
+            warn(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
             sleep(backoff)
             backoff *= 2
             return self._execute(cypher, parameters, backoff, limit)

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union
+from typing import Union, Dict
 
 from astropy.io import fits
 
@@ -21,9 +21,9 @@ class File(Hierarchy):
         raise NotImplementedError
 
     @classmethod
-    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str]):
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], **hierarchies: Hierarchy):
         path = Path(directory) / Path(fname)
-        file = cls(fname)
+        file = cls(fname, **hierarchies)
         hdus = [i for i in fits.open(path)]
         if len(hdus) != len(cls.hdus):
             raise TypeError(f"Class {cls} asserts there are {len(cls.hdus)} whereas {path} has {len(hdus)}")

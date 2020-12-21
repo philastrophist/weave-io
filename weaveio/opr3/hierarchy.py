@@ -1,4 +1,5 @@
 from weaveio.config_tables import progtemp_config
+from weaveio.file import File
 from weaveio.hierarchy import Hierarchy, Multiple, Indexed
 
 
@@ -140,7 +141,7 @@ class Run(Hierarchy):
 class Observation(Hierarchy):
     parents = [Run, CASU, Simulator, System]
     factors = ['seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
-    products = ['guideinfo', 'metinfo']
+    products = ['primary', 'guidinfo', 'metinfo']
     version_on = ['run']
     indexes = ['seeing', 'observer', 'skybright']
 
@@ -162,7 +163,7 @@ class Spectrum(Hierarchy):
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
     parents = [Observation, CASU]
-    products = ['primary', 'guidinfo', 'metinfo', 'counts1', 'counts2']
+    products = ['counts1', 'counts2']
     version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially

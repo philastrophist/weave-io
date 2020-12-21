@@ -390,21 +390,23 @@ class Graphable(metaclass=GraphableMeta):
 
 
     @classmethod
-    def find(cls, children=None, parents=None, **kwargs):
-        parents = [] if parents is None else parents
-        children = [] if children is None else children
+    def find(cls, anonymous_children=None, anonymous_parents=None, **kwargs):
+        anonymous_parents = [] if anonymous_parents is None else anonymous_parents
+        anonymous_children = [] if anonymous_children is None else anonymous_children
         factors = {}
         for k, v in kwargs.items():
             if k in cls.factors:
                 factors[k] = v
-            elif k in parents:
+            elif k in anonymous_parents:
                 if not isinstance(v, list):
                     v = [v]
                 for vi in v:
-                    parents.append(vi)
+                    anonymous_parents.append(vi)
             else:
                 raise ValueError(f"Unknown name {k} for {cls}")
-        return match_pattern_node(labels=cls.neotypes, properties=factors, parents=parents, children=children)
+        node = match_pattern_node(labels=cls.neotypes, properties=factors,
+                                  parents=anonymous_parents, children=anonymous_children)
+        return node
 
 
 class Hierarchy(Graphable):
