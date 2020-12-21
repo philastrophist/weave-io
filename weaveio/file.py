@@ -54,9 +54,10 @@ class HDU(Hierarchy):
         input_dict = cls._from_hdu(hdu)
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
-        for c in cls.concatenation_constants:
-            if c not in input_dict:
-                input_dict[c] = hdu.header[c]
+        if cls.concatenation_constants is not None:
+            for c in cls.concatenation_constants:
+                if c not in input_dict:
+                    input_dict[c] = hdu.header[c]
         return cls(**input_dict)
 
 
@@ -66,29 +67,30 @@ class PrimaryHDU(HDU):
     concatenation_constants = []
 
 
-class DataHDU(HDU):
+class BaseDataHDU(HDU):
+    concatenation_constants = ['ncols']
     factors = HDU.factors + ['nrows', 'ncols']
 
 
-class TableHDU(DataHDU):
+class TableHDU(BaseDataHDU):
     is_template = True
     concatenation_constants = ['columns']
 
     @classmethod
     def _from_hdu(cls, hdu):
-        input_dict = DataHDU._from_hdu(hdu)
+        input_dict = BaseDataHDU._from_hdu(hdu)
         colnames = [str(i) for i in hdu.data.names]
         input_dict['columns'] = colnames
         input_dict['nrows'], input_dict['ncols'] = hdu.data.shape[0], len(colnames)
         return input_dict
 
 
-class BinaryHDU(DataHDU):
+class BinaryHDU(BaseDataHDU):
     is_template = True
 
     @classmethod
     def _from_hdu(cls, hdu):
-        input_dict = DataHDU._from_hdu(hdu)
+        input_dict = BaseDataHDU._from_hdu(hdu)
         input_dict['nrows'], input_dict['ncols'] = hdu.data.shape
         return input_dict
 

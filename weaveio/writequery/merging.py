@@ -103,9 +103,9 @@ class MatchPatternNode(Statement):
     def to_cypher(self):
         labels = ':'.join(self.labels)
         matches = ', '.join([f'({self.out}: {labels} {self.properties})'] +
-                            [f'({self.out}<--({p})' for p in self.parents] +
-                            [f'({self.out}-->({c})' for c in self.children])
-        return f'OPTIONAL MATCH {matches}'
+                            [f'({self.out})<--({p})' for p in self.parents] +
+                            [f'({self.out})-->({c})' for c in self.children])
+        return f'WITH * OPTIONAL MATCH {matches}'
 
 
 class PropertyOverlapError(Exception):

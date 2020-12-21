@@ -266,9 +266,11 @@ class Graphable(metaclass=GraphableMeta):
         return d
 
 
-    def __init__(self, **predecessors):
+    def __init__(self, do_not_create=False, **predecessors):
         self.predecessors = predecessors
         self.data = None
+        if do_not_create:
+            return
         try:
             query = CypherQuery.get_context()  # type: CypherQuery
             collision_manager = query.collision_manager
@@ -359,6 +361,8 @@ class Graphable(metaclass=GraphableMeta):
                 return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT ({key}) IS NODE KEY'
             elif cls.has_parent_identity():
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
+                if not len(key):
+                    raise TypeError(f"No factors are present in the identity builder of {name} to make an index from ")
                 return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
         key = ', '.join([f'n.{i}' for i in cls.indexes])
         return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
@@ -378,35 +382,42 @@ class Graphable(metaclass=GraphableMeta):
         """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
         collision_manager = CypherQuery.get_context().collision_manager
         for name in self.products:
-            props = {'name': name}
+            props = {}
             if isinstance(name, Indexed):
                 name = name.name
                 if index is None:
                     raise IndexError(f"{self} requires an index for {file} product {name}")
                 props['index'] = index
+            props['name'] = name
             hdu = hdus[name]
-            merge_relationship(hdu, self.node, 'product', props, {}, collision_manager=collision_manager)
-        merge_relationship(file, self.node, 'product', {'name': 'file'}, {}, collision_manager=collision_manager)
+            merge_relationship(hdu, self, 'product', props, {}, collision_manager=collision_manager)
+        merge_relationship(file, self, 'is_required_by', {'name': 'file'}, {}, collision_manager=collision_manager)
 
+    @classmethod
+    def without_creation(cls, **kwargs):
+        return cls(do_not_create=True, **kwargs)
 
     @classmethod
     def find(cls, anonymous_children=None, anonymous_parents=None, **kwargs):
-        anonymous_parents = [] if anonymous_parents is None else anonymous_parents
+        parent_names = [i.name if isinstance(i, Multiple) else i.singular_name for i in cls.parents]
+        parents = [] if anonymous_parents is None else anonymous_parents
         anonymous_children = [] if anonymous_children is None else anonymous_children
         factors = {}
         for k, v in kwargs.items():
             if k in cls.factors:
                 factors[k] = v
-            elif k in anonymous_parents:
+            elif k in parent_names:
                 if not isinstance(v, list):
                     v = [v]
                 for vi in v:
-                    anonymous_parents.append(vi)
+                    parents.append(vi)
             else:
                 raise ValueError(f"Unknown name {k} for {cls}")
         node = match_pattern_node(labels=cls.neotypes, properties=factors,
-                                  parents=anonymous_parents, children=anonymous_children)
-        return node
+                                  parents=parents, children=anonymous_children)
+        obj = cls.without_creation(**kwargs)
+        obj.node = node
+        return obj
 
 
 class Hierarchy(Graphable):
@@ -427,7 +438,7 @@ class Hierarchy(Graphable):
         specification.update(factors)
         return specification, factors
 
-    def __init__(self, tables=None, **kwargs):
+    def __init__(self, do_not_create=False, tables=None, **kwargs):
         self.uses_tables = False
         if tables is None:
             for value in kwargs.values():
@@ -468,6 +479,6 @@ class Hierarchy(Graphable):
         if self.idname is not None:
             setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
-        super(Hierarchy, self).__init__(**predecessors)
+        super(Hierarchy, self).__init__(do_not_create, **predecessors)
 
 

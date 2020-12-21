@@ -177,7 +177,7 @@ class L1SpectrumRow(Spectrum):
 
 class L1SingleSpectrum(L1SpectrumRow):
     plural_name = 'l1singlespectra'
-    parents = [Observation, RawSpectrum, FibreTarget, CASU]
+    parents = L1SpectrumRow.parents + [Observation, RawSpectrum, FibreTarget, CASU]
     version_on = ['rawspectrum', 'observation', 'fibretarget']
     factors = L1SpectrumRow.factors + [
         'nspec', 'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
@@ -191,26 +191,26 @@ class L1SingleSpectrum(L1SpectrumRow):
 
 class L1StackSpectrum(L1SpectrumRow):
     plural_name = 'l1stackspectra'
-    parents = [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
+    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
     version_on = ['l1singlespectra', 'fibretarget']
-    factors = L1SpectrumRow.factors + ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+    factors = L1SpectrumRow.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
 
 
 class L1SuperStackSpectrum(L1SpectrumRow):
     plural_name = 'l1superstackspectra'
-    parents = [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
+    factors = L1SpectrumRow.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-    version_on = ['l1singlespectra']
+    version_on = ['l1singlespectra', 'fibretarget']
 
 
 class L1SuperTargetSpectrum(L1SpectrumRow):
     plural_name = 'l1supertargetspectra'
-    parents = [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
+    factors = L1SpectrumRow.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-    version_on = ['l1singlespectra']
+    version_on = ['l1singlespectra', 'weavetarget']
 
 
 class L2(Hierarchy):
