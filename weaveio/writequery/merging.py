@@ -90,6 +90,24 @@ class MatchRelationship(Statement):
         return f"MATCH ({self.parent})-{reldata}->({self.child})"
 
 
+class MatchPatternNode(Statement):
+    def __init__(self, labels: List[str], properties: Dict[str, Union[str, int, float, CypherVariable]],
+                 parents: List[CypherVariable], children: List[CypherVariable]):
+        self.labels = [camelcase(l) for l in labels]
+        self.properties, inputs = neo4j_dictionary(properties)
+        self.parents = parents
+        self.children = children
+        self.out = CypherVariable(labels[-1])
+        super().__init__(inputs+parents+children, [self.out], [])
+
+    def to_cypher(self):
+        labels = ':'.join(self.labels)
+        matches = ', '.join([f'({self.out}: {labels} {self.properties})'] +
+                            [f'({self.out})<--({p})' for p in self.parents] +
+                            [f'({self.out})-->({c})' for c in self.children])
+        return f'WITH * OPTIONAL MATCH {matches}'
+
+
 class PropertyOverlapError(Exception):
     pass
 
@@ -261,7 +279,7 @@ class MergeDependentNode(CollisionManager):
         self.output_variables += self.relvars
         self.output_variables += self.dummyrelvars
         self.output_variables += self.relpropsvars
-        self.output_variables += self.colliding_rel_keys
+        self.hidden_variables += self.colliding_rel_keys
         self.output_variables.append(self.dummy)
         self.output_variables.append(self.child_holder)
         self.output_variables.append(self.unnamed)
@@ -403,7 +421,7 @@ class SetVersion(Statement):
                 f"\t WHERE id(c) <> id({self.child})",
                 f"\t WITH {self.child}, max(c.version) as maxversion",
                 f"\t SET {self.child}.version = coalesce({self.child}['version'], maxversion + 1, 0)",
-                f"\t RETURN {self.child['version']}",
+                f"\t RETURN {self.child}['version']",
             f"}}"
         ]
         return '\n'.join(query)
@@ -419,6 +437,20 @@ def match_node(labels, properties):
 def match_relationship(parent, child, reltype, properties):
     query = CypherQuery.get_context()  # type: CypherQuery
     statement = MatchRelationship(parent, child, reltype, properties)
+    query.add_statement(statement)
+    return statement.out
+
+
+def match_pattern_node(labels: List[str], properties: Dict[str, Union[str, int, float, CypherVariable]] = None,
+                       parents: List[CypherVariable] = None, children: List[CypherVariable] = None):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    if properties is None:
+        properties = {}
+    if parents is None:
+        parents = []
+    if children is None:
+        children = []
+    statement = MatchPatternNode(labels, properties, parents, children)
     query.add_statement(statement)
     return statement.out
 

@@ -1,6 +1,6 @@
 from collections import defaultdict
 from textwrap import dedent
-from typing import List, Callable
+from typing import List, Callable, Union
 
 import re
 
@@ -14,12 +14,13 @@ def camelcase(x):
 
 
 class CypherQuery(metaclass=ContextMeta):
-    def __init__(self):
+    def __init__(self, collision_manager='track&flag'):
         self.data = []
         self.statements = [TimeStamp()]  # type: List[Statement]
         self.timestamp = self.statements[0].output_variables[0]
         self.open_contexts = [[self.timestamp]]
         self.closed_context = None
+        self.collision_manager = collision_manager
 
     @property
     def current_context(self):
@@ -51,7 +52,7 @@ class CypherQuery(metaclass=ContextMeta):
             d[namehint] += 1
             data._name = f'{namehint}{i}'
         for statement in self.statements:
-            for v in statement.input_variables + statement.output_variables:
+            for v in statement.input_variables + statement.output_variables + statement.hidden_variables:
                 if v.name is None:
                     namehint = v.namehint.lower()
                     i = d[namehint]
@@ -102,9 +103,12 @@ class Varname:
 
 class Statement:
     """A cypher statement that takes inputs and returns outputs"""
-    def __init__(self, input_variables, output_variables):
+    def __init__(self, input_variables, output_variables, hidden_variables=None):
         self.input_variables = list(input_variables)
         self.output_variables = list(output_variables)
+        if hidden_variables is None:
+            hidden_variables = []
+        self.hidden_variables = hidden_variables
         self.timestamp = CypherQuery.get_context().timestamp
 
     def to_cypher(self):
@@ -126,6 +130,7 @@ class Returns(Statement):
         self.named_variables = named_variables
         self.input_variables = list(unnamed_variables) + list(named_variables.values())
         self.output_variables = []
+        self.hidden_variables = []
 
     def to_cypher(self):
         l = list(map(str, self.unnamed_variables))
@@ -137,9 +142,20 @@ class TimeStamp(Statement):
     def __init__(self):
         self.input_variables = []
         self.output_variables = [CypherVariable('time')]
+        self.hidden_variables = []
 
     def to_cypher(self):
         return f'WITH *, timestamp() as {self.output_variables[0]}'
+
+
+class Alias(Statement):
+    def __init__(self, input_thing, alias_namehint):
+        self.out = CypherVariable(alias_namehint)
+        self.input_thing = input_thing
+        super(Alias, self).__init__([input_thing], [self.out])
+
+    def to_cypher(self):
+        return f"WITH *, {self.input_thing} as {self.out}"
 
 
 class CypherVariable:
@@ -156,8 +172,13 @@ class CypherVariable:
             return super(CypherVariable, self).__repr__()
         return self.name
 
-    def __getitem__(self, item):
-        return CypherVariableItem(self, item)
+    def __getitem__(self, item: Union[str, int]):
+        assert isinstance(item, (int, str))
+        query = CypherQuery.get_context()
+        getitem = CypherVariableItem(self, item)
+        alias_statement = Alias(getitem, str(item))
+        query.add_statement(alias_statement)
+        return alias_statement.out
 
 
 class DerivedCypherVariable(CypherVariable):
@@ -179,11 +200,6 @@ class CypherVariableItem(DerivedCypherVariable):
         if isinstance(attr, str):
             return f"{parent}['{attr}']"
         return f"{parent}[{attr}]"
-
-
-class CypherVariableAttribute(DerivedCypherVariable):
-    def string_formatter(self, parent, attr):
-        return f"{parent}.{attr}"
 
 
 class Collection(CypherVariable):

@@ -1,4 +1,5 @@
 from weaveio.config_tables import progtemp_config
+from weaveio.file import File
 from weaveio.hierarchy import Hierarchy, Multiple, Indexed
 
 
@@ -108,17 +109,17 @@ class ProgTemp(Hierarchy):
                    instrumentconfiguration=config)
 
 
+class OBSpec(Hierarchy):
+    factors = ['obtitle']
+    parents = [ObsTemp, ProgTemp]
+    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
+
+
 class FibreTarget(Hierarchy):
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget]
+    parents = [OBSpec, Fibre, SurveyTarget]
     identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-
-
-class OBSpec(Hierarchy):
-    factors = ['obtitle']
-    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget, 0)]
-    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
 class OB(Hierarchy):
@@ -140,7 +141,7 @@ class Run(Hierarchy):
 class Observation(Hierarchy):
     parents = [Run, CASU, Simulator, System]
     factors = ['seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
-    products = ['guideinfo', 'metinfo']
+    products = ['primary', 'guidinfo', 'metinfo']
     version_on = ['run']
     indexes = ['seeing', 'observer', 'skybright']
 
@@ -152,6 +153,7 @@ class Observation(Hierarchy):
         sys = System(sysver=header['sysver'])
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
 
+
 class Spectrum(Hierarchy):
     plural_name = 'spectra'
     is_template = True
@@ -161,7 +163,7 @@ class Spectrum(Hierarchy):
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
     parents = [Observation, CASU]
-    products = ['primary', 'guidinfo', 'metinfo', 'counts1', 'counts2']
+    products = ['counts1', 'counts2']
     version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
@@ -175,8 +177,8 @@ class L1SpectrumRow(Spectrum):
 
 class L1SingleSpectrum(L1SpectrumRow):
     plural_name = 'l1singlespectra'
-    parents = [Observation, Multiple(RawSpectrum, 2, 2), FibreTarget, CASU]
-    version_on = ['rawspectra', 'observation', 'fibretarget']
+    parents = L1SpectrumRow.parents + [Observation, RawSpectrum, FibreTarget, CASU]
+    version_on = ['rawspectrum', 'observation', 'fibretarget']
     factors = L1SpectrumRow.factors + [
         'nspec', 'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
@@ -189,26 +191,26 @@ class L1SingleSpectrum(L1SpectrumRow):
 
 class L1StackSpectrum(L1SpectrumRow):
     plural_name = 'l1stackspectra'
-    parents = [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
+    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
     version_on = ['l1singlespectra', 'fibretarget']
-    factors = L1SpectrumRow.factors + ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+    factors = L1SpectrumRow.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
 
 
 class L1SuperStackSpectrum(L1SpectrumRow):
     plural_name = 'l1superstackspectra'
-    parents = [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
+    factors = L1SpectrumRow.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-    version_on = ['l1singlespectra']
+    version_on = ['l1singlespectra', 'fibretarget']
 
 
 class L1SuperTargetSpectrum(L1SpectrumRow):
     plural_name = 'l1supertargetspectra'
-    parents = [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
-    factors = ['exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
+    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
+    factors = L1SpectrumRow.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i',
                'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-    version_on = ['l1singlespectra']
+    version_on = ['l1singlespectra', 'weavetarget']
 
 
 class L2(Hierarchy):
