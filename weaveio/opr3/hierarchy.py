@@ -177,8 +177,8 @@ class L1SpectrumRow(Spectrum):
 
 class L1SingleSpectrum(L1SpectrumRow):
     plural_name = 'l1singlespectra'
-    parents = L1SpectrumRow.parents + [Observation, RawSpectrum, FibreTarget, CASU]
-    version_on = ['rawspectrum', 'observation', 'fibretarget']
+    parents = L1SpectrumRow.parents + [RawSpectrum, FibreTarget, CASU]
+    version_on = ['rawspectrum', 'fibretarget']
     factors = L1SpectrumRow.factors + [
         'nspec', 'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',

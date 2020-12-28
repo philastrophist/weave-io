@@ -459,7 +459,10 @@ class Hierarchy(Graphable):
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
         for name, nodetype in self.specification.items():
-            value = kwargs.pop(name)
+            if do_not_create:
+                value = kwargs.pop(name, None)
+            else:
+                value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
                 if not isinstance(value, (tuple, list)):
