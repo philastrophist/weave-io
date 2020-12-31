@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union, Dict
+from typing import Union, Dict, List
 
 from astropy.io import fits
 
@@ -21,12 +21,14 @@ class File(Hierarchy):
         raise NotImplementedError
 
     @classmethod
-    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], **hierarchies: Hierarchy):
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]):
         path = Path(directory) / Path(fname)
         file = cls(fname, **hierarchies)
         hdus = [i for i in fits.open(path)]
         if len(hdus) != len(cls.hdus):
-            raise TypeError(f"Class {cls} asserts there are {len(cls.hdus)} whereas {path} has {len(hdus)}")
+            raise TypeError(f"Class {cls} asserts there are {len(cls.hdus)} HDUs ({list(cls.hdus.keys())})"
+                            f" whereas {path} has {len(hdus)} ({[i.name for i in hdus]})")
         hduinstances = {}
         for i, ((hduname, hduclass), hdu) in enumerate(zip(cls.hdus.items(), hdus)):
             hduinstances[hduname] = hduclass.from_hdu(hdu, i, file)

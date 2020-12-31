@@ -77,8 +77,9 @@ class Multiple:
 
 
 class Indexed:
-    def __init__(self, name):
-        self.name = name
+    def __init__(self, hdu_name, column_name=None):
+        self.name = hdu_name
+        self.column_name = column_name
 
 
 class GraphableMeta(type):
@@ -136,8 +137,6 @@ class GraphableMeta(type):
                     pass
                 else:
                     raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
-            if nparents_in_id > 2:
-                raise RuleBreakingException(f"Cannot create an id using more than 2 parents")
         version_parents = []
         version_factors = []
         for i in cls.version_on:
@@ -153,6 +152,9 @@ class GraphableMeta(type):
             if not (len(cls.indexes) or cls.idname or
                     (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
                 raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
+        for i in cls.indexes:
+            if i not in cls.parents and i not in cls.factors:
+                raise RuleBreakingException(f"index {i} of {name} must be a factor or parent of {name}")
         if len(cls.hdus):
             hduclasses = {}
             for i, (hduname, hdu) in enumerate(cls.hdus.items()):
@@ -384,6 +386,8 @@ class Graphable(metaclass=GraphableMeta):
         for name in self.products:
             props = {}
             if isinstance(name, Indexed):
+                if name.column_name is not None:
+                    props['column_name'] = name.column_name
                 name = name.name
                 if index is None:
                     raise IndexError(f"{self} requires an index for {file} product {name}")
@@ -459,7 +463,10 @@ class Hierarchy(Graphable):
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
         for name, nodetype in self.specification.items():
-            value = kwargs.pop(name)
+            if do_not_create:
+                value = kwargs.pop(name, None)
+            else:
+                value = kwargs.pop(name)
             setattr(self, name, value)
             if isinstance(nodetype, Multiple):
                 if not isinstance(value, (tuple, list)):
@@ -477,8 +484,8 @@ class Hierarchy(Graphable):
             if self.identifier is not None:
                 raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
         if self.idname is not None:
+            if not do_not_create and self.identifier is None:
+                raise ValueError(f"Cannot assign an id of None to {self}")
             setattr(self, self.idname, self.identifier)
         self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(do_not_create, **predecessors)
-
-
