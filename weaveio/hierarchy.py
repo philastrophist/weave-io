@@ -77,8 +77,9 @@ class Multiple:
 
 
 class Indexed:
-    def __init__(self, name):
-        self.name = name
+    def __init__(self, hdu_name, column_name=None):
+        self.name = hdu_name
+        self.column_name = column_name
 
 
 class GraphableMeta(type):
@@ -386,6 +387,8 @@ class Graphable(metaclass=GraphableMeta):
             props = {}
             if isinstance(name, Indexed):
                 name = name.name
+                if name.column_name is not None:
+                    props['column_name'] = name.column_name
                 if index is None:
                     raise IndexError(f"{self} requires an index for {file} product {name}")
                 props['index'] = index

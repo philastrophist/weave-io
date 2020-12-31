@@ -223,7 +223,7 @@ class L1StackFile(L1StackedBaseFile):
             stack_spectrum.attach_products(file, index=fibrow['spec_index'], **hdus)
         stack_spectra = collect(stack_spectrum)  # must collect at the end
         return file
-        # return single_spectra
+
 
 class L1SuperStackFile(L1StackedBaseFile):
     match_pattern = 'superstacked_*.fit'
@@ -234,10 +234,18 @@ class L1SuperStackFile(L1StackedBaseFile):
     def match(cls, directory):
         return directory.glob()
 
+    @classmethod
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
+        raise NotImplementedError
+
 
 class L1SuperTargetFile(L1StackedBaseFile):
     match_pattern = 'WVE_*.fit'
     produces = [L1SuperTargetSpectrum]
+
+    @classmethod
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
+        raise NotImplementedError
 
 
 class L2HeaderFibinfoFile(HeaderFibinfoFile):
