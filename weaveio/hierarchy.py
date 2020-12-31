@@ -386,9 +386,9 @@ class Graphable(metaclass=GraphableMeta):
         for name in self.products:
             props = {}
             if isinstance(name, Indexed):
-                name = name.name
                 if name.column_name is not None:
                     props['column_name'] = name.column_name
+                name = name.name
                 if index is None:
                     raise IndexError(f"{self} requires an index for {file} product {name}")
                 props['index'] = index
