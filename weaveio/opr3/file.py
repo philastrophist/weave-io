@@ -3,6 +3,7 @@ from typing import Union
 
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
+from tqdm import tqdm
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, BaseDataHDU, BinaryHDU
@@ -17,12 +18,16 @@ class HeaderFibinfoFile(File):
     is_template = True
 
     @classmethod
-    def read_fibinfo_dataframe(cls, fname):
+    def read_fibinfo_dataframe(cls, fname, slc=None):
         hdus = fits.open(fname)
         fibinfo_hdu = [i for i in hdus if i.name == 'FIBTABLE'][0]
-        fibinfo = AstropyTable(fibinfo_hdu.data).to_pandas().sort_values('FIBREID')
+        fibinfo = AstropyTable(fibinfo_hdu.data).to_pandas()
         fibinfo.columns = [i.lower() for i in fibinfo.columns]
-        return fibinfo
+        if 'nspec' in fibinfo.columns:
+            fibinfo['spec_index'] = fibinfo['nspec'] - 1
+        fibinfo = fibinfo[fibinfo.cname != '']  # exclude parked or disabled fibres
+        slc = slice(None) if slc is None else slc
+        return fibinfo.iloc[slc]
 
     @classmethod
     def read_surveyinfo(cls, df_fibinfo):
@@ -30,7 +35,7 @@ class HeaderFibinfoFile(File):
 
     @classmethod
     def read_fibretargets(cls, obspec, df_svryinfo, df_fibinfo):
-        srvyinfo = CypherData(df_svryinfo)  # surveys split inline
+        srvyinfo = CypherData(df_svryinfo)
         fibinfo = CypherData(df_fibinfo)
         with unwind(srvyinfo) as svryrow:
             with unwind(svryrow['targsrvy']) as surveyname:
@@ -41,10 +46,10 @@ class HeaderFibinfoFile(File):
         cat_collection = collect(cat)
         cats = groupby(cat_collection, 'targcat')
         with unwind(fibinfo) as fibrow:
+            fibre = Fibre(fibreid=fibrow['fibreid'])  #  must be up here for some reason otherwise, there will be duplicates
             cat = cats[fibrow['targcat']]
             weavetarget = WeaveTarget(cname=fibrow['cname'])
             surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
-            fibre = Fibre(fibreid=fibrow['fibreid'])
             fibtarget = FibreTarget(obspec=obspec, surveytarget=surveytarget, fibre=fibre, tables=fibrow)
         return collect(fibtarget, fibrow)
 
@@ -72,9 +77,9 @@ class HeaderFibinfoFile(File):
         return {'run': run, 'ob': ob, 'obspec': obspec, 'armconfig': arm, 'observation': observation}
 
     @classmethod
-    def read_schema(cls, path: Path):
+    def read_schema(cls, path: Path, slc: slice = None):
         header = cls.read_header(path)
-        fibinfo = cls.read_fibinfo_dataframe(path)
+        fibinfo = cls.read_fibinfo_dataframe(path, slc)
         hiers = cls.read_hierarchy(header)
         srvyinfo = cls.read_surveyinfo(fibinfo)
         fibretarget_collection, fibrows = cls.read_fibretargets(hiers['obspec'], srvyinfo, fibinfo)
@@ -107,7 +112,7 @@ class RawFile(HeaderFibinfoFile):
         return f'r{runid:07.0f}.fit'
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         path = Path(directory) / Path(fname)
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path)
         observation = hiers['observation']
@@ -126,9 +131,9 @@ class L1File(HeaderFibinfoFile):
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
 
     @classmethod
-    def hash_spectra(cls, path, fname):
-        nrows = fits.open(path)[1].header['NAXIS2']
-        return [f'{fname}[{i}]' for i in range(nrows)]
+    def hash_spectra(cls, path, fname, slc: slice = None):
+        fibinfo_df = cls.read_fibinfo_dataframe(path, slc)
+        return [f'{fname}[{row.nspec}]' for _, row in fibinfo_df.iterrows()]
 
 
 class L1SingleFile(L1File):
@@ -141,7 +146,7 @@ class L1SingleFile(L1File):
         return f'single_{runid:07.0f}.fit'
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         fname = Path(fname)
         directory = Path(directory)
         path = directory / fname
@@ -154,10 +159,10 @@ class L1SingleFile(L1File):
         rawfile = RawFile(inferred_raw_fname)
         hdus, file = cls.read_hdus(directory, fname, rawfile=rawfile)
         hashes = CypherData(cls.hash_spectra(path, fname), 'hashes')
-        with unwind(fibretarget_collection, fibrow_collection, hashes, enumerated=True) as (fibretarget, fibrow, hsh, i):
+        with unwind(fibretarget_collection, fibrow_collection, hashes) as (fibretarget, fibrow, hsh):
             single_spectrum = L1SingleSpectrum(hashid=hsh, rawspectrum=raw, fibretarget=fibretarget,
                                                casu=casu, tables=fibrow)
-            single_spectrum.attach_products(file, index=i, **hdus)
+            single_spectrum.attach_products(file, index=fibrow['spec_index'], **hdus)
         single_spectra = collect(single_spectrum)  # must collect at the end
         return file
 
@@ -188,7 +193,7 @@ class L1StackFile(L1StackedBaseFile):
         return l1singlefiles
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         """
         L1Stack inherits everything from the lowest numbered single/raw files so we are missing data,
         therefore we require that all the referenced Runs are present before loading in
@@ -196,16 +201,18 @@ class L1StackFile(L1StackedBaseFile):
         fname = Path(fname)
         directory = Path(directory)
         path = directory / fname
-        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path)
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
+        hashes = cls.hash_spectra(path, fname, slc)
+
         observation = hiers['observation']
         ob = hiers['ob']
         armconfig = hiers['armconfig']
         casu = observation.casu
-        hashes = CypherData(cls.hash_spectra(path, fname), 'hashes')
+        hashes = CypherData(hashes, 'hashes')
         singlefiles = cls.get_single_files(path)
         hdus, file = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
                                    armconfig=armconfig, casu=casu)
-        with unwind(fibretarget_collection, fibrow_collection, hashes, enumerated=True) as (fibretarget, fibrow, hsh, i):
+        with unwind(fibretarget_collection, fibrow_collection, hashes) as (fibretarget, fibrow, hsh):
             single_spectra = []
             for singlefile in singlefiles:
                 single_spectrum = L1SingleSpectrum.find(anonymous_parents=[fibretarget, singlefile, casu])
@@ -213,10 +220,10 @@ class L1StackFile(L1StackedBaseFile):
             stack_spectrum = L1StackSpectrum(hashid=hsh, l1singlespectra=single_spectra, ob=ob,
                                              armconfig=armconfig, fibretarget=fibretarget,
                                              casu=casu, tables=fibrow)
-            stack_spectrum.attach_products(file, index=i, **hdus)
+            stack_spectrum.attach_products(file, index=fibrow['spec_index'], **hdus)
         stack_spectra = collect(stack_spectrum)  # must collect at the end
         return file
-
+        # return single_spectra
 
 class L1SuperStackFile(L1StackedBaseFile):
     match_pattern = 'superstacked_*.fit'

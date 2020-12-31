@@ -119,7 +119,7 @@ class FibreTarget(Hierarchy):
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
     parents = [OBSpec, Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
+    identifier_builder = ['obspec', 'fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
 
 
 class OB(Hierarchy):
@@ -140,14 +140,15 @@ class Run(Hierarchy):
 
 class Observation(Hierarchy):
     parents = [Run, CASU, Simulator, System]
-    factors = ['seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
+    factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
     products = ['primary', 'guidinfo', 'metinfo']
+    identifier_builder = ['run', 'mjdobs']
     version_on = ['run']
-    indexes = ['seeing', 'observer', 'skybright']
 
     @classmethod
     def from_header(cls, run, header):
-        factors = {f: header[f] for f in cls.factors}
+        factors = {f: header.get(f) for f in cls.factors}
+        factors['mjdobs'] = header['MJD-OBS']
         casu = CASU(casuid=header.get('casuvers', header.get('casuid')))
         sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
         sys = System(sysver=header['sysver'])

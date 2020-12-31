@@ -102,4 +102,8 @@ class Graph(metaclass=ContextMeta):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
         return self._execute(cypher, d)
 
+    def output_for_debug(self, **payload):
+        d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
+        return f':params {d}'
+
 Graph._context_class = Graph
