@@ -1,6 +1,13 @@
+from pathlib import Path
+
+import os
+
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File
 from weaveio.hierarchy import Hierarchy, Multiple, Indexed
+
+
+HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 class Author(Hierarchy):
@@ -12,7 +19,7 @@ class CASU(Author):
 
 
 class APS(Author):
-    idname = 'apsid'
+    idname = 'apsvers'
 
 
 class Simulator(Author):
@@ -216,33 +223,36 @@ class L1SuperTargetSpectrum(L1SpectrumRow):
 
 class L2(Hierarchy):
     is_template = True
-
-
-class L2RowHDU(L2):
-    is_template = True
-    parents = [Multiple(L1SpectrumRow, 2, 3), APS]
-    products = []
+    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS]
     version_on = ['l1spectrumrows']
 
-# class Classifications(L2RowHDU):
-#     pass
-#
-#
-# class Star(L2RowHDU):
-#     pass
-#
-#
-# class Galaxy(L2RowHDU):
-#     pass
-#
-#
-# class L2Spectrum(L2RowHDU):
-#     is_template = True
-#
-#
-# class ClassificationModelSpectrum(L2Spectrum):
-#     pass
-#
-#
-# class StellarModelSpectrum(L2Spectrum):
-#     pass
+
+class L2TableRow(L2):
+    is_template = True
+
+
+class ClassificationTable(L2TableRow):
+    factors = ['class', 'subclass', 'z', 'z_err', 'auto_class_alls', 'auto_subclass_alls', 'z_alls', 'z_err_alls',
+               'rchi2diff', 'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
+               'sn_median_all', 'sn_medians', 'specflux_sloans', 'specflux_sloan_ivars',
+               'specflux_johnsons', 'specflux_johnson_ivars', 'specsynfluxes', 'specsynflux_ivars', 'specskyflux']
+
+
+class GalaxyTable(L2TableRow):
+    with open(HERE / 'galaxy_table_columns', 'r') as _f:
+        factors = [x.lower() for x in _f.readlines() if len(x)]
+
+
+class L2Spectrum(Spectrum, L2):
+    is_template = True
+
+
+class ClassificationL2Spectrum(L2Spectrum):
+    products = [Indexed('class_spectra', 'flux'), Indexed('class_spectra', 'ivar'), Indexed('class_spectra', 'model'),
+                Indexed('class_spectra', 'lambda')]
+
+
+class GalaxyL2Spectrum(L2Spectrum):
+    products = [Indexed('galaxy_spectra', 'flux'), Indexed('galaxy_spectra', 'ivar'),
+                Indexed('galaxy_spectra', 'model_ab'), Indexed('galaxy_spectra', 'model_em'),
+                Indexed('galaxy_spectra', 'lambda')]

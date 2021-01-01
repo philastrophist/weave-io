@@ -3,11 +3,10 @@ from typing import Union
 
 from astropy.io import fits
 from astropy.table import Table as AstropyTable
-from tqdm import tqdm
 
 from weaveio.config_tables import progtemp_config
-from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, BaseDataHDU, BinaryHDU
-from weaveio.hierarchy import unwind, collect, merge_relationship, Multiple
+from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, BinaryHDU
+from weaveio.hierarchy import unwind, collect, Multiple
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
     OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU
@@ -246,35 +245,5 @@ class L1SuperTargetFile(L1StackedBaseFile):
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         raise NotImplementedError
-
-
-class L2HeaderFibinfoFile(HeaderFibinfoFile):
-    def read(self):
-        """
-        L2Singles inherit from L1Single and so if the other is missing we can fill most of it in
-        """
-        hiers, factors = super().read()
-        header = fits.open(self.fname)[0].header
-        runids = sorted([(int(k[len('RUNS'):]), v) for k, v in header.items() if k.startswith('RUNS')], key=lambda x: x[1])
-        raw_fname = self.fname.with_name(f'r{runids[0]}.fit')
-        single_fname = self.fname.with_name(f'single_{runids[0]}.fit')
-        raw = RawFile(raw_fname, **hiers, **factors)
-        single = L1SingleFile(single_fname, run=hiers['run'], raw=raw)
-        armconfig = single.run.armconfig
-        if armconfig.camera == 'red':
-            camera = 'blue'
-        else:
-            camera = 'red'
-        other_armconfig = ArmConfig(armcode=None, resolution=None, vph=None, camera=camera, colour=None)
-        other_raw_fname = self.fname.with_name(f'r{runids[1]}.fit')
-        other_single_fname = self.fname.with_name(f'single_{runids[1]}.fit')
-        other_run = Run(runid=runids[1], run=single.run, armconfig=other_armconfig, exposure=single.run.exposure)
-        other_raw = RawFile(other_raw_fname, run=other_run)
-        other_single = L1SingleFile(other_single_fname, run=other_run, raw=other_raw)
-        return {'singles': [single, other_single], 'exposure': single.run.exposure}, {}
-
-
-class L2File(HeaderFibinfoFile):
-    match_pattern = '*aps.fit'
 
 
