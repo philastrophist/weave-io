@@ -3,6 +3,7 @@ from typing import Union, Dict, List
 
 from astropy.io import fits
 
+from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy
 
 
@@ -15,6 +16,12 @@ class File(Hierarchy):
 
     def __init__(self, fname, **kwargs):
         super().__init__(tables=None, fname=str(fname), **kwargs)
+
+    @classmethod
+    def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
+        """Returns True if the given fname in a given directory can be read by this class of file hierarchy object"""
+        fname = Path(fname)
+        return fname.match(cls.match_pattern)
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]) -> 'File':
@@ -60,6 +67,7 @@ class HDU(Hierarchy):
             for c in cls.concatenation_constants:
                 if c not in input_dict:
                     input_dict[c] = hdu.header[c]
+            input_dict['concatenation_constants'] = cls.concatenation_constants
         return cls(**input_dict)
 
 

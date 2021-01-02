@@ -171,7 +171,7 @@ class GraphableMeta(type):
                     setattr(cls, hduname, hduclass)  # add as an attribute
             cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
-            cls.factors = cls.factors + cls.concatenation_constants
+            cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
         cls.neotypes = clses[::-1]
