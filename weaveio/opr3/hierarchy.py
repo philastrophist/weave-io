@@ -224,6 +224,7 @@ class L1SuperTargetSpectrum(L1SpectrumRow):
 class L2(Hierarchy):
     is_template = True
     parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS]
+    idname = 'hashid'
     version_on = ['l1spectrumrows']
 
 
