@@ -38,8 +38,8 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
 class L2File(File):
     is_template = True
     match_pattern = '*aps.fit'
-    produces = [ClassificationTable, GalaxyTable, ClassificationSpectrum, GalaxySpectrum]
-    corresponding_hdus = ['class_table', 'galaxy_table', 'class_spectra', 'galaxy_spectra']
+    produces = [ClassificationTable, GalaxyTable]#, ClassificationSpectrum, GalaxySpectrum]
+    corresponding_hdus = ['class_table', 'galaxy_table']#, 'class_spectra', 'galaxy_spectra']
     parents = [Multiple(L1File, 2, 3)]
     hdus = {'primary': PrimaryHDU, 'fibtable': TableHDU,
             'class_spectra': TableHDU,
@@ -141,9 +141,9 @@ class L2File(File):
 
 
 class StackL2File(L2File):
-    produces = [L2_TYPES['StackClassificationTable'], L2_TYPES['StackGalaxyTable'],
-                L2_TYPES['StackClassificationSpectrum'], L2_TYPES['StackGalaxySpectrum']]
-    corresponding_hdus = ['class_table', 'galaxy_table', 'class_spectra', 'galaxy_spectra']
+    produces = [L2_TYPES['StackClassificationTable'], L2_TYPES['StackGalaxyTable']]#,
+                #L2_TYPES['StackClassificationSpectrum'], L2_TYPES['StackGalaxySpectrum']]
+    corresponding_hdus = ['class_table', 'galaxy_table',]# 'class_spectra', 'galaxy_spectra']
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -164,9 +164,9 @@ class StackL2File(L2File):
 
 
 class SuperStackL2File(L2File):
-    produces = [L2_TYPES['SuperStackClassificationTable'], L2_TYPES['SuperStackGalaxyTable'],
-                L2_TYPES['SuperStackClassificationSpectrum'], L2_TYPES['SuperStackGalaxySpectrum']]
-    corresponding_hdus = ['class_table', 'galaxy_table', 'class_spectra', 'galaxy_spectra']
+    produces = [L2_TYPES['SuperStackClassificationTable'], L2_TYPES['SuperStackGalaxyTable']]#,
+                #L2_TYPES['SuperStackClassificationSpectrum'], L2_TYPES['SuperStackGalaxySpectrum']]
+    corresponding_hdus = ['class_table', 'galaxy_table',]# 'class_spectra', 'galaxy_spectra']
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
