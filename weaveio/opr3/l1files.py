@@ -176,6 +176,11 @@ class L1StackFile(L1StackedBaseFile):
     parents = [Multiple(L1SingleFile), OB, ArmConfig, CASU]
 
     @classmethod
+    def fname_from_runid(cls, runid):
+        return f'stacked_{runid:07.0f}.fit'
+
+
+    @classmethod
     def parent_runids(cls, path):
         header = cls.read_header(path)
         return [int(v) for k, v in header.items() if k.startswith('RUNS0')]
@@ -228,6 +233,10 @@ class L1SuperStackFile(L1StackedBaseFile):
     match_pattern = 'superstacked_*.fit'
     produces = [L1SuperStackSpectrum]
     parents = [Multiple(L1SingleFile), OBSpec, ArmConfig, CASU]
+
+    @classmethod
+    def fname_from_runid(cls, runid):
+        return f'superstacked_{runid:07.0f}.fit'
 
     @classmethod
     def match(cls, directory):

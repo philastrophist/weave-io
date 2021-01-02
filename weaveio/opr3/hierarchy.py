@@ -227,11 +227,30 @@ class L2(Hierarchy):
     version_on = ['l1spectrumrows']
 
 
+class StackL2(L2):
+    is_template = True
+    parents = L2.parents + [OB]
+
+
+class SuperStackL2(L2):
+    is_template = True
+    parents = L2.parents + [OBSpec]
+
+
+L2_FTYPES = [StackL2, SuperStackL2]
+
+
 class L2TableRow(L2):
     is_template = True
 
 
+class L2Spectrum(Spectrum, L2):
+    is_template = True
+    plural_name = 'l2spectra'
+
+
 class ClassificationTable(L2TableRow):
+    is_template = True
     factors = ['class', 'subclass', 'z', 'z_err', 'auto_class_alls', 'auto_subclass_alls', 'z_alls', 'z_err_alls',
                'rchi2diff', 'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
                'sn_median_all', 'sn_medians', 'specflux_sloans', 'specflux_sloan_ivars',
@@ -239,20 +258,26 @@ class ClassificationTable(L2TableRow):
 
 
 class GalaxyTable(L2TableRow):
+    is_template = True
     with open(HERE / 'galaxy_table_columns', 'r') as _f:
         factors = [x.lower() for x in _f.readlines() if len(x)]
 
 
-class L2Spectrum(Spectrum, L2):
+class ClassificationSpectrum(L2Spectrum):
+    plural_name = 'classification_spectra'
     is_template = True
-
-
-class ClassificationL2Spectrum(L2Spectrum):
     products = [Indexed('class_spectra', 'flux'), Indexed('class_spectra', 'ivar'), Indexed('class_spectra', 'model'),
                 Indexed('class_spectra', 'lambda')]
 
 
-class GalaxyL2Spectrum(L2Spectrum):
+class GalaxySpectrum(L2Spectrum):
+    plural_name = 'galaxy_spectra'
+    is_template = True
     products = [Indexed('galaxy_spectra', 'flux'), Indexed('galaxy_spectra', 'ivar'),
                 Indexed('galaxy_spectra', 'model_ab'), Indexed('galaxy_spectra', 'model_em'),
                 Indexed('galaxy_spectra', 'lambda')]
+
+
+L2_DTYPES = [ClassificationTable, GalaxyTable, ClassificationSpectrum, GalaxySpectrum]
+
+
