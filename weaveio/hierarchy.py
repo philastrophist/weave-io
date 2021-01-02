@@ -171,7 +171,8 @@ class GraphableMeta(type):
                     setattr(cls, hduname, hduclass)  # add as an attribute
             cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
-            cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
+            if len(cls.concatenation_constants):
+                cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
         cls.neotypes = clses[::-1]
@@ -415,6 +416,8 @@ class Graphable(metaclass=GraphableMeta):
                     v = [v]
                 for vi in v:
                     parents.append(vi)
+            elif k == cls.idname:
+                factors[k] = v
             else:
                 raise ValueError(f"Unknown name {k} for {cls}")
         node = match_pattern_node(labels=cls.neotypes, properties=factors,

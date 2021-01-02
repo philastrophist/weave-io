@@ -3,6 +3,7 @@ from time import sleep
 from warnings import warn
 
 import py2neo
+from astropy.table import Table
 from py2neo import Graph as NeoGraph
 
 import numpy as np
@@ -14,7 +15,7 @@ missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.i
 convert_types = {int:  float, float: float, str: str, type(None): float, None: float, bool: float,
                  datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
                  list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
-                 dict: dict}
+                 dict: dict, Table: Table}
 
 def is_null(x):
     try:
@@ -41,6 +42,8 @@ def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=
         return {_convert_datatypes(k, nan2missing, none2missing): _convert_datatypes(v, nan2missing, none2missing) for k, v in x.items()}
     elif isinstance(x, (pd.DataFrame, pd.Series)):
         return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
+    elif isinstance(x, Table):
+        return _convert_datatypes(list(map(lambda row: {c: ri for c, ri in zip(x.colnames, row)}, x.iterrows())), nan2missing, none2missing)
     elif isinstance(x, np.ndarray):
         return _convert_datatypes(x.tolist(), nan2missing, none2missing)
     if not (none2missing or nan2missing):

@@ -28,8 +28,8 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
     columns = []
     for i in table.colnames:
         value = table[i]
-        if len(value.shape):
-            if value.shape[0] > maxlength:
+        if len(value.shape) == 2:
+            if value.shape[1] > maxlength:
                 continue
         columns.append(i)
     return table[columns]
@@ -70,7 +70,7 @@ class L2File(File):
     def parse_fname(cls, header, fname, instantiate=True) -> List[L1File]:
         ftype_dict = {'stacked': L1StackFile, 'stack': L1StackFile,
                       'superstack': L1SuperStackFile, 'superstacked': L1SuperStackFile}
-        split = fname.replace('.aps.fits', '').replace('.aps.fit', '').split('_')
+        split = fname.name.replace('.aps.fits', '').replace('.aps.fit', '').split('_')
         runids = []
         ftypes = []
         for i in split:
@@ -93,8 +93,12 @@ class L2File(File):
         return files
 
     @classmethod
-    def find_shared_hierarchy(cls) -> Dict:
+    def find_shared_hierarchy(cls, path: Path) -> Dict:
         raise NotImplementedError
+
+    @classmethod
+    def read_header(cls, path):
+        return fits.open(path)[0].header
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
@@ -106,35 +110,39 @@ class L2File(File):
         hdus, file = cls.read_hdus(directory, fname, l1files=l1files)
         astropyhdulist = fits.open(path)
         aps = APS(apsvers=header['APSVERS'])
-        hierarchies = cls.find_shared_hierarchy()
+        hierarchies = cls.find_shared_hierarchy(path)
         for name in cls.corresponding_hdus:
             cls.make_data_rows(name, l1files, file, astropyhdulist, hdus, aps, **hierarchies)
         return file
 
     @classmethod
-    def read_one_hdu_l2data(cls, hdus, hduname, l1files):
-        names = [i.name for i in hdus]
+    def read_one_hdu_l2data(cls, fname, hdus, hduname, l1files):
+        names = [i.name.lower().strip() for i in hdus]
         table = Table(hdus[names.index(hduname)].data)
-        table['spec_index'] = range(len(table))
+        if len(table.colnames):
+            table.rename_columns(table.colnames, [i.lower() for i in table.colnames])
+            table['spec_index'] = range(len(table))
         table = filter_products_from_table(table, 10)  # removes huge arrays that are best kept in binary files
         hashids = []
-        for _, row in table.iterrows():
+        for row in table:
             nspec = row['nspec']
             hashids.append([f'{l1file.fname}[{nspec}]' for l1file in l1files])
-        table['hashids'] = hashids
+        table['spectrum_hashids'] = hashids
+        table['hashid'] = [f'{fname}[{row["nspec"]}]' for row in table]
         data = CypherData(table, hduname)
         return data
 
     @classmethod
     def make_data_rows(cls, hduname, l1files, file, astropyhdulist, hdus, aps, **hierarchies):
         row_type = cls.produces[cls.corresponding_hdus.index(hduname)]
-        table = cls.read_one_hdu_l2data(astropyhdulist, hduname, l1files)
+        table = cls.read_one_hdu_l2data(file.fname, astropyhdulist, hduname, l1files)
         with unwind(table) as row:
-            with unwind(row['hashids']) as hashid:
+            with unwind(row['spectrum_hashids']) as hashid:
                 spectrum = L1SpectrumRow.find(hashid=hashid)
             spectra = collect(spectrum)
+            spectra_list = [spectra[i] for i, _ in enumerate(l1files)]
             fibretarget = FibreTarget.find(anonymous_children=[spectra[0]])
-            l2row = row_type(tables=row, l1spectrumrows=spectra, fibretarget=fibretarget, aps=aps, **hierarchies)
+            l2row = row_type(hashid=table['hashid'], tables=row, l1spectrumrows=spectra_list, fibretarget=fibretarget, aps=aps, **hierarchies)
             l2row.attach_products(file, index=row['spec_index'], **hdus)
         l2rows = collect(l2row)
         return l2rows
@@ -158,8 +166,8 @@ class StackL2File(L2File):
         return False
 
     @classmethod
-    def find_shared_hierarchy(cls) -> Dict:
-        header = cls.read_header()
+    def find_shared_hierarchy(cls, path) -> Dict:
+        header = cls.read_header(path)
         return {'ob': OB.find(obid=int(header['OBID']))}
 
 
@@ -184,6 +192,6 @@ class SuperStackL2File(L2File):
             return False
 
     @classmethod
-    def find_shared_hierarchy(cls) -> Dict:
-        header = cls.read_header()
+    def find_shared_hierarchy(cls, path) -> Dict:
+        header = cls.read_header(path)
         return {'obspec': OBSpec.find(xml=str(header['cat-name']))}
