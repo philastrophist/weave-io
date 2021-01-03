@@ -1,6 +1,13 @@
+from pathlib import Path
+
+import os
+
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File
 from weaveio.hierarchy import Hierarchy, Multiple, Indexed
+
+
+HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 
 
 class Author(Hierarchy):
@@ -12,7 +19,7 @@ class CASU(Author):
 
 
 class APS(Author):
-    idname = 'apsid'
+    idname = 'apsvers'
 
 
 class Simulator(Author):
@@ -155,15 +162,22 @@ class Observation(Hierarchy):
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
 
 
-class Spectrum(Hierarchy):
-    plural_name = 'spectra'
+class SourcedData(Hierarchy):
     is_template = True
-    idname = 'hashid'
+    factors = ['sourcefile', 'nrow']
+    identifier_builder = ['sourcefile', 'nrow']
+
+
+class Spectrum(SourcedData):
+    is_template = True
+    plural_name = 'spectra'
 
 
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
     parents = [Observation, CASU]
+    factors = ['sourcefile']
+    identifier_builder = ['sourcefile']
     products = ['counts1', 'counts2']
     version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
@@ -214,35 +228,66 @@ class L1SuperTargetSpectrum(L1SpectrumRow):
     version_on = ['l1singlespectra', 'weavetarget']
 
 
-class L2(Hierarchy):
+class L2(SourcedData):
     is_template = True
-
-
-class L2RowHDU(L2):
-    is_template = True
-    parents = [Multiple(L1SpectrumRow, 2, 3), APS]
-    products = []
+    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS]
     version_on = ['l1spectrumrows']
 
-# class Classifications(L2RowHDU):
-#     pass
-#
-#
-# class Star(L2RowHDU):
-#     pass
-#
-#
-# class Galaxy(L2RowHDU):
-#     pass
-#
-#
-# class L2Spectrum(L2RowHDU):
-#     is_template = True
-#
-#
-# class ClassificationModelSpectrum(L2Spectrum):
-#     pass
-#
-#
-# class StellarModelSpectrum(L2Spectrum):
-#     pass
+
+class StackL2(L2):
+    is_template = True
+    parents = L2.parents + [OB]
+
+
+class SuperStackL2(L2):
+    is_template = True
+    parents = L2.parents + [OBSpec]
+
+
+L2_FTYPES = [StackL2, SuperStackL2]
+
+
+class L2TableRow(L2):
+    is_template = True
+
+
+class L2Spectrum(Spectrum, L2):
+    is_template = True
+    plural_name = 'l2spectra'
+
+
+class ClassificationTable(L2TableRow):
+    is_template = True
+    factors = L2TableRow.factors + ['class', 'subclass', 'z', 'z_err', 'auto_class_alls',
+                                    'auto_subclass_alls', 'z_alls', 'z_err_alls', 'rchi2diff',
+                                    'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
+                                    'sn_median_all', 'sn_medians', 'specflux_sloans',
+                                    'specflux_sloan_ivars', 'specflux_johnsons',
+                                    'specflux_johnson_ivars', 'specsynfluxes', 'specsynflux_ivars',
+                                    'specskyflux']
+
+
+class GalaxyTable(L2TableRow):
+    is_template = True
+    with open(HERE / 'galaxy_table_columns', 'r') as _f:
+        factors = L2TableRow.factors + [x.lower().strip() for x in _f.readlines() if len(x)]
+
+
+class ClassificationSpectrum(L2Spectrum):
+    plural_name = 'classification_spectra'
+    is_template = True
+    products = [Indexed('class_spectra', 'flux'), Indexed('class_spectra', 'ivar'), Indexed('class_spectra', 'model'),
+                Indexed('class_spectra', 'lambda')]
+
+
+class GalaxySpectrum(L2Spectrum):
+    plural_name = 'galaxy_spectra'
+    is_template = True
+    products = [Indexed('galaxy_spectra', 'flux'), Indexed('galaxy_spectra', 'ivar'),
+                Indexed('galaxy_spectra', 'model_ab'), Indexed('galaxy_spectra', 'model_em'),
+                Indexed('galaxy_spectra', 'lambda')]
+
+
+L2_DTYPES = [ClassificationTable, GalaxyTable, ClassificationSpectrum, GalaxySpectrum]
+
+

@@ -173,12 +173,20 @@ class CypherVariable:
         return self.name
 
     def __getitem__(self, item: Union[str, int]):
+        return self.get(item, alias=True)
+
+    def get(self, item: Union[str, int], alias=False):
         assert isinstance(item, (int, str))
         query = CypherQuery.get_context()
         getitem = CypherVariableItem(self, item)
-        alias_statement = Alias(getitem, str(item))
-        query.add_statement(alias_statement)
-        return alias_statement.out
+        if alias:
+            if isinstance(item, int):
+                item = f'{self.namehint}_index{item}'
+            alias_statement = Alias(getitem, str(item))
+            query.add_statement(alias_statement)
+            return alias_statement.out
+        else:
+            return getitem
 
 
 class DerivedCypherVariable(CypherVariable):

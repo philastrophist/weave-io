@@ -3,6 +3,7 @@ from time import sleep
 from warnings import warn
 
 import py2neo
+from astropy.table import Table
 from py2neo import Graph as NeoGraph
 
 import numpy as np
@@ -14,7 +15,7 @@ missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.i
 convert_types = {int:  float, float: float, str: str, type(None): float, None: float, bool: float,
                  datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
                  list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
-                 dict: dict}
+                 dict: dict, Table: Table}
 
 def is_null(x):
     try:
@@ -40,6 +41,9 @@ def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=
     elif isinstance(x, dict):
         return {_convert_datatypes(k, nan2missing, none2missing): _convert_datatypes(v, nan2missing, none2missing) for k, v in x.items()}
     elif isinstance(x, (pd.DataFrame, pd.Series)):
+        return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
+    elif isinstance(x, Table):
+        x = list(map(lambda row: {c: ri for c, ri in zip(x.colnames, row)}, x.iterrows()))
         return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
     elif isinstance(x, np.ndarray):
         return _convert_datatypes(x.tolist(), nan2missing, none2missing)
@@ -104,6 +108,8 @@ class Graph(metaclass=ContextMeta):
 
     def output_for_debug(self, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
+        warn(f"When parameters are output for debug in the neo4j desktop, it cannot be guaranteed the data types will remain the same. "
+             f"For certain, infs/nans/None are converted to strings (to avoid this, run your query without using `output_for_debug`)")
         return f':params {d}'
 
 Graph._context_class = Graph

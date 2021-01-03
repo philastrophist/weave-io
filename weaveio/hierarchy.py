@@ -171,10 +171,11 @@ class GraphableMeta(type):
                     setattr(cls, hduname, hduclass)  # add as an attribute
             cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
-            cls.factors = cls.factors + cls.concatenation_constants
+            if len(cls.concatenation_constants):
+                cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
-        cls.neotypes = clses[::-1]
+        cls.neotypes = clses
         super().__init__(name, bases, dct)
 
 
@@ -415,6 +416,8 @@ class Graphable(metaclass=GraphableMeta):
                     v = [v]
                 for vi in v:
                     parents.append(vi)
+            elif k == cls.idname:
+                factors[k] = v
             else:
                 raise ValueError(f"Unknown name {k} for {cls}")
         node = match_pattern_node(labels=cls.neotypes, properties=factors,
@@ -458,7 +461,7 @@ class Hierarchy(Graphable):
         for k, v in self.specification.items():
             if k not in kwargs:
                 if tables is not None:
-                    kwargs[k] = tables[k]
+                    kwargs[k] = tables.get(k, alias=False)
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}

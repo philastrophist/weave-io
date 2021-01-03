@@ -2,11 +2,12 @@ from textwrap import dedent
 from typing import List, Dict, Union, Tuple, Optional, Iterable
 
 from . import CypherQuery
-from .base import camelcase, Varname, Statement, CypherVariable, CypherData
+from .base import camelcase, Varname, Statement, CypherVariable, CypherData, CypherVariableItem
 
 
 def are_different(a: str, b: str) -> str:
     return f"apoc.coll.different([apoc.coll.flatten([[{a}]]), apoc.coll.flatten([[{b}]])])"
+
 
 def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, CypherVariable], List[CypherVariable]]:
     """
@@ -34,30 +35,35 @@ def sanitise_variablename(v):
 
 
 def expand_to_cypher_dict(*collections: Union[Dict[str, CypherVariable], CypherVariable]) -> str:
-    l = []
+    inputs = []
     for collection in collections:
         if isinstance(collection, dict):
-            l += [f"{sanitise_variablename(v)}: {v}" for v in collection.values()]
+            inputs += list(collection.values())
         elif isinstance(collection, list):
-            l += [f"{sanitise_variablename(v)}: {v}" for v in collection]
+            inputs += collection
         elif isinstance(collection, CypherVariable):
-            l.append(f"{sanitise_variablename(collection)}: {collection}")
+            inputs.append(collection)
         else:
             raise TypeError(f"Cannot convert {collection} to a cypher input dict of form `{{x:x}}` ")
+    inputs = [getattr(i, 'parent') if isinstance(i, CypherVariableItem) else i for i in inputs]
+    l = set([f"{sanitise_variablename(v)}: {v}" for v in inputs])
     return ', '.join(l)
 
 
-def expand_to_cypher_alias(*collections: Union[Dict[str, CypherVariable], CypherVariable], prefix='$') -> str:
-    l = []
+def expand_to_cypher_alias(*collections: Union[Dict[str, CypherVariable], CypherVariable],
+                           prefix='$') -> str:
+    inputs = []
     for collection in collections:
         if isinstance(collection, dict):
-            l += [f"{prefix}{sanitise_variablename(v)} as {sanitise_variablename(v)}" for v in collection.values()]
+            inputs += list(collection.values())
         elif isinstance(collection, list):
-            l += [f"{prefix}{sanitise_variablename(v)} as {sanitise_variablename(v)}" for v in collection]
+            inputs += collection
         elif isinstance(collection, CypherVariable):
-            l.append(f"{prefix}{sanitise_variablename(collection)} as {sanitise_variablename(collection)}")
+            inputs.append(collection)
         else:
-            raise TypeError(f"Cannot convert {collection} to a cypher alias list of form `x as x`")
+            raise TypeError(f"Cannot convert {collection} to a cypher input dict of form `{{x:x}}` ")
+    inputs = [getattr(i, 'parent') if isinstance(i, CypherVariableItem) else i for i in inputs]
+    l = set([f"{prefix}{sanitise_variablename(v)} as {sanitise_variablename(v)}" for v in inputs])
     return ', '.join(l)
 
 
@@ -105,7 +111,9 @@ class MatchPatternNode(Statement):
         match = f'({self.out}: {labels} {self.properties})'
         wheres = ' AND '.join([f'({self.out})<--({p})' for p in self.parents] +
                             [f'({self.out})-->({c})' for c in self.children])
-        return f'WITH * OPTIONAL MATCH {match}\nWHERE {wheres}'
+        if len(wheres):
+            wheres = f'\nWHERE {wheres}'
+        return f'WITH * OPTIONAL MATCH {match}{wheres}'
 
 
 class PropertyOverlapError(Exception):

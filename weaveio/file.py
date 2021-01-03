@@ -3,6 +3,7 @@ from typing import Union, Dict, List
 
 from astropy.io import fits
 
+from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy
 
 
@@ -12,12 +13,19 @@ class File(Hierarchy):
     match_pattern = '*.file'
     hdus = {}
     produces = []
+    recommended_batchsize = None
 
     def __init__(self, fname, **kwargs):
         super().__init__(tables=None, fname=str(fname), **kwargs)
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str]) -> 'File':
+    def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
+        """Returns True if the given fname in a given directory can be read by this class of file hierarchy object"""
+        fname = Path(fname)
+        return fname.match(cls.match_pattern)
+
+    @classmethod
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None) -> 'File':
         raise NotImplementedError
 
     @classmethod
@@ -57,9 +65,11 @@ class HDU(Hierarchy):
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
         if cls.concatenation_constants is not None:
-            for c in cls.concatenation_constants:
-                if c not in input_dict:
-                    input_dict[c] = hdu.header[c]
+            if len(cls.concatenation_constants):
+                for c in cls.concatenation_constants:
+                    if c not in input_dict:
+                        input_dict[c] = hdu.header[c]
+                input_dict['concatenation_constants'] = cls.concatenation_constants
         return cls(**input_dict)
 
 
@@ -81,9 +91,14 @@ class TableHDU(BaseDataHDU):
     @classmethod
     def _from_hdu(cls, hdu):
         input_dict = BaseDataHDU._from_hdu(hdu)
-        colnames = [str(i) for i in hdu.data.names]
-        input_dict['columns'] = colnames
-        input_dict['nrows'], input_dict['ncols'] = hdu.data.shape[0], len(colnames)
+        if hdu.data is None:
+            input_dict['columns'] = []
+            input_dict['nrows'] = 0
+            input_dict['ncols'] = 0
+        else:
+            colnames = [str(i) for i in hdu.data.names]
+            input_dict['columns'] = colnames
+            input_dict['nrows'], input_dict['ncols'] = hdu.data.shape[0], len(colnames)
         return input_dict
 
 
@@ -93,7 +108,10 @@ class BinaryHDU(BaseDataHDU):
     @classmethod
     def _from_hdu(cls, hdu):
         input_dict = BaseDataHDU._from_hdu(hdu)
-        input_dict['nrows'], input_dict['ncols'] = hdu.data.shape
+        if hdu.data is None:
+            input_dict['nrows'], input_dict['ncols'] = 0, 0
+        else:
+            input_dict['nrows'], input_dict['ncols'] = hdu.data.shape
         return input_dict
 
 
