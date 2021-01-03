@@ -7,23 +7,23 @@ import numpy as np
 
 data = OurData('data', port=7687, write=True)
 # data.plot_relations(False)
-
-deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
-assert np.all(deletion == 0)
-
-data.drop_all_constraints()
-data.apply_constraints()
+#
+# deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
+# assert np.all(deletion == 0)
+#
+# data.drop_all_constraints()
+# data.apply_constraints()
 
 times = []
 basefiles = []
-for typ in [RawFile, L1SingleFile, L1StackFile]:
+for typ in [L1StackFile]:
     for f in data.rootdir.glob(typ.match_pattern):
         basefiles.append([typ, f])
 files = []
 batch_size = 200
 for reader, fname in basefiles:
     if reader == L1StackFile:
-        if fname.name not in ['stacked_1002081.fit', 'stacked_1002082.fit']:
+        if fname.name not in ['stacked_1002814.fit', 'stacked_1002813.fit']:
             continue
         length = len(reader.read_fibinfo_dataframe(fname))
         for start in range(0, length + 1, batch_size):
