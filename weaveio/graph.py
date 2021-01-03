@@ -43,7 +43,8 @@ def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=
     elif isinstance(x, (pd.DataFrame, pd.Series)):
         return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
     elif isinstance(x, Table):
-        return _convert_datatypes(list(map(lambda row: {c: ri for c, ri in zip(x.colnames, row)}, x.iterrows())), nan2missing, none2missing)
+        x = list(map(lambda row: {c: ri for c, ri in zip(x.colnames, row)}, x.iterrows()))
+        return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
     elif isinstance(x, np.ndarray):
         return _convert_datatypes(x.tolist(), nan2missing, none2missing)
     if not (none2missing or nan2missing):
@@ -107,6 +108,8 @@ class Graph(metaclass=ContextMeta):
 
     def output_for_debug(self, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
+        warn(f"When parameters are output for debug in the neo4j desktop, it cannot be guaranteed the data types will remain the same. "
+             f"For certain, infs/nans/None are converted to strings (to avoid this, run your query without using `output_for_debug`)")
         return f':params {d}'
 
 Graph._context_class = Graph

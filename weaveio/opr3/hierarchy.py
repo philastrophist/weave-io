@@ -162,15 +162,22 @@ class Observation(Hierarchy):
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
 
 
-class Spectrum(Hierarchy):
-    plural_name = 'spectra'
+class SourcedData(Hierarchy):
     is_template = True
-    idname = 'hashid'
+    factors = ['sourcefile', 'nrow']
+    identifier_builder = ['sourcefile', 'nrow']
+
+
+class Spectrum(SourcedData):
+    is_template = True
+    plural_name = 'spectra'
 
 
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
     parents = [Observation, CASU]
+    factors = ['sourcefile']
+    identifier_builder = ['sourcefile']
     products = ['counts1', 'counts2']
     version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
@@ -221,10 +228,9 @@ class L1SuperTargetSpectrum(L1SpectrumRow):
     version_on = ['l1singlespectra', 'weavetarget']
 
 
-class L2(Hierarchy):
+class L2(SourcedData):
     is_template = True
     parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS]
-    idname = 'hashid'
     version_on = ['l1spectrumrows']
 
 
@@ -252,16 +258,19 @@ class L2Spectrum(Spectrum, L2):
 
 class ClassificationTable(L2TableRow):
     is_template = True
-    factors = ['class', 'subclass', 'z', 'z_err', 'auto_class_alls', 'auto_subclass_alls', 'z_alls', 'z_err_alls',
-               'rchi2diff', 'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
-               'sn_median_all', 'sn_medians', 'specflux_sloans', 'specflux_sloan_ivars',
-               'specflux_johnsons', 'specflux_johnson_ivars', 'specsynfluxes', 'specsynflux_ivars', 'specskyflux']
+    factors = L2TableRow.factors + ['class', 'subclass', 'z', 'z_err', 'auto_class_alls',
+                                    'auto_subclass_alls', 'z_alls', 'z_err_alls', 'rchi2diff',
+                                    'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
+                                    'sn_median_all', 'sn_medians', 'specflux_sloans',
+                                    'specflux_sloan_ivars', 'specflux_johnsons',
+                                    'specflux_johnson_ivars', 'specsynfluxes', 'specsynflux_ivars',
+                                    'specskyflux']
 
 
 class GalaxyTable(L2TableRow):
     is_template = True
     with open(HERE / 'galaxy_table_columns', 'r') as _f:
-        factors = [x.lower() for x in _f.readlines() if len(x)]
+        factors = L2TableRow.factors + [x.lower().strip() for x in _f.readlines() if len(x)]
 
 
 class ClassificationSpectrum(L2Spectrum):

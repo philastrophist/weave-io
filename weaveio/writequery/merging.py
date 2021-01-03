@@ -105,7 +105,9 @@ class MatchPatternNode(Statement):
         match = f'({self.out}: {labels} {self.properties})'
         wheres = ' AND '.join([f'({self.out})<--({p})' for p in self.parents] +
                             [f'({self.out})-->({c})' for c in self.children])
-        return f'WITH * OPTIONAL MATCH {match}\nWHERE {wheres}'
+        if len(wheres):
+            wheres = f'\nWHERE {wheres}'
+        return f'WITH * OPTIONAL MATCH {match}{wheres}'
 
 
 class PropertyOverlapError(Exception):

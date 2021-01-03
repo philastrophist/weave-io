@@ -461,7 +461,7 @@ class Hierarchy(Graphable):
         for k, v in self.specification.items():
             if k not in kwargs:
                 if tables is not None:
-                    kwargs[k] = tables[k]
+                    kwargs[k] = tables.get(k, alias=False)
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}

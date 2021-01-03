@@ -116,33 +116,30 @@ class L2File(File):
         return file
 
     @classmethod
-    def read_one_hdu_l2data(cls, fname, hdus, hduname, l1files):
+    def read_one_hdu_l2data(cls, hdus, hduname):
         names = [i.name.lower().strip() for i in hdus]
-        table = Table(hdus[names.index(hduname)].data)
+        table = Table(hdus[names.index(hduname)].data)[:100]
         if len(table.colnames):
             table.rename_columns(table.colnames, [i.lower() for i in table.colnames])
             table['spec_index'] = range(len(table))
         table = filter_products_from_table(table, 10)  # removes huge arrays that are best kept in binary files
-        hashids = []
-        for row in table:
-            nspec = row['nspec']
-            hashids.append([f'{l1file.fname}[{nspec}]' for l1file in l1files])
-        table['spectrum_hashids'] = hashids
-        table['hashid'] = [f'{fname}[{row["nspec"]}]' for row in table]
         data = CypherData(table, hduname)
         return data
 
     @classmethod
     def make_data_rows(cls, hduname, l1files, file, astropyhdulist, hdus, aps, **hierarchies):
         row_type = cls.produces[cls.corresponding_hdus.index(hduname)]
-        table = cls.read_one_hdu_l2data(file.fname, astropyhdulist, hduname, l1files)
+        table = cls.read_one_hdu_l2data(astropyhdulist, hduname)
+        l1filenames = CypherData([l.fname for l in l1files], 'l1fnames')
         with unwind(table) as row:
-            with unwind(row['spectrum_hashids']) as hashid:
-                spectrum = L1SpectrumRow.find(hashid=hashid)
+            with unwind(l1filenames) as l1fname:
+                spectrum = L1SpectrumRow.find(sourcefile=l1fname, nrow=row['nspec'])
             spectra = collect(spectrum)
             spectra_list = [spectra[i] for i, _ in enumerate(l1files)]
             fibretarget = FibreTarget.find(anonymous_children=[spectra[0]])
-            l2row = row_type(hashid=table['hashid'], tables=row, l1spectrumrows=spectra_list, fibretarget=fibretarget, aps=aps, **hierarchies)
+            l2row = row_type(sourcefile=file.fname, nrow=row['nspec'],
+                             tables=row, l1spectrumrows=spectra_list,
+                             fibretarget=fibretarget, aps=aps, **hierarchies)
             l2row.attach_products(file, index=row['spec_index'], **hdus)
         l2rows = collect(l2row)
         return l2rows
@@ -168,7 +165,7 @@ class StackL2File(L2File):
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
         header = cls.read_header(path)
-        return {'ob': OB.find(obid=int(header['OBID']))}
+        return {'ob': OB.find(obid=header['OBID'])}
 
 
 class SuperStackL2File(L2File):
