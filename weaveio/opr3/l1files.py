@@ -93,7 +93,7 @@ class HeaderFibinfoFile(File):
         return AstropyTable(fits.open(path)[cls.fibinfo_i].data)
 
     @classmethod
-    def read(cls, directory: Path, fname: Path) -> 'File':
+    def read(cls, directory: Path, fname: Path, slc: slice = None) -> 'File':
         raise NotImplementedError
 
 
@@ -109,7 +109,7 @@ class RawFile(HeaderFibinfoFile):
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         path = Path(directory) / Path(fname)
-        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path)
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         observation = hiers['observation']
         hdus, file = cls.read_hdus(directory, fname)
         raw = RawSpectrum(sourcefile=str(fname), casu=observation.casu, observation=observation)
@@ -139,7 +139,7 @@ class L1SingleFile(L1File):
         fname = Path(fname)
         directory = Path(directory)
         path = directory / fname
-        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path)
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         observation = hiers['observation']
         casu = observation.casu
         inferred_raw_fname = str(fname.with_name(fname.name.replace('single_', 'r')))
@@ -157,6 +157,7 @@ class L1SingleFile(L1File):
 
 class L1StackedBaseFile(L1File):
     is_template = True
+    recommended_batchsize = 200
 
 
 class L1StackFile(L1StackedBaseFile):
@@ -238,6 +239,7 @@ class L1SuperStackFile(L1StackedBaseFile):
 class L1SuperTargetFile(L1StackedBaseFile):
     match_pattern = 'WVE_*.fit'
     produces = [L1SuperTargetSpectrum]
+    recommended_batchsize = None
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):

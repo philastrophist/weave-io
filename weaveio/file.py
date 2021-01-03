@@ -13,6 +13,7 @@ class File(Hierarchy):
     match_pattern = '*.file'
     hdus = {}
     produces = []
+    recommended_batchsize = None
 
     def __init__(self, fname, **kwargs):
         super().__init__(tables=None, fname=str(fname), **kwargs)
@@ -24,7 +25,7 @@ class File(Hierarchy):
         return fname.match(cls.match_pattern)
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str]) -> 'File':
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None) -> 'File':
         raise NotImplementedError
 
     @classmethod

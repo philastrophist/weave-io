@@ -49,6 +49,7 @@ class L2File(File):
             'stellar_table': TableHDU,
             'stellar_table_rvs': TableHDU,
             'galaxy_table': TableHDU}
+    recommended_batchsize = 100
 
     @classmethod
     def query_structure(cls, path, graph):
@@ -101,24 +102,24 @@ class L2File(File):
         return fits.open(path)[0].header
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str]):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         fname = Path(fname)
         directory = Path(directory)
         path = directory / fname
         header = cls.read_header(path)
         l1files = cls.parse_fname(header, fname)
-        hdus, file = cls.read_hdus(directory, fname, l1files=l1files)
+        hdu_nodes, file = cls.read_hdus(directory, fname, l1files=l1files)
         astropyhdulist = fits.open(path)
         aps = APS(apsvers=header['APSVERS'])
         hierarchies = cls.find_shared_hierarchy(path)
         for name in cls.corresponding_hdus:
-            cls.make_data_rows(name, l1files, file, astropyhdulist, hdus, aps, **hierarchies)
+            cls.make_data_rows(name, slc, l1files, file, astropyhdulist, hdu_nodes, aps, **hierarchies)
         return file
 
     @classmethod
-    def read_one_hdu_l2data(cls, hdus, hduname):
+    def read_one_hdu_l2data(cls, hdus, hduname, slc):
         names = [i.name.lower().strip() for i in hdus]
-        table = Table(hdus[names.index(hduname)].data)[:100]
+        table = Table(hdus[names.index(hduname)].data)[slc]
         if len(table.colnames):
             table.rename_columns(table.colnames, [i.lower() for i in table.colnames])
             table['spec_index'] = range(len(table))
@@ -127,9 +128,9 @@ class L2File(File):
         return data
 
     @classmethod
-    def make_data_rows(cls, hduname, l1files, file, astropyhdulist, hdus, aps, **hierarchies):
+    def make_data_rows(cls, hduname, slc, l1files, file, astropyhdulist, hdus, aps, **hierarchies):
         row_type = cls.produces[cls.corresponding_hdus.index(hduname)]
-        table = cls.read_one_hdu_l2data(astropyhdulist, hduname)
+        table = cls.read_one_hdu_l2data(astropyhdulist, hduname, slc)
         l1filenames = CypherData([l.fname for l in l1files], 'l1fnames')
         with unwind(table) as row:
             with unwind(l1filenames) as l1fname:

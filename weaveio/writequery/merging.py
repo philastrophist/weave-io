@@ -8,6 +8,7 @@ from .base import camelcase, Varname, Statement, CypherVariable, CypherData, Cyp
 def are_different(a: str, b: str) -> str:
     return f"apoc.coll.different([apoc.coll.flatten([[{a}]]), apoc.coll.flatten([[{b}]])])"
 
+
 def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, CypherVariable], List[CypherVariable]]:
     """
     If d is a cyphervariable, return it

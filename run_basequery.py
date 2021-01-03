@@ -40,12 +40,12 @@ for reader, fname, slc in bar:
         reader.read(data.rootdir, fname.relative_to(data.rootdir), slc)
         cypher, params = query.render_query()
     start = time.time()
-    results = data.graph.execute(cypher, **params)
-    times.append(time.time() - start)
-print(times)
-
-import matplotlib.pyplot as plt
-plt.plot(times)
-plt.savefig('times.png')
-
-
+#     results = data.graph.execute(cypher, **params)
+#     times.append(time.time() - start)
+# print(times)
+#
+# import matplotlib.pyplot as plt
+# plt.plot(times)
+# plt.savefig('times.png')
+#
+#
