@@ -175,7 +175,7 @@ class GraphableMeta(type):
                 cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
-        cls.neotypes = clses[::-1]
+        cls.neotypes = clses
         super().__init__(name, bases, dct)
 
 
