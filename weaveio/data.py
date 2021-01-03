@@ -1,10 +1,11 @@
+import time
 from itertools import product
 
 import networkx
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Union
+from typing import Union, List
 import pandas as pd
 import re
 
@@ -209,7 +210,6 @@ class Data:
                                                  multiplicity=False, number=1, index=index, name=product_name,
                                                  label='=1')
 
-
     def make_constraints_cypher(self):
         return [hierarchy.make_schema() for hierarchy in self.hierarchies]
 
@@ -223,27 +223,64 @@ class Data:
     def get_extant_files(self):
         return self.graph.execute("MATCH (f:File) RETURN DISTINCT f.fname").to_series(dtype=str).values.tolist()
 
-    def directory_to_neo4j(self, *filetype_names):
+    def raise_collisions(self):
+        """
+        returns the properties that would have been overwritten in nodes and relationships.
+        """
+        node_collisions = self.graph.execute("MATCH (c: _Collision) return c { .*}").to_data_frame()
+        rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
+        return node_collisions, rel_collisions
+
+    def read_file(self, *paths: Path, collision_manager='ignore', batch_size=None) -> pd.DataFrame:
+        """
+        Read in the files given in `paths` to the database.
+        `collision_manager` is the method with which the database deals with overwriting data.
+        Values of `collision_manager` can be {'ignore', 'overwrite', 'track&flag'}.
+        track&flag will have the same behaviour as ignore but places the overlapping data in its own node for later retrieval.
+        :return
+            statistics dataframe
+            collisions dataframe
+        """
+        batches = []
+        for path in paths:
+            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir))]
+            if len(matches) > 1:
+                raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
+            filetype = matches[0]
+            filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
+            slices = filetype.get_batches(path, filetype_batch_size)
+            batches += [(filetype, path.relative_to(self.rootdir), slc) for slc in slices]
+        elapsed_times = []
+        stats = []
+        timestamps = []
+        bar = tqdm(batches)
+        for filetype, fname, slc in bar:
+            bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
+            with self.write(collision_manager) as query:
+                filetype.read(self.rootdir, fname)
+            cypher, params = query.render_query()
+            start = time.time()
+            try:
+                results = self.graph.execute(cypher, **params)
+            except py2neo.database.work.ClientError as e:
+                logging.exception('ClientError:', exc_info=True)
+                raise e
+            stats.append(results.stats())
+            timestamps.append(results.evaluate())
+            elapsed_times.append(time.time() - start)
+        df = pd.DataFrame(stats)
+        df['timestamps'] = timestamps
+        _, df['fname'], slcs = zip(*batches)
+        df['batch_start'], df['batch_end'] = zip(*slcs)
+        return df
+
+    def directory_to_neo4j(self, filetype_names, collision_manager='ignore'):
+        filelist = []
         extant_fnames = self.get_extant_files()
+        print(f'Skipping {len(extant_fnames)} files')
         for filetype in self.filetypes:
-            self.filelists[filetype] = self.rootdir.rglob(filetype.match_pattern)
-        for filetype, files in self.filelists.items():
-            skipped = 0
-            if filetype.__name__ not in filetype_names and len(filetype_names) != 0:
-                continue
-            for file in tqdm(files, desc=filetype.__name__):
-                if file in extant_fnames:
-                    skipped += 1
-                    continue
-                try:
-                    with self.write() as query:
-                        filetype.read(self.rootdir, file.relative_to(self.rootdir))
-                    cypher, parameters = query.render_query()
-                    self.graph.neograph.run(cypher, parameters=parameters)
-                except py2neo.database.work.ClientError as e:
-                    logging.exception('ClientError:', exc_info=True)
-                    raise e
-            print(f'Skipped {skipped} files')
+            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if i not in extant_fnames]
+        return self.read_file(*filelist, collision_manager=collision_manager)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
