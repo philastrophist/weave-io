@@ -8,15 +8,15 @@ import numpy as np
 data = OurData('data', port=7687, write=True)
 # data.plot_relations(False)
 #
-# deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
-# assert np.all(deletion == 0)
+deletion = data.graph.execute('call apoc.periodic.iterate("MATCH (n) return n", "DETACH DELETE n", {batchSize:1000}) yield failedBatches, failedOperations').to_ndarray()
+assert np.all(deletion == 0)
 #
-# data.drop_all_constraints()
-# data.apply_constraints()
+data.drop_all_constraints()
+data.apply_constraints()
 
 times = []
 basefiles = []
-for typ in [L1StackFile]:
+for typ in [RawFile, L1SingleFile, L1StackFile]:
     for f in data.rootdir.glob(typ.match_pattern):
         basefiles.append([typ, f])
 files = []
@@ -40,12 +40,12 @@ for reader, fname, slc in bar:
         reader.read(data.rootdir, fname.relative_to(data.rootdir), slc)
         cypher, params = query.render_query()
     start = time.time()
-#     results = data.graph.execute(cypher, **params)
-#     times.append(time.time() - start)
-# print(times)
-#
-# import matplotlib.pyplot as plt
-# plt.plot(times)
-# plt.savefig('times.png')
-#
-#
+    results = data.graph.execute(cypher, **params)
+    times.append(time.time() - start)
+print(times)
+
+import matplotlib.pyplot as plt
+plt.plot(times)
+plt.savefig('times.png')
+
+

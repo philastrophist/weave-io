@@ -231,7 +231,7 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
-    def read_file(self, *paths: Path, collision_manager='ignore', batch_size=None) -> pd.DataFrame:
+    def read_files(self, *paths: Union[Path, str], collision_manager='ignore', batch_size=None, halt_on_error=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -239,11 +239,11 @@ class Data:
         track&flag will have the same behaviour as ignore but places the overlapping data in its own node for later retrieval.
         :return
             statistics dataframe
-            collisions dataframe
         """
         batches = []
         for path in paths:
-            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir))]
+            path = Path(path)
+            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir), self.graph)]
             if len(matches) > 1:
                 raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
             filetype = matches[0]
@@ -257,30 +257,40 @@ class Data:
         for filetype, fname, slc in bar:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
             with self.write(collision_manager) as query:
-                filetype.read(self.rootdir, fname)
+                filetype.read(self.rootdir, fname, slc)
             cypher, params = query.render_query()
             start = time.time()
             try:
                 results = self.graph.execute(cypher, **params)
             except py2neo.database.work.ClientError as e:
                 logging.exception('ClientError:', exc_info=True)
-                raise e
+                if halt_on_error:
+                    raise e
+                print(e)
             stats.append(results.stats())
             timestamps.append(results.evaluate())
             elapsed_times.append(time.time() - start)
         df = pd.DataFrame(stats)
-        df['timestamps'] = timestamps
-        _, df['fname'], slcs = zip(*batches)
-        df['batch_start'], df['batch_end'] = zip(*slcs)
-        return df
+        df['timestamp'] = timestamps
+        df['elapsed_time'] = elapsed_times
+        if len(batches):
+            _, df['fname'], slcs = zip(*batches)
+            df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
+        else:
+            df['fname'], df['batch_start'], df['batch_end'] = [], [], []
+        return df.set_index(['fname', 'batch_start', 'batch_end'])
 
-    def directory_to_neo4j(self, filetype_names, collision_manager='ignore'):
+    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False):
         filelist = []
-        extant_fnames = self.get_extant_files()
-        print(f'Skipping {len(extant_fnames)} files')
-        for filetype in self.filetypes:
-            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if i not in extant_fnames]
-        return self.read_file(*filelist, collision_manager=collision_manager)
+        extant_fnames = self.get_extant_files() if skip_extant_files else []
+        print(f'Skipping {len(extant_fnames)} extant files (use skip_extant_files=False to go over them again)')
+        if len(filetype_names) == 0:
+            filetypes = self.filetypes
+        else:
+            filetypes = [f for f in self.filetypes if f.singular_name in filetype_names]
+        for filetype in filetypes:
+            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if str(i.relative_to(self.rootdir)) not in extant_fnames]
+        return self.read_files(*filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]

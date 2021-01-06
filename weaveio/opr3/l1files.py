@@ -17,8 +17,12 @@ class HeaderFibinfoFile(File):
     is_template = True
 
     @classmethod
-    def read_fibinfo_dataframe(cls, fname, slc=None):
-        hdus = fits.open(fname)
+    def length(cls, path):
+        return len(cls.read_fibinfo_dataframe(path))
+
+    @classmethod
+    def read_fibinfo_dataframe(cls, path, slc=None):
+        hdus = fits.open(path)
         fibinfo_hdu = [i for i in hdus if i.name == 'FIBTABLE'][0]
         fibinfo = AstropyTable(fibinfo_hdu.data).to_pandas()
         fibinfo.columns = [i.lower() for i in fibinfo.columns]
@@ -157,7 +161,7 @@ class L1SingleFile(L1File):
 
 class L1StackedBaseFile(L1File):
     is_template = True
-    recommended_batchsize = 200
+    recommended_batchsize = 900
 
 
 class L1StackFile(L1StackedBaseFile):

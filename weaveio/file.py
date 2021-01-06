@@ -19,6 +19,13 @@ class File(Hierarchy):
         super().__init__(tables=None, fname=str(fname), **kwargs)
 
     @classmethod
+    def get_batches(cls, path, batch_size):
+        if batch_size is None:
+            return [slice(None, None)]
+        n = cls.length(path)
+        return (slice(i, i + batch_size) for i in range(0, n, batch_size))
+
+    @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
         """Returns True if the given fname in a given directory can be read by this class of file hierarchy object"""
         fname = Path(fname)
@@ -50,8 +57,8 @@ class File(Hierarchy):
 class HDU(Hierarchy):
     is_template = True
     parents = [File]
-    factors = ['extn']
-    identifier_builder = ['file', 'extn']
+    factors = ['sourcefile', 'extn']
+    identifier_builder = ['sourcefile', 'extn']
     binaries = ['header', 'data']
     concatenation_constants = None
 
@@ -64,6 +71,7 @@ class HDU(Hierarchy):
         input_dict = cls._from_hdu(hdu)
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
+        input_dict['sourcefile'] = file.fname
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 for c in cls.concatenation_constants:

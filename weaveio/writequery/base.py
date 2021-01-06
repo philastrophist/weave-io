@@ -16,7 +16,7 @@ def camelcase(x):
 class CypherQuery(metaclass=ContextMeta):
     def __init__(self, collision_manager='track&flag'):
         self.data = []
-        self.statements = [TimeStamp()]  # type: List[Statement]
+        self.statements = [TimeStamp()]  # type: List[BaseStatement]
         self.timestamp = self.statements[0].output_variables[0]
         self.open_contexts = [[self.timestamp]]
         self.closed_context = None
@@ -101,18 +101,23 @@ class Varname:
         return hash(hash(self.key) + hash('varname'))
 
 
-class Statement:
-    """A cypher statement that takes inputs and returns outputs"""
+class BaseStatement:
     def __init__(self, input_variables, output_variables, hidden_variables=None):
         self.input_variables = list(input_variables)
         self.output_variables = list(output_variables)
         if hidden_variables is None:
             hidden_variables = []
         self.hidden_variables = hidden_variables
-        self.timestamp = CypherQuery.get_context().timestamp
 
     def to_cypher(self):
         raise NotImplementedError
+
+
+class Statement(BaseStatement):
+    """A cypher statement that takes inputs and returns outputs"""
+    def __init__(self, input_variables, output_variables, hidden_variables=None):
+        super(Statement, self).__init__(input_variables, output_variables, hidden_variables)
+        self.timestamp = CypherQuery.get_context().timestamp
 
 
 class CustomStatement(Statement):
