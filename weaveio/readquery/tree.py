@@ -211,6 +211,37 @@ class BranchHandler:
         A.draw(fname)
 
 
+class Collection(Action):
+    compare = ['_singles', '_multiples', '_reference']
+
+    def __init__(self, reference: 'Branch', singles: List['Branch'], multiples: List['Branch']):
+        self._singles = tuple(singles)
+        self._multiples = tuple(multiples)
+        self._reference = reference
+
+        self.reference = reference.hierarchy
+        self.insingle_hierarchies = [x.hierarchy for x in singles]
+        self.insingle_variables = [v for x in singles for v in x.variables]
+        self.inmultiple_hierarchies = [x.hierarchy for x in multiples]
+        self.inmultiple_variables = [v for x in multiples for v in x.variables]
+
+        self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
+        self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
+        self.outmultiple_hierarchies = [CypherVariable(s.namehint) for s in self.inmultiple_hierarchies]
+        self.outmultiple_variables = [CypherVariable(s.namehint) for s in self.inmultiple_variables]
+        ins = self.insingle_hierarchies + self.insingle_variables + self.inmultiple_variables + self.inmultiple_hierarchies + [self.reference]
+        outs = self.outsingle_hierarchies + self.outsingle_variables + self.outmultiple_variables + self.outmultiple_hierarchies
+        super().__init__(ins, outs)
+
+    def to_cypher(self):
+        base = [f'WITH {self.reference}']
+        single_hierarchies = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
+        multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
+        single_variables = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
+        multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
+        return ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
+
+
 class Branch:
     def __init__(self, handler: BranchHandler, action: Action, parents: List['Branch'], hierarchy: CypherVariable,
                  variables: List[CypherVariable], name: str = None):
@@ -277,7 +308,7 @@ class Branch:
         """
         action = Collection(self, singular, multiple)
         branches = [self] + singular + multiple
-        return self.handler.new(action, branches, variables=action.variables, hierarchy=self.hierarchy)
+        return self.handler.new(action, branches, variables=action.outsingle_variables+action.outmultiple_variables, hierarchy=self.hierarchy)
 
     def assign(self, operation, varnames: List[str], input_variables: List[CypherVariable]) -> 'Branch':
         """
@@ -316,11 +347,9 @@ if __name__ == '__main__':
     data = OurData('data', port=7687, write=False)
     handler = BranchHandler()
 
-    branch0 = handler.begin('OB')
-    branch1 = branch0.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
-    branch2 = branch0.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
-    r1 = branch1.returns('id', 'airpres')
-    r2 = branch2.returns('id', 'airpres')
+    ob = handler.begin('OB')
+    observation = ob.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
+    collected = ob.collect([], [observation])
 
 
     handler.plot('/opt/project/querytree.png')
@@ -328,7 +357,7 @@ if __name__ == '__main__':
     print(list(handler.graph.nodes.keys()))
 
     with CypherQuery('ignore') as query:
-        for stage in r1.iterdown():
+        for stage in collected.iterdown():
             query.add_statement(stage.action)
     cypher, _ = query.render_query()
     print(cypher)
