@@ -229,9 +229,13 @@ class Collection(Action):
         self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
         self.outmultiple_hierarchies = [CypherVariable(s.namehint+'_list') for s in self.inmultiple_hierarchies]
         self.outmultiple_variables = [CypherVariable(s.namehint+'_list') for s in self.inmultiple_variables]
-        ins = self.insingle_hierarchies + self.insingle_variables + self.inmultiple_variables + self.inmultiple_hierarchies + [self.reference]
-        outs = self.outsingle_hierarchies + self.outsingle_variables + self.outmultiple_variables + self.outmultiple_hierarchies
-        super().__init__(ins, outs)
+        inputs = self.insingle_hierarchies + self.insingle_variables + self.inmultiple_variables + self.inmultiple_hierarchies
+        outputs = self.outsingle_hierarchies + self.outsingle_variables + self.outmultiple_variables + self.outmultiple_hierarchies
+        self.collected_variables = {i: o for i, o in zip(inputs, outputs)}
+        super().__init__(inputs+[reference], outputs)
+
+    def __getitem__(self, item: CypherVariable):
+        return self.collected_variables[item]
 
     def to_cypher(self):
         base = [f'WITH {self.reference}']
@@ -245,18 +249,23 @@ class Collection(Action):
 class Operation(Action):
     compare = ['string_function', 'hashable_inputs']
 
-    def __init__(self, string_function, noutputs=1, **inputs):
+    def __init__(self, string_function, **inputs):
         self.string_function = string_function
-        self.noutputs = noutputs
-        if noutputs > 1:
-            raise NotImplementedError(f"No yet implemented for noutputs > 1")
-        outputs = [CypherVariable('operation') for _ in range(noutputs)]
+        self.output = CypherVariable('operation')
         self.inputs = inputs
         self.hashable_inputs = tuple(self.inputs.items())
-        super().__init__(list(inputs.values()), outputs)
+        super().__init__(list(inputs.values()), [self.output])
 
     def to_cypher(self):
         return f"WITH *, {self.string_function.format(**self.inputs)} as {self.output_variables[0]}"
+
+
+class Filter(Operation):
+    def __init__(self, string_function, **inputs):
+        super().__init__(string_function, **inputs)
+
+    def to_cypher(self):
+        return f"WHERE {self.string_function.format(**self.inputs)}"
 
 
 class Branch:
@@ -327,22 +336,26 @@ class Branch:
         branches = [self] + singular + multiple
         return self.handler.new(action, branches, variables=action.outsingle_variables+action.outmultiple_variables, hierarchy=self.hierarchy)
 
-    def assign(self, operation: Operation) -> 'Branch':
+    def assign(self, string_function, **inputs) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
         """
-        missing = [k for k, v in operation.inputs.items() if getattr(v, 'parent', v) not in self.variables+[self.hierarchy]]
+        missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables+[self.hierarchy]]
         if missing:
             raise ValueError(f"inputs {missing} are not in scope for {self}")
-        return self.handler.new(operation, [self], variables=self.variables + operation.output_variables, hierarchy=self.hierarchy)
+        op = Operation(string_function, **inputs)
+        return self.handler.new(op, [self], variables=self.variables + op.output_variables, hierarchy=self.hierarchy)
 
-    def filter(self, operation, filtered_variable, input_variables) -> 'Branch':
+    def filter(self, logical_string, **boolean_variables: CypherVariable) -> 'Branch':
         """
         Reduces the cardinality of the branch by using a WHERE clause.
         .filter can only use available variables
         """
-        action = Filter(self, filtered_variable)
+        missing = [k for k, v in boolean_variables if getattr(v, 'parent', v) not in self.variables + [self.hierarchy]]
+        if missing:
+            raise ValueError(f"inputs {missing} are not in scope for {self}")
+        action = Filter(logical_string, **boolean_variables)
         return self.handler.new(action, [self], variables=self.variables, hierarchy=self.hierarchy)
 
     def slice(self, slc: slice):
@@ -366,17 +379,22 @@ if __name__ == '__main__':
     data = OurData('data', port=7687, write=False)
     handler = BranchHandler()
 
-    # obs[any(obs.spectra.snr > 10) | any(obs.observations.seeing) | any(obs.runs.targets.survey.surveyname == 'WL')]
-    ob = handler.begin('OB')
-    spectra = ob.traverse(TraversalPath('->', 'spectrum'))
-    observations = ob.traverse(TraversalPath('->', 'observation'))
-    surveys = ob.traverse(TraversalPath('->', 'run', '->', 'target', '->', 'survey'))
+    # obs[any(obs.runs.spectra.snr > 10) | any(obs.runs.spectra.observations.seeing > 0) & all(obs.targets[obs.targets.survey.name == 'WL'].ra > 0)]
+    obs = handler.begin('OB')
+    spectra = obs.traverse(TraversalPath('->', 'run', '->', 'spectrum'))
+    observations = spectra.traverse(TraversalPath('->', 'observation'))
+    targets = obs.traverse(TraversalPath('->', 'target'))
+    surveys = targets.traverse(TraversalPath('->', 'survey'))
 
-    snr = spectra.assign(Operation("{snr} > 2", snr=spectra.hierarchy.get('snr')))
-    seeing = observations.assign(Operation("{seeing} > 0", seeing=observations.hierarchy.get('seeing')))
-    surveyname = surveys.assign(Operation("{name} = 'WL'", 1, name=surveys.hierarchy.get('surveyname')))
+    snr = spectra.assign("{snr} > 2", snr=spectra.hierarchy.get('snr'))
+    seeing = observations.assign("{seeing} > 0", seeing=observations.hierarchy.get('seeing'))
+    surveyname = surveys.assign("{name} = 'WL'", name=surveys.hierarchy.get('surveyname'))
+    targets = targets.collect([surveyname], [])
+    targets = targets.filter(targets.action[surveyname.action.output])
+    ra = targets.assign('{ra} > 0', ra=targets.hierarchy.get('ra'))
 
-    collected = ob.collect([], [snr, seeing, surveyname])
+    collected = obs.collect([], [snr, seeing, ra])
+    filtered = collected.filter('any({snr}) OR any({seeing}) AND all({ra})')
 
     handler.plot('/opt/project/querytree.png')
 
