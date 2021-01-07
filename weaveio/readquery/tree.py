@@ -21,38 +21,6 @@ def typeerror_is_false(func):
     return inner
 
 
-class CardinalityDelta:
-    def __init__(self, low: int = None, high: int = None):
-        self.low = low
-        self.high = high
-
-    def __add__(self, other):
-        if self.low is None and other.low is not None:
-            low = other.low
-        elif other.low is None and self.low is not None:
-            low = self.low
-
-    @typeerror_is_false
-    def __eq__(self, other):
-        return self.low == other.low and self.high == other.high
-
-    @typeerror_is_false
-    def __gt__(self, other):
-        return self.low > other.high
-
-    @typeerror_is_false
-    def __lt__(self, other):
-        return self.low < other.high
-
-    @typeerror_is_false
-    def __ge__(self, other):
-        return self.low >= other.high
-
-    @typeerror_is_false
-    def __le__(self, other):
-        return self.low <= other.high
-
-
 class Step:
     def __init__(self, direction: str, label: str = 'is_required_by', properties: Dict = None):
         if isinstance(direction, Step):
@@ -68,6 +36,8 @@ class Step:
 
         @typeerror_is_false
         def __eq__(self, other):
+            if self.__class__ != other.__class__:
+                return False
             return self.direction == other.direction and self.properties == other.properties and self.label == other.label
 
     def __str__(self):
@@ -85,6 +55,7 @@ class Step:
 
 class TraversalPath:
     def __init__(self, *path: Union[Step, str]):
+        self._path = path
         self.nodes = []
         self.steps = []
         self.path = []
@@ -102,13 +73,42 @@ class TraversalPath:
         end = f'({self.end}:{self.end.namehint})'
         return ''.join(map(str, self.path)) + end
 
+    def __eq__(self, other):
+        if self.__class__ != other.__class__:
+            return False
+        return self._path == other._path
+
+    def __hash__(self):
+        return hash(self._path)
+
 
 class Action(BaseStatement):
+    compare = None
+
     def __init__(self, input_variables: List[CypherVariable], output_variables: List[CypherVariable]):
         super(Action, self).__init__(input_variables, output_variables, [])
 
+    def __eq__(self, other):
+        if self.__class__ is not other.__class__:
+            return False
+        base = set(self.input_variables) == set(other.input_variables) \
+               and self.__class__ is other.__class__
+        for c in self.compare:
+            selfthing = getattr(self, c, None)
+            otherthing = getattr(other, c, None)
+            base &= selfthing == otherthing
+        return base
+
+    def __hash__(self):
+        base = reduce(xor, map(hash, [tuple(self.input_variables), self.__class__.__name__]))
+        for c in self.compare:
+            base ^= hash(getattr(self, c))
+        return base
+
 
 class StartingPoint(Action):
+    compare = ['label']
+
     def __init__(self, label):
         self.label = label
         self.hierarchy = CypherVariable(self.label)
@@ -129,6 +129,8 @@ class Traversal(Action):
         results in `OPTIONAL MATCH (run)-[]->(:Exposure)-[]->(:OB)-[]->(obspec:OBSpec)`
     To traverse multiple paths at once, we use unions in a subquery
     """
+    compare = ['paths', 'source']
+
     def __init__(self, source: CypherVariable, *paths: TraversalPath, name=None):
         if name is None:
             name = ''.join(p.end.namehint for p in paths)
@@ -151,8 +153,19 @@ class Traversal(Action):
         return query
 
 
-class Return(Returns, Action):
-    pass
+class Return(Action):
+    compare = ['branch', 'varnames']  # just compare input_variables
+
+
+    def __init__(self, branch: 'Branch', *varnames):
+        self.branch = branch
+        self.varnames = varnames
+        super(Return, self).__init__([branch.hierarchy], [])
+
+    def to_cypher(self):
+        proj = ', '.join([f'{self.branch.hierarchy.get(v)}' for v in self.varnames])
+        return f"RETURN {proj}"
+
 
 class BranchHandler:
     def __init__(self):
@@ -191,6 +204,12 @@ class BranchHandler:
         for n in nodes[::-1]:
             yield n
 
+    def plot(self, fname):
+        from networkx.drawing.nx_agraph import to_agraph
+        A = to_agraph(self.graph)
+        A.layout('dot')
+        A.draw(fname)
+
 
 class Branch:
     def __init__(self, handler: BranchHandler, action: Action, parents: List['Branch'], hierarchy: CypherVariable,
@@ -206,6 +225,8 @@ class Branch:
         return reduce(xor, map(hash, self.parents + self.variables + [self.hierarchy, self.action, self.handler]))
 
     def __eq__(self, other):
+        if self.__class__ is not other.__class__:
+            return False
         return self.handler == other.handler and self.action == other.action and set(self.parents) == set(other.parents) \
                and self.hierarchy == other.hierarchy and set(self.variables) == set(other.variables)
 
@@ -228,7 +249,7 @@ class Branch:
 
     def align(self, *branches: 'Branch') -> 'Branch':
         """
-        Join two branches into one, keeping the highest cardinality.
+        Join branches into one, keeping the highest cardinality.
         This is used to to directly compare arrays:
             * ob1.runs == ob2.runs  (unequal sizes are zipped up together)
             * ob1.runs == run1  (array to single comparisons are left as is)
@@ -286,7 +307,7 @@ class Branch:
         """
         Terminate the query and add a return statement
         """
-        action = Return(*variables)
+        action = Return(self, *variables)
         return self.handler.new(action, [self], variables=[], hierarchy=self.hierarchy)
 
 
@@ -295,12 +316,19 @@ if __name__ == '__main__':
     data = OurData('data', port=7687, write=False)
     handler = BranchHandler()
 
-    branch = handler.begin('OB')
-    branch = branch.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
-    branch = branch.returns(branch.hierarchy.get('airpres'),  branch.hierarchy.get('id'))
+    branch0 = handler.begin('OB')
+    branch1 = branch0.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
+    branch2 = branch0.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
+    r1 = branch1.returns('id', 'airpres')
+    r2 = branch2.returns('id', 'airpres')
+
+
+    handler.plot('/opt/project/querytree.png')
+
+    print(list(handler.graph.nodes.keys()))
 
     with CypherQuery('ignore') as query:
-        for stage in branch.iterdown():
+        for stage in r1.iterdown():
             query.add_statement(stage.action)
     cypher, _ = query.render_query()
     print(cypher)
