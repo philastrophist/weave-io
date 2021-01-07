@@ -8,7 +8,7 @@ from warnings import warn
 from networkx import OrderedDiGraph
 import networkx as nx
 
-from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery
+from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery, Returns
 
 
 def typeerror_is_false(func):
@@ -107,17 +107,8 @@ class Action(BaseStatement):
     def __init__(self, input_variables: List[CypherVariable], output_variables: List[CypherVariable]):
         super(Action, self).__init__(input_variables, output_variables, [])
 
-    def __eq__(self, other):
-        return set(self.input_variables) == set(other.input_variables) \
-               and set(self.output_variables) == set(other.output_variables) and \
-               self.__class__ is other.__class__
-
-    def __hash__(self):
-        return reduce(xor, map(hash, [tuple(self.input_variables), tuple(self.output_variables)]))
-
 
 class StartingPoint(Action):
-
     def __init__(self, label):
         self.label = label
         self.hierarchy = CypherVariable(self.label)
@@ -159,6 +150,9 @@ class Traversal(Action):
         query = f"""CALL {{\n{lines}\n}}"""
         return query
 
+
+class Return(Returns, Action):
+    pass
 
 class BranchHandler:
     def __init__(self):
@@ -288,11 +282,11 @@ class Branch:
         action = Slice(slc)
         return self.handler.new(action, [self], variables=self.variables, hierarchy=self.hierarchy)
 
-    def returns(self, variables) -> 'Branch':
+    def returns(self, *variables) -> 'Branch':
         """
         Terminate the query and add a return statement
         """
-        action = Return(self, variables)
+        action = Return(*variables)
         return self.handler.new(action, [self], variables=[], hierarchy=self.hierarchy)
 
 
@@ -303,7 +297,7 @@ if __name__ == '__main__':
 
     branch = handler.begin('OB')
     branch = branch.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
-    branch = branch.traverse(TraversalPath('<-', 'RawFile'), TraversalPath('<-', 'File'))
+    branch = branch.returns(branch.hierarchy.get('airpres'),  branch.hierarchy.get('id'))
 
     with CypherQuery('ignore') as query:
         for stage in branch.iterdown():

@@ -1,4 +1,6 @@
 from collections import defaultdict
+from functools import reduce
+from operator import xor
 from textwrap import dedent
 from typing import List, Callable, Union
 
@@ -112,6 +114,15 @@ class BaseStatement:
     def to_cypher(self):
         raise NotImplementedError
 
+    def __eq__(self, other):
+        return set(self.input_variables) == set(other.input_variables) \
+               and set(self.output_variables) == set(other.output_variables) \
+               and set(self.hidden_variables) == set(other.hidden_variables) \
+               and self.__class__ is other.__class__
+
+    def __hash__(self):
+        return reduce(xor, map(hash, [tuple(self.input_variables), tuple(self.output_variables)]))
+
 
 class Statement(BaseStatement):
     """A cypher statement that takes inputs and returns outputs"""
@@ -182,9 +193,9 @@ class CypherVariable:
 
     def get(self, item: Union[str, int], alias=False):
         assert isinstance(item, (int, str))
-        query = CypherQuery.get_context()
         getitem = CypherVariableItem(self, item)
         if alias:
+            query = CypherQuery.get_context()
             if isinstance(item, int):
                 item = f'{self.namehint}_index{item}'
             alias_statement = Alias(getitem, str(item))
