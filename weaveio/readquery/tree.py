@@ -227,8 +227,8 @@ class Collection(Action):
 
         self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
         self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
-        self.outmultiple_hierarchies = [CypherVariable(s.namehint) for s in self.inmultiple_hierarchies]
-        self.outmultiple_variables = [CypherVariable(s.namehint) for s in self.inmultiple_variables]
+        self.outmultiple_hierarchies = [CypherVariable(s.namehint+'_list') for s in self.inmultiple_hierarchies]
+        self.outmultiple_variables = [CypherVariable(s.namehint+'_list') for s in self.inmultiple_variables]
         ins = self.insingle_hierarchies + self.insingle_variables + self.inmultiple_variables + self.inmultiple_hierarchies + [self.reference]
         outs = self.outsingle_hierarchies + self.outsingle_variables + self.outmultiple_variables + self.outmultiple_hierarchies
         super().__init__(ins, outs)
@@ -240,6 +240,23 @@ class Collection(Action):
         single_variables = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
         return ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
+
+
+class Operation(Action):
+    compare = ['string_function', 'hashable_inputs']
+
+    def __init__(self, string_function, noutputs=1, **inputs):
+        self.string_function = string_function
+        self.noutputs = noutputs
+        if noutputs > 1:
+            raise NotImplementedError(f"No yet implemented for noutputs > 1")
+        outputs = [CypherVariable('operation') for _ in range(noutputs)]
+        self.inputs = inputs
+        self.hashable_inputs = tuple(self.inputs.items())
+        super().__init__(list(inputs.values()), outputs)
+
+    def to_cypher(self):
+        return f"WITH *, {self.string_function.format(**self.inputs)} as {self.output_variables[0]}"
 
 
 class Branch:
@@ -310,13 +327,15 @@ class Branch:
         branches = [self] + singular + multiple
         return self.handler.new(action, branches, variables=action.outsingle_variables+action.outmultiple_variables, hierarchy=self.hierarchy)
 
-    def assign(self, operation, varnames: List[str], input_variables: List[CypherVariable]) -> 'Branch':
+    def assign(self, operation: Operation) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
         """
-        action = Assignment(operation, self, varnames, input_variables)
-        return self.handler.new(action, [self], variables=self.variables + action.output_variables, hierarchy=self.hierarchy)
+        missing = [k for k, v in operation.inputs.items() if getattr(v, 'parent', v) not in self.variables+[self.hierarchy]]
+        if missing:
+            raise ValueError(f"inputs {missing} are not in scope for {self}")
+        return self.handler.new(operation, [self], variables=self.variables + operation.output_variables, hierarchy=self.hierarchy)
 
     def filter(self, operation, filtered_variable, input_variables) -> 'Branch':
         """
@@ -347,10 +366,17 @@ if __name__ == '__main__':
     data = OurData('data', port=7687, write=False)
     handler = BranchHandler()
 
+    # obs[any(obs.spectra.snr > 10) | any(obs.observations.seeing) | any(obs.runs.targets.survey.surveyname == 'WL')]
     ob = handler.begin('OB')
-    observation = ob.traverse(TraversalPath('->', 'Exposure', '->', 'Run', '->', 'Observation'))
-    collected = ob.collect([], [observation])
+    spectra = ob.traverse(TraversalPath('->', 'spectrum'))
+    observations = ob.traverse(TraversalPath('->', 'observation'))
+    surveys = ob.traverse(TraversalPath('->', 'run', '->', 'target', '->', 'survey'))
 
+    snr = spectra.assign(Operation("{snr} > 2", snr=spectra.hierarchy.get('snr')))
+    seeing = observations.assign(Operation("{seeing} > 0", seeing=observations.hierarchy.get('seeing')))
+    surveyname = surveys.assign(Operation("{name} = 'WL'", 1, name=surveys.hierarchy.get('surveyname')))
+
+    collected = ob.collect([], [snr, seeing, surveyname])
 
     handler.plot('/opt/project/querytree.png')
 
