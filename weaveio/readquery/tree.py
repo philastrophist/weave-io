@@ -162,7 +162,7 @@ class Traversal(Action):
         return query
 
     def __str__(self):
-        return f'->{self.out.namehint}'
+        return f'{self.source.namehint}->{self.out.namehint}'
 
 
 class Return(Action):
@@ -171,10 +171,10 @@ class Return(Action):
     def __init__(self, branch: 'Branch', *varnames):
         self.branch = branch
         self.varnames = varnames
-        super(Return, self).__init__([branch.hierarchy], [])
+        super(Return, self).__init__([branch.hierarchies[-1]], [])
 
     def to_cypher(self):
-        proj = ', '.join([f'{self.branch.hierarchy.get(v)}' for v in self.varnames])
+        proj = ', '.join([f'{self.branch.hierarchies[-1].get(v)}' for v in self.varnames])
         return f"RETURN {proj}"
 
     def __str__(self):
@@ -186,7 +186,7 @@ class BranchHandler:
         self.graph = OrderedDiGraph()
         self.class_counter = defaultdict(int)
 
-    def new(self, action: Action, parents: List['Branch'], variables: List[CypherVariable], hierarchy: CypherVariable, name: str = None):
+    def new(self, action: Action, parents: List['Branch'], variables: List[CypherVariable], hierarchies: List[CypherVariable], name: str = None):
         parent_set = set(parents)
         successors = {s for p in parents for s in self.graph.successors(p) if set(self.graph.predecessors(s)) == parent_set}
         candidates = {s for s in successors if s.action == action}
@@ -196,7 +196,7 @@ class BranchHandler:
         if name is None:
             self.class_counter[action.__class__] += 1
             name = action.__class__.__name__ + str(self.class_counter[action.__class__])
-        instance = Branch(self, action, parents, variables=variables, hierarchy=hierarchy, name=name)
+        instance = Branch(self, action, parents, variables=variables, hierarchies=hierarchies, name=name)
         self.graph.add_node(instance, action=action, name=name)
         for parent in parents:
             self.graph.add_edge(parent, instance)
@@ -204,7 +204,7 @@ class BranchHandler:
 
     def begin(self, label):
         action = StartingPoint(label)
-        return self.new(action, [], [], action.hierarchy)
+        return self.new(action, [], [], [action.hierarchy])
 
     def relevant_graph(self, branch):
         return nx.subgraph_view(self.graph, lambda n: nx.has_path(self.graph, n, branch) or n is branch)
@@ -234,10 +234,10 @@ class Collection(Action):
         self._multiples = tuple(multiples)
         self._reference = reference
 
-        self.reference = reference.hierarchy
-        self.insingle_hierarchies = [x.hierarchy for x in singles]
+        self.references = reference.hierarchies
+        self.insingle_hierarchies = [x.hierarchies[-1] for x in singles]
         self.insingle_variables = [v for x in singles for v in x.variables]
-        self.inmultiple_hierarchies = [x.hierarchy for x in multiples]
+        self.inmultiple_hierarchies = [x.hierarchies[-1] for x in multiples]
         self.inmultiple_variables = [v for x in multiples for v in x.variables]
 
         self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
@@ -247,18 +247,18 @@ class Collection(Action):
         inputs = self.insingle_hierarchies + self.insingle_variables + self.inmultiple_variables + self.inmultiple_hierarchies
         outputs = self.outsingle_hierarchies + self.outsingle_variables + self.outmultiple_variables + self.outmultiple_hierarchies
         self.collected_variables = {i: o for i, o in zip(inputs, outputs)}
-        super().__init__(inputs + [reference.hierarchy], outputs)
+        super().__init__(inputs + self.references, outputs)
 
     def __getitem__(self, item: CypherVariable):
         return self.collected_variables[item]
 
     def to_cypher(self):
-        base = [f'WITH {self.reference}']
+        base = [f'{r}' for r in self.references + ['time0']]
         single_hierarchies = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
         multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
         single_variables = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
-        return ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
+        return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
 
     def __str__(self):
         return f'collect'
@@ -290,23 +290,23 @@ class Filter(Operation):
 
 
 class Branch:
-    def __init__(self, handler: BranchHandler, action: Action, parents: List['Branch'], hierarchy: CypherVariable,
+    def __init__(self, handler: BranchHandler, action: Action, parents: List['Branch'], hierarchies: List[CypherVariable],
                  variables: List[CypherVariable], name: str = None):
         self.handler = handler
         self.action = action
         self.parents = parents
         self.name = name
-        self.hierarchy = hierarchy
+        self.hierarchies = hierarchies
         self.variables = variables
 
     def __hash__(self):
-        return reduce(xor, map(hash, self.parents + self.variables + [self.hierarchy, self.action, self.handler]))
+        return reduce(xor, map(hash, self.parents + self.variables + [tuple(self.hierarchies), self.action, self.handler]))
 
     def __eq__(self, other):
         if self.__class__ is not other.__class__:
             return False
         return self.handler == other.handler and self.action == other.action and set(self.parents) == set(other.parents) \
-               and self.hierarchy == other.hierarchy and set(self.variables) == set(other.variables)
+               and self.hierarchies == other.hierarchies and set(self.variables) == set(other.variables)
 
     def __repr__(self):
         return f'<Branch {self.name}: {str(self.action)}>'
@@ -319,11 +319,11 @@ class Branch:
 
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
-        Extend the branch to a new node(s) by walking along the paths
+        Extend the branch from the most recent hierarchy to a new hierarchy(s) by walking along the paths
         If more than one path is given then we take the union of all the resultant nodes.
         """
-        action = Traversal(self.hierarchy, *paths)
-        return self.handler.new(action, [self], variables=[], hierarchy=action.out)
+        action = Traversal(self.hierarchies[-1], *paths)
+        return self.handler.new(action, [self], variables=self.variables, hierarchies=self.hierarchies+[action.out])
 
     def align(self, *branches: 'Branch') -> 'Branch':
         """
@@ -338,7 +338,7 @@ class Branch:
         branches = list(branches)
         branches.append(self)
         hierarchy = self.handler.deepest_common_hierarchy(self, *branches)
-        return self.handler.new(action, branches, variables=action.variables, hierarchy=hierarchy)
+        return self.handler.new(action, branches, variables=self.variables, hierarchies=self.hierarchies)
 
     def collect(self, singular: List['Branch'], multiple: List['Branch']) -> 'Branch':
         """
@@ -355,29 +355,30 @@ class Branch:
         """
         action = Collection(self, singular, multiple)
         branches = [self] + singular + multiple
-        return self.handler.new(action, branches, variables=action.outsingle_variables+action.outmultiple_variables, hierarchy=self.hierarchy)
+        variables = action.outsingle_variables + action.outmultiple_variables
+        return self.handler.new(action, branches, variables=self.variables + variables, hierarchies=self.hierarchies)
 
     def operate(self, string_function, **inputs) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
         """
-        missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables+[self.hierarchy]]
+        missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
         if missing:
             raise ValueError(f"inputs {missing} are not in scope for {self}")
         op = Operation(string_function, **inputs)
-        return self.handler.new(op, [self], variables=self.variables + op.output_variables, hierarchy=self.hierarchy)
+        return self.handler.new(op, [self], variables=self.variables + op.output_variables, hierarchies=self.hierarchies)
 
     def filter(self, logical_string, **boolean_variables: CypherVariable) -> 'Branch':
         """
         Reduces the cardinality of the branch by using a WHERE clause.
         .filter can only use available variables
         """
-        missing = [k for k, v in boolean_variables.items() if getattr(v, 'parent', v) not in self.variables + [self.hierarchy]]
+        missing = [k for k, v in boolean_variables.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
         if missing:
             raise ValueError(f"inputs {missing} are not in scope for {self}")
         action = Filter(logical_string, **boolean_variables)
-        return self.handler.new(action, [self], variables=self.variables, hierarchy=self.hierarchy)
+        return self.handler.new(action, [self], variables=self.variables, hierarchies=self.hierarchies)
 
     def slice(self, slc: slice):
         """
@@ -407,15 +408,15 @@ if __name__ == '__main__':
     targets = obs.traverse(TraversalPath('->', 'target'))
     surveys = targets.traverse(TraversalPath('->', 'survey'))
 
-    snr = spectra.operate("{snr} > 2", snr=spectra.hierarchy.get('snr'))
-    seeing = observations.operate("{seeing} > 0", seeing=observations.hierarchy.get('seeing'))
-    surveyname = surveys.operate("{name} = 'WL'", name=surveys.hierarchy.get('surveyname'))
+    snr = spectra.operate("{snr} > 2", snr=spectra.hierarchies[-1].get('snr'))
+    seeing = observations.operate("{seeing} > 0", seeing=observations.hierarchies[-1].get('seeing'))
+    surveyname = surveys.operate("{name} = 'WL'", name=surveys.hierarchies[-1].get('surveyname'))
     targets = targets.collect([surveyname], [])
     targets = targets.filter('{name}', name=targets.action[surveyname.action.output])
-    ra = targets.operate('{ra} > 0', ra=targets.hierarchy.get('ra'))
+    ra = targets.operate('{ra} > 0', ra=targets.hierarchies[-1].get('ra'))
 
     collected = obs.collect([], [snr, seeing, ra])
-    filtered = collected.filter('any({snr}) OR any({seeing}) AND all({ra})', snr=collected.action[snr.action.output],
+    filtered = collected.filter('any(x in {snr} where x) OR any(x in {seeing} where x) AND all(x in {ra} where x)', snr=collected.action[snr.action.output],
                                 seeing=collected.action[seeing.action.output], ra=collected.action[ra.action.output])
 
     plot(handler.graph, '/opt/project/querytree.png')
