@@ -1,14 +1,12 @@
 from collections import defaultdict
 from functools import reduce, wraps
-from operator import xor, or_
-from textwrap import dedent
-from typing import Union, List, Tuple, Dict
-from warnings import warn
+from operator import xor
+from typing import Union, List, Dict
 
-from networkx import OrderedDiGraph
 import networkx as nx
+from networkx import OrderedDiGraph
 
-from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery, Returns
+from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery
 
 
 def typeerror_is_false(func):
@@ -34,11 +32,11 @@ class Step:
         else:
             raise ValueError(f"Direction {direction} is not supported")
 
-        @typeerror_is_false
-        def __eq__(self, other):
-            if self.__class__ != other.__class__:
-                return False
-            return self.direction == other.direction and self.properties == other.properties and self.label == other.label
+    @typeerror_is_false
+    def __eq__(self, other):
+        if self.__class__ != other.__class__:
+            return False
+        return self.direction == other.direction and self.properties == other.properties and self.label == other.label
 
     def __str__(self):
         if self.properties is None:
@@ -85,14 +83,16 @@ class TraversalPath:
 class Action(BaseStatement):
     compare = None
 
-    def __init__(self, input_variables: List[CypherVariable], output_variables: List[CypherVariable]):
-        super(Action, self).__init__(input_variables, output_variables, [])
+    def to_cypher(self):
+        raise NotImplementedError
+
+    def __init__(self, input_variables: List[CypherVariable], output_variables: List[CypherVariable], hidden_variables: List[CypherVariable] = None):
+        super(Action, self).__init__(input_variables, output_variables, hidden_variables)
 
     def __eq__(self, other):
         if self.__class__ is not other.__class__:
             return False
-        base = set(self.input_variables) == set(other.input_variables) \
-               and self.__class__ is other.__class__
+        base = set(self.input_variables) == set(other.input_variables) and self.__class__ is other.__class__
         for c in self.compare:
             selfthing = getattr(self, c, None)
             otherthing = getattr(other, c, None)
@@ -121,7 +121,7 @@ class StartingPoint(Action):
         super().__init__([], [self.hierarchy])
 
     def to_cypher(self):
-        return f"MATCH ({self.hierarchy}:{self.label})"
+        return f"OPTIONAL MATCH ({self.hierarchy}:{self.label})"
 
     def __str__(self):
         return f'{self.label}'
@@ -134,7 +134,7 @@ class Traversal(Action):
     Given a `source` branch and one or more `paths` of form (minnumber, maxnumber, direction),
      traverse to the nodes described by the `paths`.
     For example:
-        >>> Traversal(<branch Run>, ['->', 'Exposure', '->', 'OB', '->', 'OBSpec'])
+        >>> Traversal(branch, TraversalPath(['->', 'Exposure', '->', 'OB', '->', 'OBSpec']))
         results in `OPTIONAL MATCH (run)-[]->(:Exposure)-[]->(:OB)-[]->(obspec:OBSpec)`
     To traverse multiple paths at once, we use unions in a subquery
     """
@@ -158,8 +158,7 @@ class Traversal(Action):
         if len(self.paths) == 1:
             return lines[0]
         lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
-        query = f"""CALL {{\n{lines}\n}}"""
-        return query
+        return f"""CALL {{\n{lines}\n}}"""
 
     def __str__(self):
         return f'{self.source.namehint}->{self.out.namehint}'
@@ -217,6 +216,19 @@ class BranchHandler:
         nodes = [n for n in self.relevant_graph(branch)]
         for n in nodes[::-1]:
             yield n
+
+    def deepest_common_ancestor(self, *branches: 'Branch'):
+        common = set()
+        for i, branch in enumerate(branches):
+            ancestors = set(nx.algorithms.dag.ancestors(self.graph, branch))
+            if i == 0:
+                common = ancestors
+            else:
+                common &= ancestors
+        if not len(common):
+            return None
+        distances = [(sum(nx.shortest_path_length(self.graph, ancestor, b) for b in branches), ancestor) for ancestor in common]
+        return distances[distances.index(min(distances, key=lambda x: x[0]))][1]
 
 
 def plot(graph, fname):
@@ -289,9 +301,80 @@ class Filter(Operation):
         return f"WHERE {self.string_function.format(**self.inputs)}"
 
 
+class Alignment(Action):
+    compare = ['branches', 'reference']
+
+    def __init__(self, reference: 'Branch', *branches: 'Branch'):
+        """
+        Collects and unwinds all variables/hierarchies that came after the reference branch
+        Persists all variables/hierarchies that came before the reference branch
+        """
+        self.reference = reference
+        self.branches = branches
+        base = tuple() if reference is None else (self.reference, )
+        ref_vars = [] if reference is None else reference.variables + reference.hierarchies
+
+        ins = []
+        before, after = set(), []
+        for branch in branches + base:
+            ins += branch.variables + branch.hierarchies
+            before |= {v for v in branch.variables + branch.hierarchies if v in ref_vars}
+            after += [v for v in branch.variables + branch.hierarchies if v not in ref_vars]
+        hidden = [CypherVariable(x.namehint+'_collected') for x in after]
+        outs = [CypherVariable(x.namehint+'_aligned') for x in after]
+        self.indexer = CypherVariable('i')
+        self.after = []
+        self.hidden = []
+        self.outs = []  # remove correlated duplicates
+        for a, h, o in zip(after, hidden, outs):
+            if a not in self.after:
+                self.after.append(a)
+                self.hidden.append(h)
+                self.outs.append(o)
+        self.before = list(before)
+        super().__init__(ins, self.outs, self.hidden + [self.indexer])
+
+    def to_cypher(self):
+        base = ['time0'] + [str(b) for b in self.before]
+        base += [f'collect({i}) as {h}' for i, h in zip(self.after, self.hidden)]
+        unwind = f'UNWIND range(0, apoc.coll.max([x in {self.hidden} | size(x)])) as {self.indexer}'
+        get = [f'{h}[{self.indexer}] as {o}' for h, o in zip(self.hidden, self.outs)]
+        if len(self.after):
+            return f"WITH {', '.join(base)}\n{unwind}\nWITH *, {', '.join(get)}"
+        return f"WITH {', '.join(base)}"
+
+    def __str__(self):
+        return 'align'
+
+
+class Slice(Action):
+    compare = []
+
+    def __init__(self, slc):
+        self.slc = slc
+        self.skip = slc.start
+        self.limit = slc.stop - slc.start
+        super().__init__([], [], [])
+
+    def __str__(self):
+        return f'{self.slc}'
+
+    def to_cypher(self):
+        return f'WITH * SKIP {self.skip} LIMIT {self.limit}'
+
+
 class Branch:
     def __init__(self, handler: BranchHandler, action: Action, parents: List['Branch'], hierarchies: List[CypherVariable],
                  variables: List[CypherVariable], name: str = None):
+        """
+        A branch is an object that represents all the Actions (query statements) in a query.
+        It contains both a node (Action) and references to all actions (other Branches) preceeding it (parents).
+        If a branch is created in the same way more than once, only one object is actually instantiated, this is to optimize performance
+        when writing to cypher query language. The user shouldn't care about this quirk.
+        :param handler: The handler object which oversees query uniqueness for a particular dataset.
+        :param action: The action that this branch will execute at the end. These are generally (but not always) Cypher statements.
+        :param parents: The branches that must be executed before this one (i.e. the dependencies of this branch)
+        """
         self.handler = handler
         self.action = action
         self.parents = parents
@@ -334,10 +417,10 @@ class Branch:
             * run1 == run2  (single to single comparisons are left as is)
         zip ups and unwinds take place relative to the branch's shared ancestor
         """
-        action = Alignment(self, branches)
+        hierarchy = self.handler.deepest_common_ancestor(self, *branches)
+        action = Alignment(hierarchy, self, *branches)
         branches = list(branches)
         branches.append(self)
-        hierarchy = self.handler.deepest_common_hierarchy(self, *branches)
         return self.handler.new(action, branches, variables=self.variables, hierarchies=self.hierarchies)
 
     def collect(self, singular: List['Branch'], multiple: List['Branch']) -> 'Branch':
@@ -356,7 +439,8 @@ class Branch:
         action = Collection(self, singular, multiple)
         branches = [self] + singular + multiple
         variables = action.outsingle_variables + action.outmultiple_variables
-        return self.handler.new(action, branches, variables=self.variables + variables, hierarchies=self.hierarchies)
+        hierarchies = action.outsingle_hierarchies + action.outmultiple_hierarchies
+        return self.handler.new(action, branches, variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
     def operate(self, string_function, **inputs) -> 'Branch':
         """
@@ -386,14 +470,14 @@ class Branch:
         This will use the Cypher commands SKIP and LIMIT
         """
         action = Slice(slc)
-        return self.handler.new(action, [self], variables=self.variables, hierarchy=self.hierarchy)
+        return self.handler.new(action, [self], variables=self.variables, hierarchies=self.hierarchies)
 
     def returns(self, *variables) -> 'Branch':
         """
         Terminate the query and add a return statement
         """
         action = Return(self, *variables)
-        return self.handler.new(action, [self], variables=[], hierarchy=self.hierarchy)
+        return self.handler.new(action, [self], variables=[], hierarchies=self.hierarchies)
 
 
 if __name__ == '__main__':
@@ -418,6 +502,13 @@ if __name__ == '__main__':
     collected = obs.collect([], [snr, seeing, ra])
     filtered = collected.filter('any(x in {snr} where x) OR any(x in {seeing} where x) AND all(x in {ra} where x)', snr=collected.action[snr.action.output],
                                 seeing=collected.action[seeing.action.output], ra=collected.action[ra.action.output])
+
+    # start = handler.begin('start')
+    # a = start.traverse(TraversalPath('->', 'a'))
+    # b = start.traverse(TraversalPath('->', 'b'))
+    # a = handler.begin('a')
+    # b = handler.begin('b')
+    # ab = a.align(b)
 
     plot(handler.graph, '/opt/project/querytree.png')
 
