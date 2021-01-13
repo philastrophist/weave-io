@@ -270,54 +270,68 @@ class Filter(Operation):
         return f"WHERE {self.string_function.format(**self.inputs)}"
 
 
-class Alignment(Action):
-    compare = ['branches', 'reference']
-    shape = 'house'
+# class Alignment(Action):
+#     compare = ['branches', 'reference']
+#     shape = 'house'
+#
+#     def __init__(self, reference: 'Branch', *branches: 'Branch'):
+#         """
+#         Collects and unwinds all variables/hierarchies that came after the reference branch
+#         Persists all variables/hierarchies that came before the reference branch
+#         """
+#         self.reference = reference
+#         self.branches = branches
+#         base = tuple() if reference is None else (self.reference, )
+#         ref_vars = [] if reference is None else reference.variables + reference.hierarchies
+#
+#         ins = []
+#         before, after = set(), []
+#         for branch in branches + base:
+#             ins += branch.variables + branch.hierarchies
+#             before |= {v for v in branch.variables + branch.hierarchies if v in ref_vars}
+#             after += [v for v in branch.variables + branch.hierarchies if v not in ref_vars]
+#         hidden = [CypherVariable(x.namehint+'_collected') for x in after]
+#         outs = [CypherVariable(x.namehint+'_aligned') for x in after]
+#         self.indexer = CypherVariable('i')
+#         self.after = []
+#         self.hidden = []
+#         self.outs = []  # remove correlated duplicates
+#         for a, h, o in zip(after, hidden, outs):
+#             if a not in self.after:
+#                 self.after.append(a)
+#                 self.hidden.append(h)
+#                 self.outs.append(o)
+#         self.before = list(before)
+#         self.output_variables = [o for a, o in zip(after, outs) if any(a in b.variables for b in branches)]
+#         self.output_variables += reference.variables
+#         self.output_hierarchies = [o for a, o in zip(after, outs) if any(a in b.hierarchies for b in branches)]
+#         self.output_hierarchies += reference.hierarchies
+#         transformed = {a: o for a, o in zip(after, outs)}
+#         transformed.update({r: r for r in ref_vars})
+#         super().__init__(ins, self.outs, self.hidden + [self.indexer], transformed)
+#
+#     def to_cypher(self):
+#         base = ['time0'] + [str(b) for b in self.before]
+#         base += [f'collect({i}) as {h}' for i, h in zip(self.after, self.hidden)]
+#         unwind = f'UNWIND range(0, apoc.coll.max([x in {self.hidden} | size(x)])-1) as {self.indexer}'
+#         get = [f'{h}[{self.indexer}] as {o}' for h, o in zip(self.hidden, self.outs)]
+#         if len(self.after):
+#             return f"WITH {', '.join(base)}\n{unwind}\nWITH *, {', '.join(get)}"
+#         return f"WITH {', '.join(base)}"
+#
+#     def __str__(self):
+#         return 'align'
 
-    def __init__(self, reference: 'Branch', *branches: 'Branch'):
-        """
-        Collects and unwinds all variables/hierarchies that came after the reference branch
-        Persists all variables/hierarchies that came before the reference branch
-        """
+class Alignment(Action):
+    compare = ['reference', 'branches']
+
+    def __init__(self, reference, *branches):
         self.reference = reference
         self.branches = branches
-        base = tuple() if reference is None else (self.reference, )
-        ref_vars = [] if reference is None else reference.variables + reference.hierarchies
-
-        ins = []
-        before, after = set(), []
-        for branch in branches + base:
-            ins += branch.variables + branch.hierarchies
-            before |= {v for v in branch.variables + branch.hierarchies if v in ref_vars}
-            after += [v for v in branch.variables + branch.hierarchies if v not in ref_vars]
-        hidden = [CypherVariable(x.namehint+'_collected') for x in after]
-        outs = [CypherVariable(x.namehint+'_aligned') for x in after]
-        self.indexer = CypherVariable('i')
-        self.after = []
-        self.hidden = []
-        self.outs = []  # remove correlated duplicates
-        for a, h, o in zip(after, hidden, outs):
-            if a not in self.after:
-                self.after.append(a)
-                self.hidden.append(h)
-                self.outs.append(o)
-        self.before = list(before)
-        self.output_variables = [o for a, o in zip(after, outs) if any(a in b.variables for b in branches)]
-        self.output_variables += reference.variables
-        self.output_hierarchies = [o for a, o in zip(after, outs) if any(a in b.hierarchies for b in branches)]
-        self.output_hierarchies += reference.hierarchies
-        transformed = {a: o for a, o in zip(after, outs)}
-        transformed.update({r: r for r in ref_vars})
-        super().__init__(ins, self.outs, self.hidden + [self.indexer], transformed)
+        super(Alignment, self).__init__([], [])
 
     def to_cypher(self):
-        base = ['time0'] + [str(b) for b in self.before]
-        base += [f'collect({i}) as {h}' for i, h in zip(self.after, self.hidden)]
-        unwind = f'UNWIND range(0, apoc.coll.max([x in {self.hidden} | size(x)])-1) as {self.indexer}'
-        get = [f'{h}[{self.indexer}] as {o}' for h, o in zip(self.hidden, self.outs)]
-        if len(self.after):
-            return f"WITH {', '.join(base)}\n{unwind}\nWITH *, {', '.join(get)}"
-        return f"WITH {', '.join(base)}"
+        return ''
 
     def __str__(self):
         return 'align'
@@ -491,7 +505,6 @@ class Branch:
             variables += branch.current_variables
         return variables
 
-
     def find_hierarchy_branches(self):
         branches = []
         for branch in self.iterdown(self.accessible_graph):
@@ -519,9 +532,8 @@ class Branch:
         zip ups and unwinds take place relative to the branch's shared ancestor
         """
         action = Alignment(self, branch)
-        return self.handler.new(action, [self], [branch], None, current_variables=action.output_variables,
-                                variables=action.output_variables,
-                                hierarchies=action.output_hierarchies)
+        return self.handler.new(action, [self], [branch], None, current_variables=[],
+                                variables=self.variables, hierarchies=self.hierarchies)
 
     def collect(self, singular: List['Branch'], multiple: List['Branch']) -> 'Branch':
         """
@@ -547,9 +559,9 @@ class Branch:
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
         """
-        missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
-        if missing:
-            raise ValueError(f"inputs {missing} are not in scope for {self}")
+        # missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
+        # if missing:
+        #     raise ValueError(f"inputs {missing} are not in scope for {self}")
         op = Operation(string_function, **inputs)
         return self.handler.new(op, [self], [], None, op.output_variables,
                                 variables=self.variables + op.output_variables, hierarchies=self.hierarchies)
@@ -559,9 +571,9 @@ class Branch:
         Reduces the cardinality of the branch by using a WHERE clause.
         .filter can only use available variables
         """
-        missing = [k for k, v in boolean_variables.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
-        if missing:
-            raise ValueError(f"inputs {missing} are not in scope for {self}")
+        # missing = [k for k, v in boolean_variables.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
+        # if missing:
+        #     raise ValueError(f"inputs {missing} are not in scope for {self}")
         action = Filter(logical_string, **boolean_variables)
         return self.handler.new(action, [self], [], None, [],
                                 variables=self.variables, hierarchies=self.hierarchies)
