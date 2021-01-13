@@ -108,54 +108,55 @@ def write_tree(parsed_tree):
 
 if __name__ == '__main__':
     from weaveio.readquery.tree import plot, Alignment, BranchHandler, TraversalPath
+    #
+    # handler = BranchHandler()
+    # ob = handler.begin('OB')
+    # target = ob.traverse(TraversalPath('<-', 'OBSpec', '->', 'FibreTarget'))
+    # run = ob.traverse(TraversalPath('->', 'Exposure', '->', 'Run'))
+    # exposure = ob.traverse(TraversalPath('->', 'Exposure'))
+    #
+    # ob_targets = ob.collect([], [target])
+    # any_ob_targets = ob_targets.operate('any(x in {targets} where true)', targets=ob_targets.action.transformed_variables[target.action.target])
+    # ob_runs = ob.collect([], [run])
+    # any_ob_runs = ob_runs.operate('any(x in {runs} where true)', runs=ob_runs.action.transformed_variables[run.action.target])
+    # ob_exposures = ob.collect([], [exposure])
+    # any_ob_exposures = ob_exposures.operate('any(x in {exposures} where true)', exposures=ob_exposures.action.transformed_variables[exposure.action.target])
+    #
+    # align1 = any_ob_runs.align(any_ob_targets)
+    # or1 = align1.operate('{run} or {target}', run=any_ob_runs.action.target, target=any_ob_targets.action.target)
+    #
+    # align2 = or1.align(any_ob_exposures)
+    # or2 = align2.operate('{exp} or {or1}', exp=any_ob_exposures.action.target, or1=or1.action.target)
+    # final = or2.filter('{or2}', or2=or2.action.target)
+    #
+    # final = final.results({final: [ob.current_hierarchy.get('obid')]})
+    #
+    #
+    # graph = final.relevant_graph
+    # plot(graph, '/opt/project/weaveio_example_querytree_test_branch.png')
+    # subqueries = parse(graph)
+    # print_nested_list(subqueries)
+    #
+    # with CypherQuery() as query:
+    #     for s in subqueries:
+    #         write_tree(s)
+    #
+    # cypher, params = query.render_query()
+    # print(cypher)
+    #
+    # print('================================================')
 
-    handler = BranchHandler()
-    ob = handler.begin('OB')
-    target = ob.traverse(TraversalPath('<-', 'OBSpec', '->', 'FibreTarget'))
-    run = ob.traverse(TraversalPath('->', 'Exposure', '->', 'Run'))
-    exposure = ob.traverse(TraversalPath('->', 'Exposure'))
-
-    ob_targets = ob.collect([], [target])
-    any_ob_targets = ob_targets.operate('any(x in {targets} where true)', targets=ob_targets.action.transformed_variables[target.action.target])
-    ob_runs = ob.collect([], [run])
-    any_ob_runs = ob_runs.operate('any(x in {runs} where true)', runs=ob_runs.action.transformed_variables[run.action.target])
-    ob_exposures = ob.collect([], [exposure])
-    any_ob_exposures = ob_exposures.operate('any(x in {exposures} where true)', exposures=ob_exposures.action.transformed_variables[exposure.action.target])
-
-    align1 = any_ob_runs.align(any_ob_targets)
-    or1 = align1.operate('{run} or {target}', run=any_ob_runs.action.target, target=any_ob_targets.action.target)
-
-    align2 = or1.align(any_ob_exposures)
-    or2 = align2.operate('{exp} or {or1}', exp=any_ob_exposures.action.target, or1=or1.action.target)
-    final = or2.filter('{or2}', or2=or2.action.target)
-
-    final = final.results({final: [ob.current_hierarchy.get('obid')]})
-
-
+    from tree_test_weaveio_example import l2row
+    final = l2row
     graph = final.relevant_graph
-    plot(graph, '/opt/project/weaveio_example_querytree_test_branch.png')
+    plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
     subqueries = parse(graph)
     print_nested_list(subqueries)
 
     with CypherQuery() as query:
         for s in subqueries:
             write_tree(s)
+        query.returns(l2row.action.target)
 
     cypher, params = query.render_query()
     print(cypher)
-
-    # print('================================================')
-    #
-    # from tree_test_weaveio_example import red_spectra
-    # final = red_spectra.results({})
-    # graph = final.relevant_graph
-    # plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
-    # plot(final.accessible_graph, '/opt/project/weaveio_example_querytree_red_branch_accessible.png')
-    # subqueries = parse(graph)
-    # print_nested_list(subqueries)
-    #
-    # with CypherQuery() as query:
-    #     write_tree(subqueries)
-    #
-    # cypher, params = query.render_query()
-    # print(cypher)

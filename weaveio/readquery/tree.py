@@ -518,7 +518,7 @@ class Branch:
         Extend the branch from the most recent hierarchy to a new hierarchy(s) by walking along the paths
         If more than one path is given then we take the union of all the resultant nodes.
         """
-        action = Traversal(self.hierarchies[-1], *paths)
+        action = Traversal(self.find_hierarchies()[-1], *paths)
         return self.handler.new(action, [self], [], current_hierarchy=action.out, current_variables=[action.out],
                                 variables=self.variables, hierarchies=self.hierarchies+[action.out])
 
@@ -551,7 +551,7 @@ class Branch:
         action = Collection(self, singular, multiple)
         variables = action.outsingle_variables + action.outmultiple_variables
         hierarchies = action.outsingle_hierarchies + action.outmultiple_hierarchies
-        return self.handler.new(action, [self], singular + multiple, None, variables,
+        return self.handler.new(action, [self], singular + multiple, None, variables + hierarchies,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
     def operate(self, string_function, **inputs) -> 'Branch':
@@ -583,6 +583,7 @@ class Branch:
         Returns the rows of results.
         All other branches which are not this branch will have their results collected
         """
+        branch_attributes = {k: v if isinstance(v, (list, tuple)) else [v] for k, v in branch_attributes.items()}
         action = Results(branch_attributes)
         return self.handler.new(action, [self], [], None, [], self.variables, self.hierarchies)
 
