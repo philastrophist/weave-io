@@ -1,7 +1,10 @@
 from copy import deepcopy
 
+from weaveio.basequery.parse_tree import parse, write_tree
 from weaveio.basequery.query import FullQuery
+from weaveio.basequery.tree import BranchHandler
 from weaveio.neo4j import parse_apoc_tree
+from weaveio.writequery import CypherQuery
 
 
 class NotYetImplementedError(NotImplementedError):
@@ -15,9 +18,9 @@ class UnexpectedResult(Exception):
 class FrozenQuery:
     executable = True
 
-    def __init__(self, handler, query: FullQuery, parent: 'FrozenQuery' = None):
+    def __init__(self, handler, branch: BranchHandler, parent: 'FrozenQuery' = None):
         self.handler = handler
-        self.query = query
+        self.branch = branch
         self.parent = parent
 
     @property
@@ -32,14 +35,18 @@ class FrozenQuery:
             yield query
 
     def _prepare_query(self):
-        return deepcopy(self.query)
+        return deepcopy(self.branch)
 
     def _execute_query(self):
         if not self.executable:
             raise TypeError(f"{self.__class__} may not be executed as queries in their own right")
-        query = self._prepare_query()
-        cypher, payload = query.to_neo4j()
-        return self.data.graph.execute(cypher, **payload)
+        branch = self._prepare_query()
+        subqueries = parse(branch)
+        with CypherQuery() as query:
+            for s in subqueries:
+                write_tree(s)
+        cypher, params = query.render_query()
+        return self.data.graph.execute(cypher, **params)
 
     def _post_process(self, result):
         raise NotImplementedError

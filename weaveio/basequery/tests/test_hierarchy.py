@@ -18,7 +18,7 @@ def test_get_homogeneous_from_data(data_one2one, hier):
     hierarchies = data_one2one.__getattr__(hier.plural_name)
     assert isinstance(hierarchies, HomogeneousHierarchyFrozenQuery)
     assert hierarchies._hierarchy is hier
-    query = hierarchies.query
+    query = hierarchies.branch
     assert not query.predicates
     assert not query.returns
     assert not query.exist_branches
@@ -58,7 +58,7 @@ def test_index_a_plural_by_list_of_identifiers_succeeds(data_one2one):
 def test_get_homogeneous_from_homogeneous(data_one2one):
     homo = data_one2one.hierarchyas.hierarchybs
     assert isinstance(homo, HomogeneousHierarchyFrozenQuery)
-    assert len(homo.query.matches) == 2
+    assert len(homo.branch.matches) == 2
 
 
 def test_get_single_from_homogeneous_invalid(data_one2one):

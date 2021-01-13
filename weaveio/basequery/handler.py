@@ -7,6 +7,7 @@ from .hierarchy import *
 from .factor import *
 from .query import AmbiguousPathError, FullQuery
 from .query_objects import Path, Generator
+from .tree import BranchHandler
 from ..utilities import quote
 
 
@@ -16,7 +17,8 @@ class Handler:
         self.generator = Generator()
 
     def begin_with_heterogeneous(self):
-        return HeterogeneousHierarchyFrozenQuery(self, FullQuery())
+        query_handler = BranchHandler()
+        return HeterogeneousHierarchyFrozenQuery(self, query_handler)
 
     def hierarchy_of_factor(self, factor_name: str, start: Type[Hierarchy] = None) -> Tuple[str, str, str]:
         namelist = factor_name.split('.')

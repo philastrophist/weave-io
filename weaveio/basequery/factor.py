@@ -11,8 +11,8 @@ from weaveio.utilities import quote
 
 
 class FactorFrozenQuery(FrozenQuery):
-    def __init__(self, handler, query: FullQuery, factors, numbers: List[Union[int, None]], parent: 'FrozenQuery' = None):
-        super().__init__(handler, query, parent)
+    def __init__(self, handler, branch: FullQuery, factors, numbers: List[Union[int, None]], parent: 'FrozenQuery' = None):
+        super().__init__(handler, branch, parent)
         self.factors = factors
         self.numbers = numbers
 
@@ -74,8 +74,8 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
     A matrix of different factors against different hierarchy instances
     This is only possible if the hierarchies each have only one of the factors
     """
-    def __init__(self, handler, query, factors, numbers, return_keys: List[str] = None, parent: 'FrozenQuery' = None):
-        super().__init__(handler, query, factors, numbers, parent)
+    def __init__(self, handler, branch, factors, numbers, return_keys: List[str] = None, parent: 'FrozenQuery' = None):
+        super().__init__(handler, branch, factors, numbers, parent)
         self.return_keys = return_keys
 
     def _post_process(self, result):

@@ -52,15 +52,15 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
     SingleFactorReturnType = None
 
-    def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], parent: 'FrozenQuery'):
-        super().__init__(handler, query, parent)
+    def __init__(self, handler, branch: FullQuery, hierarchy: Type[Hierarchy], parent: 'FrozenQuery'):
+        super().__init__(handler, branch, parent)
         self._hierarchy = hierarchy
 
     def _prepare_query(self):
         query = super(DefiniteHierarchyFrozenQuery, self)._prepare_query()
         indexer = self.handler.generator.node()
-        query.branches[Path(self.query.current_node, '<-[:INDEXES]-', indexer)].append(indexer)
-        query.returns += [self.query.current_node, indexer]
+        query.branches[Path(self.branch.current_node, '<-[:INDEXES]-', indexer)].append(indexer)
+        query.returns += [self.branch.current_node, indexer]
         return query
 
     def _process_result_row(self, row, nodetype):
@@ -102,14 +102,14 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         else:
             raise ValueError(f"direction {direction} not known")
         nodes = self.handler.generator.nodes(*path[1:])
-        node_path = [self.query.current_node]
+        node_path = [self.branch.current_node]
         for node in nodes:
             node_path += [arrow, node]
         path = Path(*node_path)
         return multiplicity, path, number
 
     def _get_plural_hierarchy(self, name):
-        query = deepcopy(self.query)
+        query = deepcopy(self.branch)
         multiplicity, path, number = self.node_implies_plurality_of(name)
         # dont check for multiplicity here, since plural is requested anyway
         query.matches.append(path)
@@ -117,7 +117,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         return HomogeneousHierarchyFrozenQuery(self.handler, query, h, self)
 
     def _get_factor_query(self, *names):
-        query = deepcopy(self.query)
+        query = deepcopy(self.branch)
         multiplicities = []
         numbers = []
         for name in names:
@@ -208,8 +208,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
     SingleFactorReturnType = SingleFactorFrozenQuery
 
-    def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], identifier: Any, parent: 'FrozenQuery'):
-        super().__init__(handler, query, hierarchy, parent)
+    def __init__(self, handler, branch: FullQuery, hierarchy: Type[Hierarchy], identifier: Any, parent: 'FrozenQuery'):
+        super().__init__(handler, branch, hierarchy, parent)
         self._identifier = identifier
 
     def __getattr__(self, item):
@@ -227,7 +227,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         return f'{self.parent}[{quote(self._identifier)}]'
 
     def _get_singular_hierarchy(self, name):
-        query = deepcopy(self.query)
+        query = deepcopy(self.branch)
         multiplicity, path, number = self.node_implies_plurality_of(name)
         if multiplicity:
             plural = self.data.plural_name(name)
@@ -295,7 +295,7 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         return super(HomogeneousHierarchyFrozenQuery, self).__getattr__(item)
 
     def _filter_by_identifiers(self, identifiers: List[Union[str,int,float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
-        query = deepcopy(self.query)
+        query = deepcopy(self.branch)
         ids = self.handler.generator.data(identifiers)
         query.matches.insert(-1, ids)  # give the query the data before the last match
         condition = Condition(query.current_node.id, '=', ids)
@@ -306,7 +306,7 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifiers, self)
 
     def _filter_by_identifier(self, identifier: Union[str,int,float]):
-        query = deepcopy(self.query)
+        query = deepcopy(self.branch)
         condition = Condition(query.current_node.id, '=', identifier)
         if query.conditions is not None:
             query.conditions = query.conditions & condition
@@ -326,8 +326,8 @@ class IdentifiedHomogeneousHierarchyFrozenQuery(HomogeneousHierarchyFrozenQuery)
     If an id appears more than once, it will be duplicated appropriately
     The list is ordered by id input order
     """
-    def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], identifiers: List[Any], parent: 'FrozenQuery'):
-        super().__init__(handler, query, hierarchy, parent)
+    def __init__(self, handler, branch: FullQuery, hierarchy: Type[Hierarchy], identifiers: List[Any], parent: 'FrozenQuery'):
+        super().__init__(handler, branch, hierarchy, parent)
         self._identifiers = identifiers
 
     def __repr__(self):
