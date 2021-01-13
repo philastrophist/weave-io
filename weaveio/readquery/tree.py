@@ -129,7 +129,6 @@ class Action(BaseStatement):
 
 
 class EntryPoint(Action):
-    shape = 'dot'
     compare = []
 
     def __init__(self):
