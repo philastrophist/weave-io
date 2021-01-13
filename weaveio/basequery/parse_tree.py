@@ -1,13 +1,12 @@
 from collections import defaultdict
 from functools import reduce
-from operator import and_, or_
+from operator import and_
 from typing import List
 
 import networkx as nx
-import numpy as np
 
 from weaveio.opr3 import OurData
-from weaveio.readquery.tree import Alignment, Branch
+from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherQuery
 from weaveio.writequery.base import Statement
 
@@ -109,7 +108,7 @@ def write_tree(parsed_tree):
 
 
 if __name__ == '__main__':
-    from weaveio.readquery.tree import plot, Alignment, BranchHandler, TraversalPath
+    from weaveio.basequery.tree import Alignment
     #
     # handler = BranchHandler()
     # ob = handler.begin('OB')
