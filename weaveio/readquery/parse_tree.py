@@ -88,22 +88,22 @@ class CloseSubquery(Statement):
 
 def write_tree(parsed_tree):
     query = CypherQuery.get_context()  # type: CypherQuery
-    if not isinstance(parsed_tree, list):
-        query.add_statement(parsed_tree.action)
-        return parsed_tree.find_variables()
-    else:
+    if isinstance(parsed_tree, list):
         inputs = [i for n in flatten(parsed_tree) for i in n.action.input_variables]
         outputs = [i for n in flatten(parsed_tree) for i in n.action.output_variables]
-        subquery_inputs = list({i for i in inputs if i not in outputs})
+        subquery_inputs = list({i for i in inputs if getattr(i, 'parent', i) not in outputs})
 
         open = OpenSubquery(subquery_inputs, [])
         query.add_statement(open, safe=False)
         for node in parsed_tree:
-            output = write_tree(node)
-        output = list({v for v in output if v not in subquery_inputs})
-        close = CloseSubquery(outputs, outputs)
+            subquery_output = write_tree(node)
+        subquery_output = list({v for v in subquery_output if v not in subquery_inputs})
+        close = CloseSubquery(subquery_output, subquery_output)
         query.add_statement(close)
-        return output
+        return subquery_output
+    else:
+        query.add_statement(parsed_tree.action)
+        return parsed_tree.find_variables()
 
 
 if __name__ == '__main__':
@@ -128,21 +128,21 @@ if __name__ == '__main__':
     align2 = or1.align(any_ob_exposures)
     or2 = align2.operate('{exp} or {or1}', exp=any_ob_exposures.action.target, or1=or1.action.target)
     final = or2.filter('{or2}', or2=or2.action.target)
-    final = final.results({final: [final.hierarchies[-1].get('obid')]})
 
-    for v in align1.find_variables():
-        print(v.namehint)
+    final = final.results({final: [ob.current_hierarchy.get('obid')]})
 
-    # graph = final.relevant_graph
-    # plot(graph, '/opt/project/weaveio_example_querytree_test_branch.png')
-    # subqueries = parse(graph)
-    # print_nested_list(subqueries)
-    #
-    # with CypherQuery() as query:
-    #     write_tree(subqueries)
-    #
-    # cypher, params = query.render_query()
-    # print(cypher)
+
+    graph = final.relevant_graph
+    plot(graph, '/opt/project/weaveio_example_querytree_test_branch.png')
+    subqueries = parse(graph)
+    print_nested_list(subqueries)
+
+    with CypherQuery() as query:
+        for s in subqueries:
+            write_tree(s)
+
+    cypher, params = query.render_query()
+    print(cypher)
 
     # print('================================================')
     #

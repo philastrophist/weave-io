@@ -532,7 +532,7 @@ class Branch:
         zip ups and unwinds take place relative to the branch's shared ancestor
         """
         action = Alignment(self, branch)
-        return self.handler.new(action, [self], [branch], None, current_variables=[],
+        return self.handler.new(action, [self, branch], [], None, current_variables=[],
                                 variables=self.variables, hierarchies=self.hierarchies)
 
     def collect(self, singular: List['Branch'], multiple: List['Branch']) -> 'Branch':
