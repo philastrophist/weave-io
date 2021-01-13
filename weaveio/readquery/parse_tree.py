@@ -5,7 +5,9 @@ from typing import List
 
 import networkx as nx
 
-from weaveio.readquery.tree import plot, Alignment, BranchHandler, TraversalPath
+from weaveio.readquery.tree import Alignment
+from weaveio.writequery import CypherQuery
+from weaveio.writequery.base import Statement
 
 
 def flatten(S):
@@ -62,24 +64,62 @@ def parse(graph) -> List:
             query.append(node)
     return query
 
+class OpenSubquery(Statement):
+    def __init__(self, input_variables, output_variables, hidden_variables=None):
+        super().__init__(input_variables, output_variables, hidden_variables)
+
+    def to_cypher(self):
+        inputs = ', '.join(self.input_variables)
+        return f"CALL {{with {inputs}"
+
+
+class CloseSubquery(Statement):
+    def __init__(self, input_variables, output_variables, hidden_variables=None):
+        super().__init__(input_variables, output_variables, hidden_variables)
+
+    def to_cypher(self):
+        inputs = ', '.join(self.output_variables)
+        return f"\n}}"
+
+
+def write_tree(parsed_tree):
+    query = CypherQuery.get_context()  # type: CypherQuery
+
+    for node in parsed_tree:
+        if isinstance(node, list):
+            inputs = [i for n in node for i in n.action.input_variables]
+            outputs = [i for n in node for i in n.action.output_variables]
+            subquery_inputs = [i for i in inputs if i not in outputs]
+            subquery_outputs = [v for v in node[-1].find_variables() if v not in subquery_inputs]
+            open = OpenSubquery(subquery_inputs, [])
+            query.add_statement(open, safe=False)
+            write_tree(node)
+            close = CloseSubquery(subquery_outputs, [])
+            query.add_statement(close)
+        else:
+            query.add_statement(node.action)
+
+
 
 if __name__ == '__main__':
+    from weaveio.readquery.tree import plot, Alignment, BranchHandler, TraversalPath
+
     handler = BranchHandler()
     ob = handler.begin('OB')
     target = ob.traverse(TraversalPath('->', 'target'))
     run = ob.traverse(TraversalPath('->', 'run'))
     exposure = ob.traverse(TraversalPath('->', 'exposure'))
     ob_targets = ob.collect([], [target])
-    any_ob_targets = ob_targets.operate('{any}')
+    any_ob_targets = ob_targets.operate('any')
     ob_runs = ob.collect([], [run])
-    any_ob_runs = ob_runs.operate('{any}')
+    any_ob_runs = ob_runs.operate('any')
     ob_exposures = ob.collect([], [exposure])
-    any_ob_exposures = ob_exposures.operate('{any}')
+    any_ob_exposures = ob_exposures.operate('any')
 
     align0 = any_ob_runs.align(any_ob_targets)
-    or1 = align0.operate('{or}')
+    or1 = align0.operate('or')
     align1 = or1.align(any_ob_exposures)
-    or2 = align1.operate('{or}')
+    or2 = align1.operate('or')
     final = or2.filter('')
     final = final.results({final: [final.hierarchies[-1].get('obid')]})
     graph = final.relevant_graph
@@ -87,13 +127,19 @@ if __name__ == '__main__':
     subqueries = parse(graph)
     print_nested_list(subqueries)
 
-    print('================================================')
+    with CypherQuery() as query:
+        write_tree(subqueries)
 
-    from tree_test_weaveio_example import red_spectra
-    final = red_spectra.results({})
-    graph = final.relevant_graph
-    plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
-    plot(final.accessible_graph, '/opt/project/weaveio_example_querytree_red_branch_accessible.png')
-    subqueries = parse(graph)
-    print_nested_list(subqueries)
+    cypher, params = query.render_query()
+    print(cypher)
 
+    # print('================================================')
+    #
+    # from tree_test_weaveio_example import red_spectra
+    # final = red_spectra.results({})
+    # graph = final.relevant_graph
+    # plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
+    # plot(final.accessible_graph, '/opt/project/weaveio_example_querytree_red_branch_accessible.png')
+    # subqueries = parse(graph)
+    # print_nested_list(subqueries)
+    #

@@ -349,7 +349,7 @@ class Results(Action):
         super(Results, self).__init__(ins, [], [], {}, None)
 
     def to_cypher(self):
-        return 'RETURN {}'.format(', '.join(self.input_variables))
+        return 'RETURN {}'.format(', '.join(map(str, self.input_variables)))
 
     def __str__(self):
         names = [i.namehint for i in self.input_variables]
@@ -361,10 +361,10 @@ class BranchHandler:
     def __init__(self):
         self.graph = OrderedDiGraph()
         self.class_counter = defaultdict(int)
-        self.entry = self.new(EntryPoint(), [], [], None, [], [])
+        self.entry = self.new(EntryPoint(), [], [], None, [], [], [])
 
     def new(self, action: Action, accessible_parents: List['Branch'], inaccessible_parents: List['Branch'],
-            current_hierarchy: Optional[CypherVariable],
+            current_hierarchy: Optional[CypherVariable], current_variables: List[CypherVariable],
             variables: List[CypherVariable], hierarchies: List[CypherVariable], name: str = None):
         parents = accessible_parents + inaccessible_parents
         parent_set = set(parents)
@@ -376,7 +376,7 @@ class BranchHandler:
         if name is None:
             self.class_counter[action.__class__] += 1
             name = action.__class__.__name__ + str(self.class_counter[action.__class__])
-        instance = Branch(self, action, accessible_parents, inaccessible_parents, current_hierarchy,
+        instance = Branch(self, action, accessible_parents, inaccessible_parents, current_hierarchy, current_variables,
                           variables=variables, hierarchies=hierarchies, name=name)
         attrs = {}
         if action.shape is not None:
@@ -389,7 +389,7 @@ class BranchHandler:
 
     def begin(self, label):
         action = StartingPoint(label)
-        return self.new(action, [self.entry], [], action.hierarchy, [], [action.hierarchy])
+        return self.new(action, [self.entry], [], action.hierarchy, [action.hierarchy], [], [action.hierarchy])
 
     def relevant_graph(self, branch):
         return nx.subgraph_view(self.graph, lambda n: nx.has_path(self.graph, n, branch) or n is branch)
@@ -418,7 +418,8 @@ def plot(graph, fname):
 class Branch:
     def __init__(self, handler: BranchHandler, action: Action,
                  accessible_parents: List['Branch'], inaccessible_parents: List['Branch'],
-                 current_hierarchy: Optional[CypherVariable], hierarchies: List[CypherVariable],
+                 current_hierarchy: Optional[CypherVariable], current_variables: List[CypherVariable],
+                 hierarchies: List[CypherVariable],
                  variables: List[CypherVariable], name: str = None):
         """
         A branch is an object that represents all the Actions (query statements) in a query.
@@ -435,6 +436,7 @@ class Branch:
         self.accessible_parents = accessible_parents
         self.inaccessible_parents = inaccessible_parents
         self.current_hierarchy = current_hierarchy
+        self.current_variables = current_variables
         self.name = name
         self.hierarchies = hierarchies
         self.variables = variables
@@ -483,6 +485,13 @@ class Branch:
                 hierarchies.append(branch.current_hierarchy)
         return hierarchies
 
+    def find_variables(self):
+        variables = []
+        for branch in self.iterdown(self.accessible_graph):
+            variables += branch.current_variables
+        return variables
+
+
     def find_hierarchy_branches(self):
         branches = []
         for branch in self.iterdown(self.accessible_graph):
@@ -491,14 +500,13 @@ class Branch:
         return branches
 
 
-
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
         Extend the branch from the most recent hierarchy to a new hierarchy(s) by walking along the paths
         If more than one path is given then we take the union of all the resultant nodes.
         """
         action = Traversal(self.hierarchies[-1], *paths)
-        return self.handler.new(action, [self], [], current_hierarchy=action.out,
+        return self.handler.new(action, [self], [], current_hierarchy=action.out, current_variables=[action.out],
                                 variables=self.variables, hierarchies=self.hierarchies+[action.out])
 
     def align(self, branch: 'Branch') -> 'Branch':
@@ -511,7 +519,7 @@ class Branch:
         zip ups and unwinds take place relative to the branch's shared ancestor
         """
         action = Alignment(self, branch)
-        return self.handler.new(action, [self], [branch], None,
+        return self.handler.new(action, [self], [branch], None, current_variables=action.output_variables,
                                 variables=action.output_variables,
                                 hierarchies=action.output_hierarchies)
 
@@ -531,7 +539,7 @@ class Branch:
         action = Collection(self, singular, multiple)
         variables = action.outsingle_variables + action.outmultiple_variables
         hierarchies = action.outsingle_hierarchies + action.outmultiple_hierarchies
-        return self.handler.new(action, [self], singular + multiple, None,
+        return self.handler.new(action, [self], singular + multiple, None, variables,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
     def operate(self, string_function, **inputs) -> 'Branch':
@@ -543,7 +551,7 @@ class Branch:
         if missing:
             raise ValueError(f"inputs {missing} are not in scope for {self}")
         op = Operation(string_function, **inputs)
-        return self.handler.new(op, [self], [], None,
+        return self.handler.new(op, [self], [], None, op.output_variables,
                                 variables=self.variables + op.output_variables, hierarchies=self.hierarchies)
 
     def filter(self, logical_string, **boolean_variables: CypherVariable) -> 'Branch':
@@ -555,7 +563,7 @@ class Branch:
         if missing:
             raise ValueError(f"inputs {missing} are not in scope for {self}")
         action = Filter(logical_string, **boolean_variables)
-        return self.handler.new(action, [self], [], None,
+        return self.handler.new(action, [self], [], None, [],
                                 variables=self.variables, hierarchies=self.hierarchies)
 
     def results(self, branch_attributes: Dict['Branch', List[CypherVariable]]):
@@ -564,7 +572,7 @@ class Branch:
         All other branches which are not this branch will have their results collected
         """
         action = Results(branch_attributes)
-        return self.handler.new(action, [self], [], None, self.variables, self.hierarchies)
+        return self.handler.new(action, [self], [], None, [], self.variables, self.hierarchies)
 
 
 if __name__ == '__main__':

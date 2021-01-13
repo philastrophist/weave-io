@@ -39,10 +39,11 @@ class CypherQuery(metaclass=ContextMeta):
             return self.is_accessible(variable.parent)
         return False
 
-    def add_statement(self, statement):
+    def add_statement(self, statement, safe=True):
         for v in statement.input_variables:
-            if not self.is_accessible(v):
-                raise ValueError(f"{v} is not accessible is this context. Have you left a WITH context?")
+            if safe:
+                if not self.is_accessible(v):
+                    raise ValueError(f"{v} is not accessible is this context. Have you left a WITH context?")
         self.statements.append(statement)
         self.current_context.extend(statement.output_variables)
 
