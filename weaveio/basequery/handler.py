@@ -1,26 +1,24 @@
-from copy import deepcopy as copy
-from typing import Union, Any, Tuple
+from typing import Tuple
 
 import networkx as nx
 
+from .common import AmbiguousPathError
 from .hierarchy import *
-from .factor import *
-from .query import AmbiguousPathError, FullQuery
-from .query_objects import Path, Generator
 from .tree import BranchHandler
-from ..utilities import quote
 
 
 class Handler:
     def __init__(self, data):
         self.data = data
-        self.generator = Generator()
+        self.branch_handler = data.branch_handler
 
     def begin_with_heterogeneous(self):
-        query_handler = BranchHandler()
-        return HeterogeneousHierarchyFrozenQuery(self, query_handler)
+        return HeterogeneousHierarchyFrozenQuery(self, self.branch_handler.entry)
 
     def hierarchy_of_factor(self, factor_name: str, start: Type[Hierarchy] = None) -> Tuple[str, str, str]:
+        """
+        returns the singular hierarchy name, factor_name,
+        """
         namelist = factor_name.split('.')
         hierarchy_names = None
         singular_name = None
@@ -52,7 +50,7 @@ class Handler:
         else:
             return hierarchy_names[0].singular_name.lower(), factor_name, singular_name
 
-    def path(self, start, end) -> Path:
+    def path(self, start, end) -> 'Path':
         raise NotImplementedError
 
     def _filter_by_boolean(self, parent, boolean):

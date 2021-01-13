@@ -6,12 +6,11 @@ from astropy.table import Table, Column, hstack
 from astropy.utils.data_info import ParentDtypeInfo
 
 from weaveio.basequery.common import FrozenQuery, UnexpectedResult, NotYetImplementedError
-from weaveio.basequery.query import FullQuery
 from weaveio.utilities import quote
 
 
 class FactorFrozenQuery(FrozenQuery):
-    def __init__(self, handler, branch: FullQuery, factors, numbers: List[Union[int, None]], parent: 'FrozenQuery' = None):
+    def __init__(self, handler, branch: 'FullQuery', factors, numbers: List[Union[int, None]], parent: 'FrozenQuery' = None):
         super().__init__(handler, branch, parent)
         self.factors = factors
         self.numbers = numbers

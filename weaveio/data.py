@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from weaveio.address import Address
 from weaveio.basequery.handler import Handler, defaultdict
+from weaveio.basequery.tree import BranchHandler, TraversalPath
 from weaveio.graph import Graph
 from weaveio.writequery import Unwind
 from weaveio.hierarchy import Multiple, Hierarchy, Indexed
@@ -107,6 +108,7 @@ class Data:
 
     def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False,
                  password=None, user=None):
+        self.branch_handler = BranchHandler()
         self.handler = Handler(self)
         self.host = host
         self.port = port
@@ -403,7 +405,7 @@ class Data:
         for i, node in enumerate(path[1:]):
             total_path.append(direction[i])
             total_path.append(node)
-        return total_multiplicity, total_number, total_path
+        return total_multiplicity, total_number, TraversalPath(*total_path)
 
     def is_factor_name(self, name):
         try:

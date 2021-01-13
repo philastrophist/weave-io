@@ -4,10 +4,9 @@ from typing import List, Union, Any, Type
 
 import py2neo
 
-from .common import FrozenQuery
+from .common import FrozenQuery, AmbiguousPathError
 from .factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery, TableFactorFrozenQuery
-from .query import AmbiguousPathError, FullQuery
-from .query_objects import Collection, Path, Condition
+from .tree import Branch
 from ..hierarchy import Hierarchy, Multiple
 from ..utilities import quote
 
@@ -18,6 +17,10 @@ class HierarchyFrozenQuery(FrozenQuery):
 
     def __getattr__(self, item):
         raise NotImplementedError
+
+Path = str
+Collection = str
+FullQuery = Branch
 
 
 class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
@@ -39,9 +42,11 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _get_plural_hierarchy(self, hierarchy_name) -> 'HomogeneousHierarchyFrozenQuery':
         hier = self.data.singular_hierarchies[hierarchy_name]
-        label = hier.__name__
+        multiplicity, number, path = self.handler.data.node_implies_plurality_of(self.branch.find_hierarchies()[-1], hier)
+        self.branch.traverse(path)
         start = self.handler.generator.node(label)
         root = [Path(start)]
+
         return HomogeneousHierarchyFrozenQuery(self.handler, FullQuery(root), hier, self)
 
     def _get_plural_factor(self, factor_name):

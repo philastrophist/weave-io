@@ -1,10 +1,12 @@
 from copy import deepcopy
 
 from weaveio.basequery.parse_tree import parse, write_tree
-from weaveio.basequery.query import FullQuery
-from weaveio.basequery.tree import BranchHandler
-from weaveio.neo4j import parse_apoc_tree
+from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherQuery
+
+
+class AmbiguousPathError(Exception):
+    pass
 
 
 class NotYetImplementedError(NotImplementedError):
@@ -18,7 +20,7 @@ class UnexpectedResult(Exception):
 class FrozenQuery:
     executable = True
 
-    def __init__(self, handler, branch: BranchHandler, parent: 'FrozenQuery' = None):
+    def __init__(self, handler, branch: Branch, parent: 'FrozenQuery' = None):
         self.handler = handler
         self.branch = branch
         self.parent = parent
