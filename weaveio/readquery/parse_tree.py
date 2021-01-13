@@ -5,7 +5,7 @@ from typing import List
 
 import networkx as nx
 
-from weaveio.readquery.tree import Alignment
+from weaveio.readquery.tree import Alignment, Branch
 from weaveio.writequery import CypherQuery
 from weaveio.writequery.base import Statement
 
@@ -26,10 +26,13 @@ def print_nested_list(nested, tab=0):
             print('    '*tab, entry)
 
 
-def shared_hierarchy_branch(graph, branch):
+def shared_hierarchy_branch(graph, branch: Branch):
     branches = reduce(and_, [set(p.find_hierarchy_branches()) for p in branch.parents])
     distances = [(b, nx.shortest_path_length(graph, b, branch)) for b in branches]
-    return max(distances, key=lambda x: x[1])[0]
+    try:
+        return max(distances, key=lambda x: x[1])[0]
+    except ValueError:
+        return branch.handler.entry  # no shared parents means going back to the beginning
 
 
 def parse(graph) -> List:
@@ -69,7 +72,7 @@ class OpenSubquery(Statement):
         super().__init__(input_variables, output_variables, hidden_variables)
 
     def to_cypher(self):
-        inputs = ', '.join(self.input_variables)
+        inputs = ', '.join(map(str, ['time0'] + self.input_variables))
         return f"CALL {{with {inputs}"
 
 
@@ -78,8 +81,8 @@ class CloseSubquery(Statement):
         super().__init__(input_variables, output_variables, hidden_variables)
 
     def to_cypher(self):
-        inputs = ', '.join(self.output_variables)
-        return f"\n}}"
+        inputs = ', '.join(map(str, self.output_variables))
+        return f"RETURN {inputs}\n}}"
 
 
 def write_tree(parsed_tree):
@@ -94,7 +97,7 @@ def write_tree(parsed_tree):
             open = OpenSubquery(subquery_inputs, [])
             query.add_statement(open, safe=False)
             write_tree(node)
-            close = CloseSubquery(subquery_outputs, [])
+            close = CloseSubquery(subquery_outputs, subquery_outputs)
             query.add_statement(close)
         else:
             query.add_statement(node.action)
@@ -133,13 +136,18 @@ if __name__ == '__main__':
     cypher, params = query.render_query()
     print(cypher)
 
-    # print('================================================')
-    #
-    # from tree_test_weaveio_example import red_spectra
-    # final = red_spectra.results({})
-    # graph = final.relevant_graph
-    # plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
-    # plot(final.accessible_graph, '/opt/project/weaveio_example_querytree_red_branch_accessible.png')
-    # subqueries = parse(graph)
-    # print_nested_list(subqueries)
-    #
+    print('================================================')
+
+    from tree_test_weaveio_example import red_spectra
+    final = red_spectra.results({})
+    graph = final.relevant_graph
+    plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
+    plot(final.accessible_graph, '/opt/project/weaveio_example_querytree_red_branch_accessible.png')
+    subqueries = parse(graph)
+    print_nested_list(subqueries)
+
+    with CypherQuery() as query:
+        write_tree(subqueries)
+
+    cypher, params = query.render_query()
+    print(cypher)
