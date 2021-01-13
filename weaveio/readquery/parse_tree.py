@@ -1,10 +1,12 @@
 from collections import defaultdict
 from functools import reduce
-from operator import and_
+from operator import and_, or_
 from typing import List
 
 import networkx as nx
+import numpy as np
 
+from weaveio.opr3 import OurData
 from weaveio.readquery.tree import Alignment, Branch
 from weaveio.writequery import CypherQuery
 from weaveio.writequery.base import Statement
@@ -147,16 +149,22 @@ if __name__ == '__main__':
     # print('================================================')
 
     from tree_test_weaveio_example import l2row
+
+    data = OurData('data', port=7687, write=False)
     final = l2row
-    graph = final.relevant_graph
-    plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
-    subqueries = parse(graph)
-    print_nested_list(subqueries)
 
-    with CypherQuery() as query:
-        for s in subqueries:
-            write_tree(s)
-        query.returns(l2row.action.target)
+    print(data.node_implies_plurality_of('obspec', 'fibretarget'))
+    print(data.node_implies_plurality_of('fibretarget', 'obspec'))
 
-    cypher, params = query.render_query()
-    print(cypher)
+    # graph = final.relevant_graph
+    # plot(graph, '/opt/project/weaveio_example_querytree_red_branch.png')
+    # subqueries = parse(graph)
+    # print_nested_list(subqueries)
+    #
+    # with CypherQuery() as query:
+    #     for s in subqueries:
+    #         write_tree(s)
+    #     query.returns(l2row.action.target)
+    #
+    # cypher, params = query.render_query()
+    # print(cypher)

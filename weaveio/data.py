@@ -1,5 +1,7 @@
 import time
+from functools import reduce
 from itertools import product
+from operator import or_
 
 import networkx
 import numpy as np
@@ -134,6 +136,23 @@ class Data:
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
         self.make_relation_graph()
+        self.make_dually_directed_graph()
+
+    def make_dually_directed_graph(self):
+        """
+        Turns a directed graph with one with edges in both directions
+        With an edge of (a)-[number=2, multiple=True]>(b), b has 2 of a, a has <unknown> of b
+        """
+        for a, b in list(self.relation_graph.edges):
+            attrs = self.relation_graph.edges[(a, b)]
+            if attrs.get('belongs_to', False):
+                multiplicity = False
+                number = 1
+            else:
+                multiplicity = True
+                number = None
+            self.relation_graph.add_edge(b, a, multiplicity=multiplicity, number=number, inverted=True)
+
 
     def write(self, collision_manager='track&flag'):
         if self.write_allowed:
@@ -191,12 +210,12 @@ class Data:
                         self.relation_graph.add_node(subclass.singular_name, is_file=is_file, is_hdu=issubclass(subclass, HDU),
                                                      factors=subclass.factors+[subclass.idname],
                                                      idname=subclass.idname)
-                        self.relation_graph.add_edge(subclass.singular_name, h.singular_name,
+                        self.relation_graph.add_edge(subclass.singular_name, h.singular_name, belongs_to=subclass in h.belongs_to,
                                                      multiplicity=multiplicity, number=number,
                                                      label=numberlabel)
                         d.append(subclass)
             for hier in h.produces:
-                self.relation_graph.add_edge(h.singular_name, hier.singular_name,
+                self.relation_graph.add_edge(h.singular_name, hier.singular_name, belongs_to=h in hier.belongs_to,
                                              multiplicity=False, number=1, index=False, name='file',
                                              label='=1')
                 for product_name in hier.products:
@@ -206,7 +225,7 @@ class Data:
                     else:
                          index = False
                     product = h.hdus[product_name]
-                    self.relation_graph.add_edge(product.singular_name, hier.singular_name,
+                    self.relation_graph.add_edge(product.singular_name, hier.singular_name, belongs_to=product in hier.belongs_to,
                                                  multiplicity=False, number=1, index=index, name=product_name,
                                                  label='=1')
 
@@ -214,10 +233,14 @@ class Data:
         return [hierarchy.make_schema() for hierarchy in self.hierarchies]
 
     def apply_constraints(self):
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
         for q in tqdm(self.make_constraints_cypher(), desc='applying constraints'):
             self.graph.neograph.run(q)
 
     def drop_all_constraints(self):
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
         self.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
 
     def get_extant_files(self):
@@ -362,43 +385,25 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def node_implies_plurality_of(self, start_node, implication_node):
-        start_factor, implication_factor = None, None
-        if start_node in self.singular_factors or start_node in self.singular_idnames:
-            start_factor = start_node
-            start_nodes = [n for n, data in self.relation_graph.nodes(data=True) if start_node in data['factors']]
-        else:
-            start_nodes = [start_node]
-        if implication_node in self.singular_factors or implication_node in self.singular_idnames:
-            implication_factor = implication_node
-            implication_nodes = [n for n, data in self.relation_graph.nodes(data=True) if implication_node in data['factors']]
-        else:
-            implication_nodes = [implication_node]
-        paths = []
-        for start, implication in product(start_nodes, implication_nodes):
-            if nx.has_path(self.relation_graph, start, implication):
-                paths.append((nx.shortest_path(self.relation_graph, start, implication), 'below'))
-            elif nx.has_path(self.relation_graph, implication, start):
-                paths.append((nx.shortest_path(self.relation_graph, implication, start)[::-1], 'above'))
-        paths.sort(key=lambda x: len(x[0]))
-        if not len(paths):
-            raise networkx.exception.NodeNotFound(f'{start_node} or {implication_node} not found')
-        path, direction = paths[0]
-        if len(path) == 1:
-            return False, 'above', path, 1
-        if direction == 'below':
-            if self.relation_graph.nodes[path[-1]]['is_file']:
-                multiplicity = False
-            else:
-                multiplicity = True
-        else:
-            multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
-        numbers = [self.relation_graph.edges[(n2, n1)]['number'] for n1, n2 in zip(path[:-1], path[1:])]
-        if any(n is None for n in numbers):
-            number = None
-        else:
-            number = int(np.product(numbers))
-        return multiplicity, direction, path, number
+    def node_implies_plurality_of(self, a: str, b: str):
+        """
+        returns: multiplicity, number, path
+        """
+        graph = self.relation_graph
+        path = nx.shortest_path(graph, a, b)
+        edges = [(x, y) for x, y in zip(path[:-1], path[1:])]
+        multiplicity = [graph.edges[e]['multiplicity'] for e in edges]
+        number = [graph.edges[e]['number'] for e in edges]
+        direction = ['<-' if graph.edges[e].get('inverted', False) else '->' for e in edges]
+        total_multiplicity = reduce(or_, multiplicity)
+        total_number = sum(np.inf if i is None else i for i in number)
+        if total_number == np.inf:
+            total_number = None
+        total_path = []
+        for i, node in enumerate(path[1:]):
+            total_path.append(direction[i])
+            total_path.append(node)
+        return total_multiplicity, total_number, total_path
 
     def is_factor_name(self, name):
         try:
