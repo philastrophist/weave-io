@@ -270,7 +270,7 @@ class ClassificationTable(L2TableRow):
 
 class GalaxyTable(L2TableRow):
     is_template = True
-    with open(HERE / 'galaxy_table_columns', 'r') as _f:
+    with open(HERE / 'galaxy_table_columns.txt', 'r') as _f:
         factors = L2TableRow.factors + [x.lower().strip() for x in _f.readlines() if len(x)]
 
 
