@@ -5,7 +5,7 @@ from typing import List
 
 import networkx as nx
 
-from weaveio.basequery.tree import Branch, DataReference
+from weaveio.basequery.tree import Branch, DataReference, Alignment
 from weaveio.writequery import CypherQuery
 from weaveio.writequery.base import Statement, CypherData
 

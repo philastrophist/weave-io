@@ -39,9 +39,8 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _get_plural_hierarchy(self, hierarchy_name) -> 'HomogeneousHierarchyFrozenQuery':
         hier = self.data.singular_hierarchies[hierarchy_name]
-        multiplicity, number, path,  hier = self.handler.data.node_implies_plurality_of(self.branch.find_hierarchies()[-1], hier.singular_name)
-        new = self.branch.traverse(path)
-        return HomogeneousHierarchyFrozenQuery(self.handler, new, hier, self.current_hierarchy, self)
+        new = self.branch.handler.begin(hier.__name__)
+        return HomogeneousHierarchyFrozenQuery(self.handler, new, hier, new.current_hierarchy, self)
 
     def _get_plural_factor(self, factor_name):
         hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(factor_name)
@@ -65,20 +64,21 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         return query
 
     def _process_result_row(self, row, nodetype):
-        node, indexer = row
+        node = row[0]
         inputs = {}
         for f in nodetype.factors:
             inputs[f] = node[f]
         inputs[nodetype.idname] = node[nodetype.idname]
         base_query = getattr(self.handler.begin_with_heterogeneous(), nodetype.plural_name)[node['id']]
         for p in nodetype.parents:
-            if p.singular_name == nodetype.indexer:
-                inputs[p.singular_name] = self._process_result_row([indexer, {}], p)
-            elif isinstance(p, Multiple):
+            if isinstance(p, Multiple):
                 inputs[p.plural_name] = getattr(base_query, p.plural_name)
             else:
-                inputs[p.singular_name] = getattr(base_query, p.singular_name)
-        h = nodetype(**inputs)
+                try:
+                    inputs[p.singular_name] = getattr(base_query, p.singular_name)
+                except AmbiguousPathError:
+                    inputs[p.singular_name] = getattr(base_query, p.plural_name)  # this should not have to be done
+        h = nodetype(**inputs, do_not_create=True)
         h.add_parent_query(base_query)
         return h
 

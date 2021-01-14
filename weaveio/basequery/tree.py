@@ -161,7 +161,7 @@ class DataReference(Action):
 
     def __init__(self, *data):
         import numpy as np
-        self.hashes = [hash(np.array(a).tobytes()) for a in data]
+        self.hashes = reduce(xor, [hash(np.array(a).tobytes()) for a in data])
         ins = [CypherData(datum, delay=True) for datum in data]
         super().__init__(ins, [])
 
@@ -490,14 +490,14 @@ class Branch:
 
     def __hash__(self):
         if self._hash is None:
-            self._hash = reduce(xor, map(hash, self.parents + self.variables + [tuple(self.hierarchies), self.action, self.handler]))
+            self._hash = reduce(xor, map(hash, self.parents + [self.current_hierarchy, tuple(self.current_variables), self.action, self.handler]))
         return self._hash
 
     def __eq__(self, other):
         if self.__class__ is not other.__class__:
             return False
         return self.handler == other.handler and self.action == other.action and set(self.parents) == set(other.parents) \
-               and self.hierarchies == other.hierarchies and set(self.variables) == set(other.variables)
+               and self.current_hierarchy == other.current_hierarchy and set(self.current_variables) == set(other.current_variables)
 
     def __repr__(self):
         return f'<Branch {self.name}: {str(self.action)}>'
@@ -545,7 +545,7 @@ class Branch:
     def add_data(self, *data) -> 'Branch':
         action = DataReference(*data)
         return self.handler.new(action, [self], [], current_hierarchy=None, current_variables=action.input_variables,
-                         variables=self.variables+[action.data_variables], hierarchies=self.hierarchies)
+                         variables=self.variables+[action.input_variables], hierarchies=self.hierarchies)
 
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
