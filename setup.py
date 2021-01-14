@@ -8,7 +8,7 @@ from setuptools import find_packages, setup, Command
 # Package meta-data.
 NAME = 'weaveio'
 DESCRIPTION = 'WEAVE-IO query interface for accessing WEAVE data'
-URL = 'https://github.com/philastrophist/weaveio'
+URL = 'https://github.com/WEAVE-LOFAR/weave-io'
 EMAIL = 'shaun.c.read@gmail.com'
 AUTHOR = 'philastrophist'
 
