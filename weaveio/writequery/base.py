@@ -232,11 +232,12 @@ class Collection(CypherVariable):
 
 
 class CypherData(CypherVariable):
-    def __init__(self, data, name='data'):
+    def __init__(self, data, name='data', delay=False):
         super(CypherData, self).__init__(name)
         self.data = data
-        query = CypherQuery.get_context()  # type: CypherQuery
-        query.add_data(self)
+        if not delay:
+            query = CypherQuery.get_context()  # type: CypherQuery
+            query.add_data(self)
 
     def __repr__(self):
         return '$' + super(CypherData, self).__repr__()

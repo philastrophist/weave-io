@@ -6,7 +6,7 @@ from typing import Union, List, Dict, Optional
 import networkx as nx
 from networkx import OrderedDiGraph
 
-from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery, DerivedCypherVariable, CypherVariableItem
+from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery, DerivedCypherVariable, CypherVariableItem, CypherData
 
 
 def typeerror_is_false(func):
@@ -154,6 +154,35 @@ class StartingPoint(Action):
 
     def __str__(self):
         return f'{self.label}'
+
+
+class DataReference(Action):
+    compare = ['hashes']
+
+    def __init__(self, *data):
+        import numpy as np
+        self.hashes = [hash(np.array(a).tobytes()) for a in data]
+        ins = [CypherData(datum, delay=True) for datum in data]
+        super().__init__(ins, [])
+
+    def to_cypher(self):
+        return '// added data here'
+
+    def __str__(self):
+        return 'DataReference'
+
+
+
+# class OrderBy(Action):
+#
+#     def __init__(self, base_hierarchies, ):
+#
+#     def to_cypher(self):
+#         collections = f'collect({self.sort_node}) as {self.collected_variable}'
+#         with_statement = ', '.join(map(str, self.base_hierarchies + collections))
+#         call_statement = f'with {self.collected_variable} UNWIND {self.collected_variable} as {self.sort_node} RETURN {self.sort_node}' \
+#                          f' ORDER BY {self.sort_node}.{self.sort_property}'
+#         return f"WITH {with_statement} + CALL {{ {call_statement} }}"
 
 
 class Traversal(Action):
@@ -376,6 +405,7 @@ class BranchHandler:
         self.graph = OrderedDiGraph()
         self.class_counter = defaultdict(int)
         self.entry = self.new(EntryPoint(), [], [], None, [], [], [])
+        self.data_objects = {}
 
     def new(self, action: Action, accessible_parents: List['Branch'], inaccessible_parents: List['Branch'],
             current_hierarchy: Optional[CypherVariable], current_variables: List[CypherVariable],
@@ -512,6 +542,10 @@ class Branch:
                 branches.append(branch)
         return branches
 
+    def add_data(self, *data) -> 'Branch':
+        action = DataReference(*data)
+        return self.handler.new(action, [self], [], current_hierarchy=None, current_variables=action.input_variables,
+                         variables=self.variables+[action.data_variables], hierarchies=self.hierarchies)
 
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
@@ -586,101 +620,3 @@ class Branch:
         branch_attributes = {k: v if isinstance(v, (list, tuple)) else [v] for k, v in branch_attributes.items()}
         action = Results(branch_attributes)
         return self.handler.new(action, [self], [], None, [], self.variables, self.hierarchies)
-
-
-if __name__ == '__main__':
-    from weaveio.opr3 import OurData
-    data = OurData('data', port=7687, write=False)
-    handler = BranchHandler()
-
-    # obs = obs[any(obs.runs.spectra.snr > 10) | any(obs.runs.spectra.observations.seeing > 0) & all(obs.targets[obs.targets.survey.name == 'WL'].ra > 0)]
-    # obs.runs.runid == exposures.runs.runid
-    # obs = handler.begin('OB')
-    # spectra = obs.traverse(TraversalPath('->', 'run', '->', 'spectrum'))
-    # observations = spectra.traverse(TraversalPath('->', 'observation'))
-    # targets = obs.traverse(TraversalPath('->', 'target'))
-    # surveys = targets.traverse(TraversalPath('->', 'survey'))
-    #
-    # snr = spectra.operate("{snr} > 2", snr=spectra.hierarchies[-1].get('snr'))
-    # seeing = observations.operate("{seeing} > 0", seeing=observations.hierarchies[-1].get('seeing'))
-    # surveyname = surveys.operate("{name} = 'WL'", name=surveys.hierarchies[-1].get('surveyname'))
-    # targets = targets.collect([surveyname], [])
-    # targets = targets.filter('{name}', name=targets.action[surveyname.action.output])
-    # ra = targets.operate('{ra} > 0', ra=targets.hierarchies[-1].get('ra'))
-    #
-    # collected = obs.collect([], [snr, seeing, ra])
-    # filtered = collected.filter('any(x in {snr} where x) OR any(x in {seeing} where x) AND all(x in {ra} where x)', snr=collected.action[snr.action.output],
-    #                             seeing=collected.action[seeing.action.output], ra=collected.action[ra.action.output])
-
-    # obs
-    # x = obs[obs[any(obs.runs.runid == 2)] == obs[any(obs.runs.exposures.expmjds == 1)]]
-    # y = obs.runs.exposures.targets.obs
-    # x == y
-    all_runs = handler.begin('Run')
-    config = all_runs.traverse(TraversalPath('->', 'ArmConfig'))
-    red = config.operate('{config}.camera = "red"', config=config.hierarchies[-1])
-    collected_runs = all_runs.collect([red], [])
-    runs = collected_runs.filter('{x}', x=collected_runs.action.output_variables[0])
-    obs = runs.traverse(TraversalPath('<-', 'Exposure', '<-', 'OB'))
-
-    runs = obs.traverse(TraversalPath('->', 'Exposure', '->', 'Run'))
-    exposures = runs.traverse(TraversalPath('->', 'Exposure'))
-    runid = runs.operate('{runid} = 1002081', runid=runs.hierarchies[-1].get('runid'))
-    expmjd = exposures.operate('{expmjd} = "57659.100567"', runid=exposures.hierarchies[-1].get('expmjd'))
-    collection1 = obs.collect([], [expmjd])
-    collection2 = obs.collect([], [runid])
-    obs1 = collection1.filter('any({x})', x=collection1.action[expmjd.action.target])
-    obs2 = collection2.filter('any({x})', x=collection2.action[runid.action.target])
-
-    x = obs.align(obs1, obs2).operate('{x} = {y}').filter('{a}')
-
-    targets = exposures.traverse(TraversalPath('->', 'Target'))
-    y = targets.traverse(TraversalPath('->', 'OB'))
-
-    all_runs.align(x, y)
-
-    plot(handler.graph, '/opt/project/querytree.png')
-
-    def merge_collections(handler: BranchHandler):
-        """
-        Combines all collection nodes into one when they have the same parent.
-        1. Copy handler
-        2. find collection nodes
-        3. Make new collect node using the combined parents
-        4. Make
-        5. Remove old collection nodes
-        """
-        graph = handler.graph.copy()
-        collections = defaultdict(set)
-        for n in graph.nodes:
-            if isinstance(n.action, Collection):
-                collections[n.action._reference].add(n)
-        for parent, collect_branch_set in collections.items():
-            singles = [i for branch in collect_branch_set for i in branch.action._singles]
-            multiples = [i for branch in collect_branch_set for i in branch.action._multiples]
-            children = [s for branch in collect_branch_set for s in graph.successors(branch)]
-            new = parent.collect(singles, multiples)
-            graph.add_node(new, action=new.action, shape='rect')
-            graph.add_edge(parent, new)
-            for p in singles+multiples:
-                graph.add_edge(p, new)
-            for child in children:
-                graph.add_edge(new, child)
-        for cs in collections.values():
-            for c in cs:
-                graph.remove_node(c)
-        return graph
-
-
-    plot(handler.graph, '/opt/project/querytree1.png')
-    # graph = merge_collections(handler)
-    # plot(graph, '/opt/project/querytree2.png')
-
-    # ordering = list(nx.algorithms.dag.topological_sort(graph))
-    # for i in ordering:
-    #     print(i)
-    # with CypherQuery('ignore') as query:
-    #     for stage in ordering:
-    #         query.add_statement(stage.action)
-    # cypher, _ = query.render_query()
-    # print(cypher)

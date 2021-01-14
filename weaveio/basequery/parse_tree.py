@@ -5,9 +5,9 @@ from typing import List
 
 import networkx as nx
 
-from weaveio.basequery.tree import Branch
+from weaveio.basequery.tree import Branch, DataReference
 from weaveio.writequery import CypherQuery
-from weaveio.writequery.base import Statement
+from weaveio.writequery.base import Statement, CypherData
 
 
 def flatten(S):
@@ -104,3 +104,14 @@ def write_tree(parsed_tree):
     else:
         query.add_statement(parsed_tree.action)
         return parsed_tree.find_variables()
+
+def branch2query(branch) -> CypherQuery:
+    graph = branch.relevant_graph
+    subqueries = parse(graph)
+    with CypherQuery() as query:
+        for node in graph.nodes:
+            if isinstance(node.action, DataReference):
+                query.data += node.action.input_variables
+        for s in subqueries:
+            write_tree(s)
+    return query

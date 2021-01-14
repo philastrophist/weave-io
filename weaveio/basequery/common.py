@@ -3,7 +3,7 @@ from typing import Tuple, Dict, Any
 
 import py2neo
 
-from weaveio.basequery.parse_tree import parse, write_tree
+from weaveio.basequery.parse_tree import parse, write_tree, branch2query
 from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherQuery
 
@@ -43,10 +43,7 @@ class FrozenQuery:
     def _prepare_query(self) -> CypherQuery:
         """Override to allow custom edits to the CypherQuery object after the branch is finalised"""
         branch = self._prepare_branch()
-        subqueries = parse(branch)
-        with CypherQuery() as query:
-            for s in subqueries:
-                write_tree(s)
+        query = branch2query(branch)
         return query
 
     def _prepare_cypher(self) -> Tuple[str, Dict[str, Any]]:
