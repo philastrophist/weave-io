@@ -38,7 +38,7 @@ class FrozenQuery:
 
     def _prepare_branch(self) -> Branch:
         """Override to allow custom edits to the branch before execution"""
-        return deepcopy(self.branch)
+        return self.branch
 
     def _prepare_query(self) -> CypherQuery:
         """Override to allow custom edits to the CypherQuery object after the branch is finalised"""

@@ -1,5 +1,4 @@
 from collections import defaultdict
-from copy import deepcopy
 from typing import List, Union, Any, Type, Tuple
 
 import py2neo
@@ -9,7 +8,7 @@ from .factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorF
 from .tree import Branch, TraversalPath
 from ..hierarchy import Hierarchy, Multiple
 from ..utilities import quote
-from ..writequery import CypherVariable, CypherData
+from ..writequery import CypherVariable
 
 
 class HierarchyFrozenQuery(FrozenQuery):
@@ -228,7 +227,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         if multiplicities[0]:
             plural = self.data.plural_name(name)
             raise AmbiguousPathError(f"{self} has multiple {name}s. Use {plural} instead")
-        return SingleFactorFrozenQuery(self.handler, branch, name, factor_variables[0], numbers, self)
+        return SingleFactorFrozenQuery(self.handler, branch, name, factor_variables, numbers, self)
 
     def _post_process(self, result: py2neo.Cursor):
         rows = super()._post_process(result)
@@ -240,7 +239,7 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
                 elif isinstance(frozen, IdentifiedHomogeneousHierarchyFrozenQuery):
                     idents[frozen.hierarchy_type.idname] += frozen._identifiers
             if idents:
-                d = {k: [i for i in v if i is not None] for k,v in idents.items()}
+                d = {k: [i for i in v if i is not None] for k, v in idents.items()}
                 d = {k: v for k, v in d.items() if len(v)}
                 raise KeyError(f"One or more identifiers in {d} are not present in the database")
         return rows[0]
@@ -254,7 +253,7 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         return f'{self.parent}.{self.hierarchy_type.plural_name}'
 
     def _get_factor_table_query(self, item):
-        branch, return_keys, factor_variables, numbers =  super()._get_factor_table_query(item)
+        branch, return_keys, factor_variables, numbers = super()._get_factor_table_query(item)
         return TableFactorFrozenQuery(self.handler, branch, item, factor_variables, numbers, return_keys, self)
 
     def __getitem__(self, item):
@@ -282,14 +281,14 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
             raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead.")
         return super(HomogeneousHierarchyFrozenQuery, self).__getattr__(item)
 
-    def _filter_by_identifiers(self, identifiers: List[Union[str,int,float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
+    def _filter_by_identifiers(self, identifiers: List[Union[str, int, float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
         idname = self.hierarchy_type.idname
         new = self.branch.add_data(identifiers)
         identifiers_var = new.current_variables[0]
         branch = self.branch.filter('{h}.' + idname + ' in {identifiers}', h=self.hierarchy_variable, identifiers=identifiers_var)
         return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, branch, self.hierarchy_type, self.hierarchy_variable, identifiers, self)
 
-    def _filter_by_identifier(self, identifier: Union[str,int,float]):
+    def _filter_by_identifier(self, identifier: Union[str, int, float]):
         idname = self.hierarchy_type.idname
         new = self.branch.add_data(identifier)
         identifier_var = new.current_variables[0]

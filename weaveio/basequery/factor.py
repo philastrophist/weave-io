@@ -3,17 +3,23 @@ from typing import List, Union
 import numpy as np
 import py2neo
 from astropy.table import Table, Column, hstack
-from astropy.utils.data_info import ParentDtypeInfo
 
 from weaveio.basequery.common import FrozenQuery, UnexpectedResult, NotYetImplementedError
-from weaveio.utilities import quote
+from weaveio.basequery.tree import Branch
+from weaveio.writequery import CypherVariable, CypherQuery
 
 
 class FactorFrozenQuery(FrozenQuery):
-    def __init__(self, handler, branch: 'FullQuery', factors, numbers: List[Union[int, None]], parent: 'FrozenQuery' = None):
+    def __init__(self, handler, branch: Branch, factors: List[str], factor_variables: List[CypherVariable],
+                 numbers: List[Union[int, None]], parent: FrozenQuery = None):
         super().__init__(handler, branch, parent)
         self.factors = factors
+        self.factor_variables = factor_variables
         self.numbers = numbers
+
+    def _prepare_query(self) -> CypherQuery:
+        with super()._prepare_query() as query:
+            return query.returns(*self.factor_variables)
 
     def __repr__(self):
         if isinstance(self.factors, tuple):
@@ -73,9 +79,14 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
     A matrix of different factors against different hierarchy instances
     This is only possible if the hierarchies each have only one of the factors
     """
-    def __init__(self, handler, branch, factors, numbers, return_keys: List[str] = None, parent: 'FrozenQuery' = None):
-        super().__init__(handler, branch, factors, numbers, parent)
+    def __init__(self, handler, branch, factors, factor_variables, numbers, return_keys: List[str] = None, parent: 'FrozenQuery' = None):
+        super().__init__(handler, branch, factors, factor_variables, numbers, parent)
         self.return_keys = return_keys
+
+    def _prepare_query(self) -> CypherQuery:
+        with super()._prepare_query() as query:
+            variables = {k: v for k, v in zip(self.return_keys, self.factor_variables)}
+            return query.returns(**variables)
 
     def _post_process(self, result):
         t = super(TableFactorFrozenQuery, self)._post_process(result)

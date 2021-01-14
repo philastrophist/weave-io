@@ -5,6 +5,7 @@ from textwrap import dedent
 from typing import List, Callable, Union
 
 import re
+from warnings import warn
 
 from ..context import ContextMeta
 
@@ -84,7 +85,8 @@ class CypherQuery(metaclass=ContextMeta):
         if not isinstance(self.statements[-1], Returns):
             self.statements.append(Returns(*args, **kwargs))
         else:
-            raise ValueError(f"Cannot have more than one return")
+            warn(f"Cannot have more than one return, overwriting...")
+        self.statements[-1] = Returns(*args, **kwargs)
 
 
 CypherQuery._context_class = CypherQuery
