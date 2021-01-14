@@ -274,11 +274,16 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
 
     def __getattr__(self, item):
         if item in self.data.singular_hierarchies:
-            plural = self.data.plural_name(item)
-            raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead")
+            multiplicity, path, number, hier = self.node_implies_plurality_of(item)
+            if multiplicity:
+                plural = self.data.plural_name(item)
+                raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead")
         if self.data.is_singular_name(item) and self.data.is_factor_name(item):
-            plural = self.data.plural_name(item)
-            raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead.")
+            hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(item)
+            multiplicity, path, number, hier = self.node_implies_plurality_of(singular_name)
+            if multiplicity:
+                plural = self.data.plural_name(item)
+                raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead.")
         return super(HomogeneousHierarchyFrozenQuery, self).__getattr__(item)
 
     def _filter_by_identifiers(self, identifiers: List[Union[str, int, float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
