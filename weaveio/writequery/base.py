@@ -87,6 +87,7 @@ class CypherQuery(metaclass=ContextMeta):
         else:
             warn(f"Cannot have more than one return, overwriting...")
         self.statements[-1] = Returns(*args, **kwargs)
+        return self
 
 
 CypherQuery._context_class = CypherQuery

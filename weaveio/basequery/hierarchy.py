@@ -93,8 +93,16 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         return results
 
     def node_implies_plurality_of(self, end: str) -> Tuple[bool, TraversalPath, int, Type[Hierarchy]]:
+        if end in self.data.singular_factors or end in self.data.singular_idnames:
+            hier_name = self.handler.hierarchy_of_factor(end)[0]
+        elif end in self.data.plural_factors or end in self.data.plural_idnames:
+            hier_name = self.handler.hierarchy_of_factor(self.data.singular_name(end))[0]
+        else:
+            hier_name = end
         start = self.hierarchy_type.singular_name.lower()
-        multiplicity, number, path, hier = self.data.node_implies_plurality_of(start, end)
+        if start == hier_name:
+            return False, None, 1, self.hierarchy_type
+        multiplicity, number, path, hier = self.data.node_implies_plurality_of(start, hier_name)
         return multiplicity, path, number, hier
 
     def _get_plural_hierarchy(self, name):
@@ -111,7 +119,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         for name in names:
             hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(name, self.hierarchy_type)
             friendly_name = '_'.join(name.split('.'))
-            if hierarchy_name != self.hierarchy_type.__name__:  # if it refers to another hierarchy
+            if hierarchy_name != self.hierarchy_type.singular_name:  # if it refers to another hierarchy
                 multiplicity, path, number, _ = self.node_implies_plurality_of(hierarchy_name)
                 branch = branch.traverse(path)
             else:
