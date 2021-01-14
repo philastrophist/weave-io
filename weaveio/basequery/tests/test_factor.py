@@ -89,7 +89,7 @@ def test_single_hierarchy_row_of_factors(data_one2one, typ, hiers):
     row = data_one2one.hierarchyas['1'].__getitem__(items)
     assert isinstance(row, RowFactorFrozenQuery)
     for i, (item, hier) in enumerate(zip(items, hiers)):
-        prop = row.query.returns[i]
+        prop = row.branch.returns[i]
         assert prop.property_name == item
         assert prop.node.label == f'Hierarchy{hier.upper()}'
     if typ is list:
@@ -185,7 +185,7 @@ def test_tablelike_factors_by_getitem(data_one2one, factor_intype, hiers, factor
 
     zippable_items = [items] if not isinstance(items, (tuple, list)) else items
     for i, (item, hier) in enumerate(zip(zippable_items, hiers)):
-        prop = table.query.returns[i]
+        prop = table.branch.returns[i]
         assert prop.property_name == item
         assert prop.node.label == f'Hierarchy{hier.upper()}'
     if isinstance(items, list):
@@ -216,9 +216,9 @@ def test_direct_single_factors_by_getitem(data_one2one, idfilter, hier):
     factor_name = f'{hier}_factor_a'
     result = structure[factor_name]
     assert isinstance(result, querytype), str(result)
-    prop = result.query.returns[0]
+    prop = result.branch.returns[0]
     assert prop.property_name == factor_name
-    assert len(result.query.returns) == 1
+    assert len(result.branch.returns) == 1
     assert prop.node.label == f'Hierarchy{hier.upper()}'
 
 

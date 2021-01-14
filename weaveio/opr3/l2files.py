@@ -37,7 +37,7 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
 
 class L2File(File):
     is_template = True
-    match_pattern = '*aps.fit'
+    match_pattern = '*aps.fits'
     produces = [ClassificationTable, GalaxyTable]#, ClassificationSpectrum, GalaxySpectrum]
     corresponding_hdus = ['class_table', 'galaxy_table']#, 'class_spectra', 'galaxy_spectra']
     parents = [Multiple(L1File, 2, 3)]
@@ -49,12 +49,18 @@ class L2File(File):
             'stellar_table': TableHDU,
             'stellar_table_rvs': TableHDU,
             'galaxy_table': TableHDU}
-    recommended_batchsize = 100
+    recommended_batchsize = 600
+
+    @classmethod
+    def length(cls, path):
+        hdus = fits.open(path)
+        names = [i.name for i in hdus]
+        return len(hdus[names.index('CLASS_SPECTRA')].data)
 
     @classmethod
     def query_structure(cls, path, graph):
         header = cls.read_header(path)
-        runids = map(int, header['RUN'].split('+'))
+        runids = list(map(int, header['RUN'].split('+')))
         result = graph.execute('UNWIND $runids as runid MATCH (run:Run {runid:runid}) '
                                'MATCH (run)<-[*]-(ob:OB)'
                                'MATCH (ob)<--(obspec:OBSpec) '
@@ -117,7 +123,8 @@ class L2File(File):
         return file
 
     @classmethod
-    def read_one_hdu_l2data(cls, hdus, hduname, slc):
+    def read_one_hdu_l2data(cls, hdus, hduname, slc=None):
+        slc = slice(None) if slc is None else slc
         names = [i.name.lower().strip() for i in hdus]
         table = Table(hdus[names.index(hduname)].data)[slc]
         if len(table.colnames):

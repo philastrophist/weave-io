@@ -1,11 +1,13 @@
 import time
+from functools import reduce
 from itertools import product
+from operator import or_
 
 import networkx
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Tuple, Type, Dict
 import pandas as pd
 import re
 
@@ -15,6 +17,7 @@ from tqdm import tqdm
 
 from weaveio.address import Address
 from weaveio.basequery.handler import Handler, defaultdict
+from weaveio.basequery.tree import BranchHandler, TraversalPath
 from weaveio.graph import Graph
 from weaveio.writequery import Unwind
 from weaveio.hierarchy import Multiple, Hierarchy, Indexed
@@ -105,6 +108,7 @@ class Data:
 
     def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False,
                  password=None, user=None):
+        self.branch_handler = BranchHandler()
         self.handler = Handler(self)
         self.host = host
         self.port = port
@@ -119,7 +123,7 @@ class Data:
         for f in self.filetypes:
             self.read_in_filetype(f)
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
-        self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
+        self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
         self.factor_hierarchies = defaultdict(list)
         for h in self.hierarchies:
@@ -134,6 +138,23 @@ class Data:
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
         self.make_relation_graph()
+        self.make_dually_directed_graph()
+
+    def make_dually_directed_graph(self):
+        """
+        Turns a directed graph with one with edges in both directions
+        With an edge of (a)-[number=2, multiple=True]>(b), b has 2 of a, a has <unknown> of b
+        """
+        for a, b in list(self.relation_graph.edges):
+            attrs = self.relation_graph.edges[(a, b)]
+            if attrs.get('belongs_to', False):
+                multiplicity = False
+                number = 1
+            else:
+                multiplicity = True
+                number = None
+            self.relation_graph.add_edge(b, a, multiplicity=multiplicity, number=number, inverted=True)
+
 
     def write(self, collision_manager='track&flag'):
         if self.write_allowed:
@@ -191,12 +212,12 @@ class Data:
                         self.relation_graph.add_node(subclass.singular_name, is_file=is_file, is_hdu=issubclass(subclass, HDU),
                                                      factors=subclass.factors+[subclass.idname],
                                                      idname=subclass.idname)
-                        self.relation_graph.add_edge(subclass.singular_name, h.singular_name,
+                        self.relation_graph.add_edge(subclass.singular_name, h.singular_name, belongs_to=subclass in h.belongs_to,
                                                      multiplicity=multiplicity, number=number,
                                                      label=numberlabel)
                         d.append(subclass)
             for hier in h.produces:
-                self.relation_graph.add_edge(h.singular_name, hier.singular_name,
+                self.relation_graph.add_edge(h.singular_name, hier.singular_name, belongs_to=h in hier.belongs_to,
                                              multiplicity=False, number=1, index=False, name='file',
                                              label='=1')
                 for product_name in hier.products:
@@ -206,7 +227,7 @@ class Data:
                     else:
                          index = False
                     product = h.hdus[product_name]
-                    self.relation_graph.add_edge(product.singular_name, hier.singular_name,
+                    self.relation_graph.add_edge(product.singular_name, hier.singular_name, belongs_to=product in hier.belongs_to,
                                                  multiplicity=False, number=1, index=index, name=product_name,
                                                  label='=1')
 
@@ -214,10 +235,14 @@ class Data:
         return [hierarchy.make_schema() for hierarchy in self.hierarchies]
 
     def apply_constraints(self):
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
         for q in tqdm(self.make_constraints_cypher(), desc='applying constraints'):
             self.graph.neograph.run(q)
 
     def drop_all_constraints(self):
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
         self.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
 
     def get_extant_files(self):
@@ -231,7 +256,7 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
-    def read_file(self, *paths: Path, collision_manager='ignore', batch_size=None) -> pd.DataFrame:
+    def read_files(self, *paths: Union[Path, str], collision_manager='ignore', batch_size=None, halt_on_error=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -239,11 +264,11 @@ class Data:
         track&flag will have the same behaviour as ignore but places the overlapping data in its own node for later retrieval.
         :return
             statistics dataframe
-            collisions dataframe
         """
         batches = []
         for path in paths:
-            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir))]
+            path = Path(path)
+            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir), self.graph)]
             if len(matches) > 1:
                 raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
             filetype = matches[0]
@@ -257,30 +282,40 @@ class Data:
         for filetype, fname, slc in bar:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
             with self.write(collision_manager) as query:
-                filetype.read(self.rootdir, fname)
+                filetype.read(self.rootdir, fname, slc)
             cypher, params = query.render_query()
             start = time.time()
             try:
                 results = self.graph.execute(cypher, **params)
             except py2neo.database.work.ClientError as e:
                 logging.exception('ClientError:', exc_info=True)
-                raise e
+                if halt_on_error:
+                    raise e
+                print(e)
             stats.append(results.stats())
             timestamps.append(results.evaluate())
             elapsed_times.append(time.time() - start)
         df = pd.DataFrame(stats)
-        df['timestamps'] = timestamps
-        _, df['fname'], slcs = zip(*batches)
-        df['batch_start'], df['batch_end'] = zip(*slcs)
-        return df
+        df['timestamp'] = timestamps
+        df['elapsed_time'] = elapsed_times
+        if len(batches):
+            _, df['fname'], slcs = zip(*batches)
+            df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
+        else:
+            df['fname'], df['batch_start'], df['batch_end'] = [], [], []
+        return df.set_index(['fname', 'batch_start', 'batch_end'])
 
-    def directory_to_neo4j(self, filetype_names, collision_manager='ignore'):
+    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False):
         filelist = []
-        extant_fnames = self.get_extant_files()
-        print(f'Skipping {len(extant_fnames)} files')
-        for filetype in self.filetypes:
-            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if i not in extant_fnames]
-        return self.read_file(*filelist, collision_manager=collision_manager)
+        extant_fnames = self.get_extant_files() if skip_extant_files else []
+        print(f'Skipping {len(extant_fnames)} extant files (use skip_extant_files=False to go over them again)')
+        if len(filetype_names) == 0:
+            filetypes = self.filetypes
+        else:
+            filetypes = [f for f in self.filetypes if f.singular_name in filetype_names]
+        for filetype in filetypes:
+            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if str(i.relative_to(self.rootdir)) not in extant_fnames]
+        return self.read_files(*filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
@@ -352,43 +387,26 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def node_implies_plurality_of(self, start_node, implication_node):
-        start_factor, implication_factor = None, None
-        if start_node in self.singular_factors or start_node in self.singular_idnames:
-            start_factor = start_node
-            start_nodes = [n for n, data in self.relation_graph.nodes(data=True) if start_node in data['factors']]
-        else:
-            start_nodes = [start_node]
-        if implication_node in self.singular_factors or implication_node in self.singular_idnames:
-            implication_factor = implication_node
-            implication_nodes = [n for n, data in self.relation_graph.nodes(data=True) if implication_node in data['factors']]
-        else:
-            implication_nodes = [implication_node]
-        paths = []
-        for start, implication in product(start_nodes, implication_nodes):
-            if nx.has_path(self.relation_graph, start, implication):
-                paths.append((nx.shortest_path(self.relation_graph, start, implication), 'below'))
-            elif nx.has_path(self.relation_graph, implication, start):
-                paths.append((nx.shortest_path(self.relation_graph, implication, start)[::-1], 'above'))
-        paths.sort(key=lambda x: len(x[0]))
-        if not len(paths):
-            raise networkx.exception.NodeNotFound(f'{start_node} or {implication_node} not found')
-        path, direction = paths[0]
-        if len(path) == 1:
-            return False, 'above', path, 1
-        if direction == 'below':
-            if self.relation_graph.nodes[path[-1]]['is_file']:
-                multiplicity = False
-            else:
-                multiplicity = True
-        else:
-            multiplicity = any(self.relation_graph.edges[(n2, n1)]['multiplicity'] for n1, n2 in zip(path[:-1], path[1:]))
-        numbers = [self.relation_graph.edges[(n2, n1)]['number'] for n1, n2 in zip(path[:-1], path[1:])]
-        if any(n is None for n in numbers):
-            number = None
-        else:
-            number = int(np.product(numbers))
-        return multiplicity, direction, path, number
+    def node_implies_plurality_of(self, a: str, b: str) -> Tuple[bool, TraversalPath, int, Type[Hierarchy]]:
+        """
+        returns: multiplicity, number, path
+        """
+        graph = self.relation_graph
+        path = nx.shortest_path(graph, a, b)
+        edges = [(x, y) for x, y in zip(path[:-1], path[1:])]
+        multiplicity = [graph.edges[e]['multiplicity'] for e in edges]
+        number = [graph.edges[e]['number'] for e in edges]
+        direction = ['<-' if graph.edges[e].get('inverted', False) else '->' for e in edges]
+        total_multiplicity = reduce(or_, multiplicity)
+        total_number = sum(np.inf if i is None else i for i in number)
+        if total_number == np.inf:
+            total_number = None
+        total_path = []
+        for i, node in enumerate(path[1:]):
+            total_path.append(direction[i])
+            hier = self.singular_hierarchies[node]
+            total_path.append(hier.__name__)
+        return total_multiplicity, total_number, TraversalPath(*total_path), hier
 
     def is_factor_name(self, name):
         try:

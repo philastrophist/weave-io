@@ -1,8 +1,11 @@
 from collections import defaultdict
+from functools import reduce
+from operator import xor
 from textwrap import dedent
 from typing import List, Callable, Union
 
 import re
+from warnings import warn
 
 from ..context import ContextMeta
 
@@ -16,7 +19,7 @@ def camelcase(x):
 class CypherQuery(metaclass=ContextMeta):
     def __init__(self, collision_manager='track&flag'):
         self.data = []
-        self.statements = [TimeStamp()]  # type: List[Statement]
+        self.statements = [TimeStamp()]  # type: List[BaseStatement]
         self.timestamp = self.statements[0].output_variables[0]
         self.open_contexts = [[self.timestamp]]
         self.closed_context = None
@@ -37,10 +40,11 @@ class CypherQuery(metaclass=ContextMeta):
             return self.is_accessible(variable.parent)
         return False
 
-    def add_statement(self, statement):
+    def add_statement(self, statement, safe=True):
         for v in statement.input_variables:
-            if not self.is_accessible(v):
-                raise ValueError(f"{v} is not accessible is this context. Have you left a WITH context?")
+            if safe:
+                if not self.is_accessible(v):
+                    raise ValueError(f"{v} is not accessible is this context. Have you left a WITH context?")
         self.statements.append(statement)
         self.current_context.extend(statement.output_variables)
 
@@ -81,7 +85,9 @@ class CypherQuery(metaclass=ContextMeta):
         if not isinstance(self.statements[-1], Returns):
             self.statements.append(Returns(*args, **kwargs))
         else:
-            raise ValueError(f"Cannot have more than one return")
+            warn(f"Cannot have more than one return, overwriting...")
+        self.statements[-1] = Returns(*args, **kwargs)
+        return self
 
 
 CypherQuery._context_class = CypherQuery
@@ -101,18 +107,32 @@ class Varname:
         return hash(hash(self.key) + hash('varname'))
 
 
-class Statement:
-    """A cypher statement that takes inputs and returns outputs"""
+class BaseStatement:
     def __init__(self, input_variables, output_variables, hidden_variables=None):
         self.input_variables = list(input_variables)
         self.output_variables = list(output_variables)
         if hidden_variables is None:
             hidden_variables = []
         self.hidden_variables = hidden_variables
-        self.timestamp = CypherQuery.get_context().timestamp
 
     def to_cypher(self):
         raise NotImplementedError
+
+    def __eq__(self, other):
+        return set(self.input_variables) == set(other.input_variables) \
+               and set(self.output_variables) == set(other.output_variables) \
+               and set(self.hidden_variables) == set(other.hidden_variables) \
+               and self.__class__ is other.__class__
+
+    def __hash__(self):
+        return reduce(xor, map(hash, [tuple(self.input_variables), tuple(self.output_variables)]))
+
+
+class Statement(BaseStatement):
+    """A cypher statement that takes inputs and returns outputs"""
+    def __init__(self, input_variables, output_variables, hidden_variables=None):
+        super(Statement, self).__init__(input_variables, output_variables, hidden_variables)
+        self.timestamp = CypherQuery.get_context().timestamp
 
 
 class CustomStatement(Statement):
@@ -177,9 +197,9 @@ class CypherVariable:
 
     def get(self, item: Union[str, int], alias=False):
         assert isinstance(item, (int, str))
-        query = CypherQuery.get_context()
         getitem = CypherVariableItem(self, item)
         if alias:
+            query = CypherQuery.get_context()
             if isinstance(item, int):
                 item = f'{self.namehint}_index{item}'
             alias_statement = Alias(getitem, str(item))
@@ -215,11 +235,12 @@ class Collection(CypherVariable):
 
 
 class CypherData(CypherVariable):
-    def __init__(self, data, name='data'):
+    def __init__(self, data, name='data', delay=False):
         super(CypherData, self).__init__(name)
         self.data = data
-        query = CypherQuery.get_context()  # type: CypherQuery
-        query.add_data(self)
+        if not delay:
+            query = CypherQuery.get_context()  # type: CypherQuery
+            query.add_data(self)
 
     def __repr__(self):
         return '$' + super(CypherData, self).__repr__()

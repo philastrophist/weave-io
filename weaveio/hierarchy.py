@@ -200,6 +200,7 @@ class Graphable(metaclass=GraphableMeta):
     hdus = {}
     produces = []
     concatenation_constants = []
+    belongs_to = []
 
     @property
     def node(self):

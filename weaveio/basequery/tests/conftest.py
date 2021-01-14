@@ -31,6 +31,6 @@ def database_one2one(workdir):
     except (AssertionError, WireError):
         pytest.xfail("unsupported configuration of testing database")
     else:
-        data.directory_to_neo4j()
+        data.read_directory()
         data.validate()
         return data

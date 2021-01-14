@@ -1,15 +1,14 @@
 from collections import defaultdict
-from copy import deepcopy
-from typing import List, Union, Any, Type
+from typing import List, Union, Any, Type, Tuple
 
 import py2neo
 
-from .common import FrozenQuery
+from .common import FrozenQuery, AmbiguousPathError
 from .factor import SingleFactorFrozenQuery, ColumnFactorFrozenQuery, RowFactorFrozenQuery, TableFactorFrozenQuery
-from .query import AmbiguousPathError, FullQuery
-from .query_objects import Collection, Path, Condition
+from .tree import Branch, TraversalPath
 from ..hierarchy import Hierarchy, Multiple
 from ..utilities import quote
+from ..writequery import CypherVariable
 
 
 class HierarchyFrozenQuery(FrozenQuery):
@@ -21,6 +20,7 @@ class HierarchyFrozenQuery(FrozenQuery):
 
 
 class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
+    """The start point for building queries"""
     executable = False
 
     def __repr__(self):
@@ -39,10 +39,8 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _get_plural_hierarchy(self, hierarchy_name) -> 'HomogeneousHierarchyFrozenQuery':
         hier = self.data.singular_hierarchies[hierarchy_name]
-        label = hier.__name__
-        start = self.handler.generator.node(label)
-        root = [Path(start)]
-        return HomogeneousHierarchyFrozenQuery(self.handler, FullQuery(root), hier, self)
+        new = self.branch.handler.begin(hier.__name__)
+        return HomogeneousHierarchyFrozenQuery(self.handler, new, hier, new.current_hierarchy, self)
 
     def _get_plural_factor(self, factor_name):
         hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(factor_name)
@@ -50,34 +48,37 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
 
 class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
+    """The template class for hierarchy classes that are not heterogeneous i.e. they have a defined hierarchy type"""
     SingleFactorReturnType = None
 
-    def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], parent: 'FrozenQuery'):
-        super().__init__(handler, query, parent)
-        self._hierarchy = hierarchy
+    def __init__(self, handler, branch: Branch, hierarchy_type: Type[Hierarchy], hierarchy_variable: CypherVariable, parent: 'FrozenQuery'):
+        super().__init__(handler, branch, parent)
+        self.hierarchy_type = hierarchy_type
+        self.hierarchy_variable = hierarchy_variable
 
     def _prepare_query(self):
+        """Add a hierarchy node return statement"""
         query = super(DefiniteHierarchyFrozenQuery, self)._prepare_query()
-        indexer = self.handler.generator.node()
-        query.branches[Path(self.query.current_node, '<-[:INDEXES]-', indexer)].append(indexer)
-        query.returns += [self.query.current_node, indexer]
+        with query:
+            query.returns(self.branch.find_hierarchies()[-1])
         return query
 
     def _process_result_row(self, row, nodetype):
-        node, indexer = row
+        node = row[0]
         inputs = {}
         for f in nodetype.factors:
             inputs[f] = node[f]
         inputs[nodetype.idname] = node[nodetype.idname]
         base_query = getattr(self.handler.begin_with_heterogeneous(), nodetype.plural_name)[node['id']]
         for p in nodetype.parents:
-            if p.singular_name == nodetype.indexer:
-                inputs[p.singular_name] = self._process_result_row([indexer, {}], p)
-            elif isinstance(p, Multiple):
+            if isinstance(p, Multiple):
                 inputs[p.plural_name] = getattr(base_query, p.plural_name)
             else:
-                inputs[p.singular_name] = getattr(base_query, p.singular_name)
-        h = nodetype(**inputs)
+                try:
+                    inputs[p.singular_name] = getattr(base_query, p.singular_name)
+                except AmbiguousPathError:
+                    inputs[p.singular_name] = getattr(base_query, p.plural_name)  # this should not have to be done
+        h = nodetype(**inputs, do_not_create=True)
         h.add_parent_query(base_query)
         return h
 
@@ -87,70 +88,64 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             return []
         results = []
         for row in result:
-            h = self._process_result_row(row, self._hierarchy)
+            h = self._process_result_row(row, self.hierarchy_type)
             results.append(h)
         return results
 
-    def node_implies_plurality_of(self, end):
-        start = self._hierarchy.singular_name.lower()
-        multiplicity, direction, path, number = self.data.node_implies_plurality_of(start, end)
-        path = [self.data.singular_hierarchies[n].__name__ for n in path]
-        if direction == 'above':
-            arrow = '<--'
-        elif direction == 'below':
-            arrow = '-->'
+    def node_implies_plurality_of(self, end: str) -> Tuple[bool, TraversalPath, int, Type[Hierarchy]]:
+        if end in self.data.singular_factors or end in self.data.singular_idnames:
+            hier_name = self.handler.hierarchy_of_factor(end)[0]
+        elif end in self.data.plural_factors or end in self.data.plural_idnames:
+            hier_name = self.handler.hierarchy_of_factor(self.data.singular_name(end))[0]
         else:
-            raise ValueError(f"direction {direction} not known")
-        nodes = self.handler.generator.nodes(*path[1:])
-        node_path = [self.query.current_node]
-        for node in nodes:
-            node_path += [arrow, node]
-        path = Path(*node_path)
-        return multiplicity, path, number
+            hier_name = end
+        start = self.hierarchy_type.singular_name.lower()
+        if start == hier_name:
+            return False, None, 1, self.hierarchy_type
+        multiplicity, number, path, hier = self.data.node_implies_plurality_of(start, hier_name)
+        return multiplicity, path, number, hier
 
     def _get_plural_hierarchy(self, name):
-        query = deepcopy(self.query)
-        multiplicity, path, number = self.node_implies_plurality_of(name)
+        multiplicity, path, number, hier = self.node_implies_plurality_of(name)
         # dont check for multiplicity here, since plural is requested anyway
-        query.matches.append(path)
-        h = self.handler.data.singular_hierarchies[name]
-        return HomogeneousHierarchyFrozenQuery(self.handler, query, h, self)
+        new = self.branch.traverse(path)
+        return HomogeneousHierarchyFrozenQuery(self.handler, new, hier, new.current_hierarchy, self)
 
-    def _get_factor_query(self, *names):
-        query = deepcopy(self.query)
+    def _get_factor_query(self, *names) -> Tuple[Branch, List[CypherVariable], List[bool], List[int]]:
         multiplicities = []
         numbers = []
+        factor_variables = []
+        branch = self.branch
         for name in names:
-            is_singular_name = self.data.is_singular_name(name)
-            hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(name, self._hierarchy)
+            hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(name, self.hierarchy_type)
             friendly_name = '_'.join(name.split('.'))
-            if hierarchy_name == self._hierarchy.name:
-                if not (singular_name in self._hierarchy.factors or singular_name == self._hierarchy.idname):
-                    raise KeyError(f"{self} does not have factor {singular_name}")
-                prop = query.current_node.__getattr__(singular_name)
-                prop.alias = friendly_name
+            if hierarchy_name != self.hierarchy_type.singular_name:  # if it refers to another hierarchy
+                multiplicity, path, number, _ = self.node_implies_plurality_of(hierarchy_name)
+                branch = branch.traverse(path)
+            else:
                 multiplicity = False
                 number = 1
-                if not is_singular_name:
-                    prop = Collection(prop, friendly_name)
+                if not (singular_name in self.hierarchy_type.factors or singular_name == self.hierarchy_type.idname):
+                    raise KeyError(f"{self} does not have factor {singular_name}")
+            operated = branch.operate('{h}.' + f'{singular_name} as {friendly_name}', h=self.hierarchy_variable)
+            if multiplicity:
+                new = branch.collect([], [operated])  # collapse back to the original level
+                factor_variable = new.action.transformed_variables[operated.current_variables[0]]
             else:
-                multiplicity, path, number = self.node_implies_plurality_of(hierarchy_name)
-                prop = path.nodes[-1].__getattr__(singular_name)
-                if not is_singular_name:
-                    prop = Collection(prop, friendly_name)
-                query.branches[path].append(prop)
-            query.returns.append(prop)
+                new = operated
+                factor_variable = new.current_variables[0]
             multiplicities.append(multiplicity)
             numbers.append(number)
-        return query, multiplicities, numbers
+            factor_variables.append(factor_variable)
+        return branch, factor_variables, multiplicities, numbers
 
     def _get_plural_factor(self, name):
         singular_name = self.data.singular_name(name)
-        query, multiplicities, numbers = self._get_factor_query(singular_name)
+        branch, factor_variables, multiplicities, numbers = self._get_factor_query(singular_name)
         if self.data.is_singular_name(name) and multiplicities[0]:
             plural = self.data.plural_name(singular_name)
             raise AmbiguousPathError(f"{self} has multiple {plural}, you need to explicitly pluralise them.")
-        return ColumnFactorFrozenQuery(self.handler, query, [name], numbers, self)
+        return ColumnFactorFrozenQuery(self.handler, branch, [name], factor_variables, numbers, self)
 
     def _get_factor_table_query(self, item):
         """
@@ -174,19 +169,19 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             raise TypeError("item must be of type list, tuple, or str")
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
-        query, multiplicities, numbers = self._get_factor_query(*keys)
+        branch, factor_variables, multiplicities, numbers = self._get_factor_query(*keys)
         expected_multi = [k for m, k in zip(multiplicities, keys) if self.data.is_singular_name(k) and m]
         if expected_multi:
             plurals = [self.data.plural_name(i) for i in expected_multi]
-            raise AmbiguousPathError(f"Each {self._hierarchy} in {self} has multiple `{', '.join(plurals)}`, you need to explicitly pluralise them.")
-        return query, return_keys, numbers
+            raise AmbiguousPathError(f"Each {self.hierarchy_type} in {self} has multiple `{', '.join(plurals)}`, you need to explicitly pluralise them.")
+        return branch, return_keys, factor_variables, numbers
 
     def _get_single_factor_query(self, item):
-        query, multiplicities, numbers = self._get_factor_query(item)
+        branch, factor_variables, multiplicities, numbers = self._get_factor_query(item)
         if multiplicities[0] and self.data.is_singular_name(item):
             plural = self.data.plural_name(item)
-            raise AmbiguousPathError(f"Each `{self._hierarchy.singular_name}` in `{self}` has multiple `{plural}`, you need to explicitly use `{plural}`.")
-        return self.SingleFactorReturnType(self.handler, query, [item], numbers, self)
+            raise AmbiguousPathError(f"Each `{self.hierarchy_type.singular_name}` in `{self}` has multiple `{plural}`, you need to explicitly use `{plural}`.")
+        return self.SingleFactorReturnType(self.handler, branch, [item], factor_variables, numbers, self)
 
     def __getitem__(self, item):
         if isinstance(item, str):
@@ -206,10 +201,11 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
 
 class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
+    """Contains only a single hierarchy type with an identifier"""
     SingleFactorReturnType = SingleFactorFrozenQuery
 
-    def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], identifier: Any, parent: 'FrozenQuery'):
-        super().__init__(handler, query, hierarchy, parent)
+    def __init__(self, handler, branch: Branch, hierarchy_type: Type[Hierarchy], hierarchy_variable: CypherVariable,  identifier: Any, parent: 'FrozenQuery'):
+        super().__init__(handler, branch, hierarchy_type, hierarchy_variable, parent)
         self._identifier = identifier
 
     def __getattr__(self, item):
@@ -217,31 +213,29 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
             return self._get_singular_factor(item)
         return super().__getattr__(item)
 
-    def _get_factor_table_query(self, item):
-        query, headers, numbers =  super()._get_factor_table_query(item)
-        return RowFactorFrozenQuery(self.handler, query, item, numbers, headers, self)
+    def _get_factor_table_query(self, keys):
+        branch, return_keys, factor_variables, numbers = super()._get_factor_table_query(keys)
+        return RowFactorFrozenQuery(self.handler, branch, keys, factor_variables, numbers, return_keys, self)
 
     def __repr__(self):
         if self._identifier is None:
-            return f'{self.parent}.{self._hierarchy.singular_name}'
+            return f'{self.parent}.{self.hierarchy_type.singular_name}'
         return f'{self.parent}[{quote(self._identifier)}]'
 
     def _get_singular_hierarchy(self, name):
-        query = deepcopy(self.query)
-        multiplicity, path, number = self.node_implies_plurality_of(name)
+        multiplicity, path, number, hier = self.node_implies_plurality_of(name)
         if multiplicity:
             plural = self.data.plural_name(name)
             raise AmbiguousPathError(f"You have requested a single {name} but {self} has multiple {plural}. Use .{plural}")
-        query.matches.append(path)
-        h = self.handler.data.singular_hierarchies[name]
-        return SingleHierarchyFrozenQuery(self.handler, query, h, None, self)
+        branch = self.branch.traverse(path)
+        return SingleHierarchyFrozenQuery(self.handler, branch, hier, branch.current_hierarchy, None, self)
 
     def _get_singular_factor(self, name):
-        query, multiplicities, numbers = self._get_factor_query(name)
+        branch, factor_variables, multiplicities, numbers = self._get_factor_query(name)
         if multiplicities[0]:
             plural = self.data.plural_name(name)
             raise AmbiguousPathError(f"{self} has multiple {name}s. Use {plural} instead")
-        return SingleFactorFrozenQuery(self.handler, query, name, numbers, self)
+        return SingleFactorFrozenQuery(self.handler, branch, name, factor_variables, numbers, self)
 
     def _post_process(self, result: py2neo.Cursor):
         rows = super()._post_process(result)
@@ -249,25 +243,26 @@ class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
             idents = defaultdict(list)
             for frozen in self._traverse_frozenquery_stages():
                 if isinstance(frozen, SingleHierarchyFrozenQuery):
-                    idents[frozen._hierarchy.idname].append(frozen._identifier)
+                    idents[frozen.hierarchy_type.idname].append(frozen._identifier)
                 elif isinstance(frozen, IdentifiedHomogeneousHierarchyFrozenQuery):
-                    idents[frozen._hierarchy.idname] += frozen._identifiers
+                    idents[frozen.hierarchy_type.idname] += frozen._identifiers
             if idents:
-                d = {k: [i for i in v if i is not None] for k,v in idents.items()}
+                d = {k: [i for i in v if i is not None] for k, v in idents.items()}
                 d = {k: v for k, v in d.items() if len(v)}
                 raise KeyError(f"One or more identifiers in {d} are not present in the database")
         return rows[0]
 
 
 class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
+    """A list of hierarchies of the same type that are not identified"""
     SingleFactorReturnType = ColumnFactorFrozenQuery
 
     def __repr__(self):
-        return f'{self.parent}.{self._hierarchy.plural_name}'
+        return f'{self.parent}.{self.hierarchy_type.plural_name}'
 
     def _get_factor_table_query(self, item):
-        query, headers, numbers =  super()._get_factor_table_query(item)
-        return TableFactorFrozenQuery(self.handler, query, item, numbers, headers, self)
+        branch, return_keys, factor_variables, numbers = super()._get_factor_table_query(item)
+        return TableFactorFrozenQuery(self.handler, branch, item, factor_variables, numbers, return_keys, self)
 
     def __getitem__(self, item):
         """
@@ -287,33 +282,32 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
 
     def __getattr__(self, item):
         if item in self.data.singular_hierarchies:
-            plural = self.data.plural_name(item)
-            raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead")
+            multiplicity, path, number, hier = self.node_implies_plurality_of(item)
+            if multiplicity:
+                plural = self.data.plural_name(item)
+                raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead")
         if self.data.is_singular_name(item) and self.data.is_factor_name(item):
-            plural = self.data.plural_name(item)
-            raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead.")
+            hierarchy_name, factor_name, singular_name = self.handler.hierarchy_of_factor(item)
+            multiplicity, path, number, hier = self.node_implies_plurality_of(singular_name)
+            if multiplicity:
+                plural = self.data.plural_name(item)
+                raise AmbiguousPathError(f"{self} has multiple {plural}. Use .{plural} instead.")
         return super(HomogeneousHierarchyFrozenQuery, self).__getattr__(item)
 
-    def _filter_by_identifiers(self, identifiers: List[Union[str,int,float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
-        query = deepcopy(self.query)
-        ids = self.handler.generator.data(identifiers)
-        query.matches.insert(-1, ids)  # give the query the data before the last match
-        condition = Condition(query.current_node.id, '=', ids)
-        if query.conditions is not None:
-            query.conditions = query.conditions & condition
-        else:
-            query.conditions = condition
-        return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifiers, self)
+    def _filter_by_identifiers(self, identifiers: List[Union[str, int, float]]) -> 'IdentifiedHomogeneousHierarchyFrozenQuery':
+        idname = self.hierarchy_type.idname
+        new = self.branch.add_data(identifiers)
+        identifiers_var = new.current_variables[0]
+        branch = new.filter('{h}.' + idname + ' in {identifiers}', h=self.hierarchy_variable, identifiers=identifiers_var)
+        return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, branch, self.hierarchy_type, self.hierarchy_variable, identifiers, self)
 
-    def _filter_by_identifier(self, identifier: Union[str,int,float]):
-        query = deepcopy(self.query)
-        condition = Condition(query.current_node.id, '=', identifier)
-        if query.conditions is not None:
-            query.conditions = query.conditions & condition
-        else:
-            query.conditions = condition
+    def _filter_by_identifier(self, identifier: Union[str, int, float]):
+        idname = self.hierarchy_type.idname
+        new = self.branch.add_data(identifier)
+        identifier_var = new.current_variables[0]
+        branch = new.filter('{h}.' + idname + ' = {identifier}', h=self.hierarchy_variable, identifier=identifier_var)
         if isinstance(self.parent, (HeterogeneousHierarchyFrozenQuery, SingleHierarchyFrozenQuery)):
-            return SingleHierarchyFrozenQuery(self.handler, query, self._hierarchy, identifier, self)
+            return SingleHierarchyFrozenQuery(self.handler, branch, self.hierarchy_type, self.hierarchy_variable, identifier, self)
         else:
             raise AmbiguousPathError(f"`{self.parent}` is plural, to identify `{self}` by id, you must use "
                                      f"`{self}[[{quote(identifier)}]]` instead of "
@@ -326,17 +320,17 @@ class IdentifiedHomogeneousHierarchyFrozenQuery(HomogeneousHierarchyFrozenQuery)
     If an id appears more than once, it will be duplicated appropriately
     The list is ordered by id input order
     """
-    def __init__(self, handler, query: FullQuery, hierarchy: Type[Hierarchy], identifiers: List[Any], parent: 'FrozenQuery'):
-        super().__init__(handler, query, hierarchy, parent)
+    def __init__(self, handler, branch: Branch, hierarchy_type: Type[Hierarchy], hierarchy_variable: CypherVariable, identifiers: List[Any], parent: 'FrozenQuery'):
+        super().__init__(handler, branch, hierarchy_type, hierarchy_variable, parent)
         self._identifiers = identifiers
 
     def __repr__(self):
-        return f'{self.parent}.{self._hierarchy.plural_name}[{self._identifiers}]'
+        return f'{self.parent}.{self.hierarchy_type.plural_name}[{self._identifiers}]'
 
     def _post_process(self, result: py2neo.Cursor):
         r = super(IdentifiedHomogeneousHierarchyFrozenQuery, self)._post_process(result)
         ids = set(i.identifier for i in r)
         missing = [i for i in self._identifiers if i not in ids]
         if any(missing):
-            raise KeyError(f"{self._hierarchy.idname} {missing} not found")
+            raise KeyError(f"{self.hierarchy_type.idname} {missing} not found")
         return r
