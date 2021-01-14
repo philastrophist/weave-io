@@ -285,14 +285,14 @@ class HomogeneousHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
         idname = self.hierarchy_type.idname
         new = self.branch.add_data(identifiers)
         identifiers_var = new.current_variables[0]
-        branch = self.branch.filter('{h}.' + idname + ' in {identifiers}', h=self.hierarchy_variable, identifiers=identifiers_var)
+        branch = new.filter('{h}.' + idname + ' in {identifiers}', h=self.hierarchy_variable, identifiers=identifiers_var)
         return IdentifiedHomogeneousHierarchyFrozenQuery(self.handler, branch, self.hierarchy_type, self.hierarchy_variable, identifiers, self)
 
     def _filter_by_identifier(self, identifier: Union[str, int, float]):
         idname = self.hierarchy_type.idname
         new = self.branch.add_data(identifier)
         identifier_var = new.current_variables[0]
-        branch = self.branch.filter('{h}.' + idname + ' = {identifier}', h=self.hierarchy_variable, identifier=identifier_var)
+        branch = new.filter('{h}.' + idname + ' = {identifier}', h=self.hierarchy_variable, identifier=identifier_var)
         if isinstance(self.parent, (HeterogeneousHierarchyFrozenQuery, SingleHierarchyFrozenQuery)):
             return SingleHierarchyFrozenQuery(self.handler, branch, self.hierarchy_type, self.hierarchy_variable, identifier, self)
         else:
