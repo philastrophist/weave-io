@@ -7,7 +7,7 @@ import networkx
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Tuple, Type, Dict
 import pandas as pd
 import re
 
@@ -123,7 +123,7 @@ class Data:
         for f in self.filetypes:
             self.read_in_filetype(f)
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
-        self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}
+        self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
         self.factor_hierarchies = defaultdict(list)
         for h in self.hierarchies:
@@ -387,7 +387,7 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def node_implies_plurality_of(self, a: str, b: str):
+    def node_implies_plurality_of(self, a: str, b: str) -> Tuple[bool, TraversalPath, int, Type[Hierarchy]]:
         """
         returns: multiplicity, number, path
         """
@@ -404,8 +404,9 @@ class Data:
         total_path = []
         for i, node in enumerate(path[1:]):
             total_path.append(direction[i])
-            total_path.append(node)
-        return total_multiplicity, total_number, TraversalPath(*total_path)
+            hier = self.singular_hierarchies[node]
+            total_path.append(hier.__name__)
+        return total_multiplicity, total_number, TraversalPath(*total_path), hier
 
     def is_factor_name(self, name):
         try:

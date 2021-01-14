@@ -17,7 +17,7 @@ class Handler:
 
     def hierarchy_of_factor(self, factor_name: str, start: Type[Hierarchy] = None) -> Tuple[str, str, str]:
         """
-        returns the singular hierarchy name, factor_name,
+        returns the hierarchy_name, factor_name, singular_name
         """
         namelist = factor_name.split('.')
         hierarchy_names = None
