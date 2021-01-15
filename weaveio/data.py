@@ -397,26 +397,33 @@ class Data:
         """
         returns: multiplicity, number, path
         """
+        # find path going down the hierarchy
         graph = self.relation_graph
         try:
             path = nx.shortest_path(graph, a, b)
-            edges = [(x, y) for x, y in zip(path[:-1], path[1:])]
-            multiplicity = [True for e in edges]
-            number = [None for e in edges]
             reversed = False
         except nx.NetworkXNoPath:
-            path = nx.shortest_path(graph, b, a)[::-1]
-            edges = [(y, x) for x, y in zip(path[:-1], path[1:])]
-            multiplicity = [graph.edges[e]['multiplicity'] for e in edges]
-            number = [graph.edges[e]['number'] for e in edges]
+            path = nx.shortest_path(graph, b, a)
             reversed = True
-        direction = ['<-' if reversed else '->' for e in edges]
+        # work along the path from the bottom up, collecting multiplicity
+        travel_path = path[::-1] if reversed else path
+        multiplicity = []
+        number = []
+        for x, y in zip(travel_path[:-1], travel_path[1:]):
+            try:
+                edge = graph.edges[(y, x)]
+                multiplicity.append(edge['multiplicity'])
+                number.append(edge['number'])
+            except KeyError:
+                multiplicity.append(True)
+                number.append(None)
+        direction = ['<-' if reversed else '->' for _ in multiplicity]
         total_multiplicity = reduce(or_, multiplicity)
         total_number = np.product([np.inf if n is None else n for n in number])
         if total_number == np.inf:
             total_number = None
         total_path = []
-        for i, node in enumerate(path[1:]):
+        for i, node in enumerate(travel_path[1:]):
             total_path.append(direction[i])
             hier = self.singular_hierarchies[node]
             total_path.append(hier.__name__)
