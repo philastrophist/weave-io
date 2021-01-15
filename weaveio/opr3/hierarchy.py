@@ -134,6 +134,7 @@ class OB(Hierarchy):
     idname = 'obid'  # This is globally unique by obid
     factors = ['obstartmjd']
     parents = [OBSpec]
+    # belongs_to = [OBSpec]
 
 
 class Exposure(Hierarchy):

@@ -65,6 +65,7 @@ class TraversalPath:
         self.steps = []
         self.path = []
         self.end = CypherVariable(str(path[-1]))
+        self.repr_path = ''.join(path)
         for i, entry in enumerate(path[:-1]):
             if not i % 2:  # even number
                 step = Step(entry)
@@ -77,6 +78,9 @@ class TraversalPath:
     def __str__(self):
         end = f'({self.end}:{self.end.namehint})'
         return ''.join(map(str, self.path)) + end
+
+    def __repr__(self):
+        return f'<TraversalPath({str(self.repr_path)})>'
 
     def __eq__(self, other):
         if self.__class__ != other.__class__:

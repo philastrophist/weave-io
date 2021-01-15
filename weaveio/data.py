@@ -138,22 +138,28 @@ class Data:
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
         self.make_relation_graph()
-        self.make_dually_directed_graph()
+        # self.make_path_finder()
 
-    def make_dually_directed_graph(self):
+    def make_path_finder(self):
         """
         Turns a directed graph with one with edges in both directions
         With an edge of (a)-[number=2, multiple=True]>(b), b has 2 of a, a has <unknown> of b
         """
-        for a, b in list(self.relation_graph.edges):
-            attrs = self.relation_graph.edges[(a, b)]
+        # reversed because you should travel against the arrows to read the number
+        self.path_finder = self.relation_graph.reverse(copy=True)
+        for a, b in list(self.path_finder.edges):
+            attrs = self.path_finder.edges[(a, b)]
             if attrs.get('belongs_to', False):
                 multiplicity = False
                 number = 1
             else:
                 multiplicity = True
                 number = None
-            self.relation_graph.add_edge(b, a, multiplicity=multiplicity, number=number, inverted=True)
+            self.path_finder.edges[(a, b)]['inverted'] = False
+            self.path_finder.add_edge(b, a, multiplicity=multiplicity, number=number, inverted=True)
+        for n in self.path_finder.edges:
+            value = self.path_finder.edges[n]['number']
+            self.path_finder.edges[n]['number'] = np.inf if value is None else value
 
 
     def write(self, collision_manager='track&flag'):
@@ -392,13 +398,21 @@ class Data:
         returns: multiplicity, number, path
         """
         graph = self.relation_graph
-        path = nx.shortest_path(graph, a, b)
-        edges = [(x, y) for x, y in zip(path[:-1], path[1:])]
-        multiplicity = [graph.edges[e]['multiplicity'] for e in edges]
-        number = [graph.edges[e]['number'] for e in edges]
-        direction = ['<-' if graph.edges[e].get('inverted', False) else '->' for e in edges]
+        try:
+            path = nx.shortest_path(graph, a, b)
+            edges = [(x, y) for x, y in zip(path[:-1], path[1:])]
+            multiplicity = [True for e in edges]
+            number = [None for e in edges]
+            reversed = False
+        except nx.NetworkXNoPath:
+            path = nx.shortest_path(graph, b, a)[::-1]
+            edges = [(y, x) for x, y in zip(path[:-1], path[1:])]
+            multiplicity = [graph.edges[e]['multiplicity'] for e in edges]
+            number = [graph.edges[e]['number'] for e in edges]
+            reversed = True
+        direction = ['<-' if reversed else '->' for e in edges]
         total_multiplicity = reduce(or_, multiplicity)
-        total_number = sum(np.inf if i is None else i for i in number)
+        total_number = np.product([np.inf if n is None else n for n in number])
         if total_number == np.inf:
             total_number = None
         total_path = []
