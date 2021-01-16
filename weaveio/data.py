@@ -88,6 +88,9 @@ def find_children_of(parent):
     return children
 
 
+class IndirectAccessError(Exception):
+    pass
+
 
 class Data:
     filetypes = []
@@ -400,11 +403,22 @@ class Data:
         # find path going down the hierarchy
         graph = self.relation_graph
         try:
-            path = nx.shortest_path(graph, a, b)
-            reversed = False
+            try:
+                reversed = False
+                path = nx.shortest_path(graph, a, b)
+            except nx.NetworkXNoPath:
+                reversed = True
+                path = nx.shortest_path(graph, b, a)
         except nx.NetworkXNoPath:
-            path = nx.shortest_path(graph, b, a)
-            reversed = True
+            paths = nx.shortest_simple_paths(graph.to_undirected(as_view=True), a, b)
+            for path in paths:
+                if not any(graph.predecessors(n) == 0 for n in path):
+                    shared = f"Try going via a shared node like {path}"
+                    break
+            else:
+                shared = ''
+            raise IndirectAccessError(f"There is no unambiguous path between {a} and {b}.\n"
+                                      f"This may be because the phrase '{b} has {self.plural_name(a)}' does not make sense.\n" + shared)
         # work along the path from the bottom up, collecting multiplicity
         travel_path = path[::-1] if reversed else path
         multiplicity = []
