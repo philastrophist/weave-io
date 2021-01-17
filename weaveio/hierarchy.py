@@ -76,6 +76,14 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
 
+class One2One(Multiple):
+    def __init__(self, node, constrain=None, idname=None):
+        super(One2One, self).__init__(node, 1, 1, constrain, idname)
+
+    def __repr__(self):
+        return f"<One2One({self.node})>"
+
+
 class Indexed:
     def __init__(self, hdu_name, column_name=None):
         self.name = hdu_name
@@ -161,7 +169,7 @@ class GraphableMeta(type):
                 if hdu is not None:
                     typename = name+hduname[0].upper()+hduname[1:]
                     typename = typename.replace('_', '')
-                    hduclass = type(typename, (hdu, ), {'parents': [cls], 'identifier_builder': [cls.singular_name, 'extn']})
+                    hduclass = type(typename, (hdu, ), {'parents': [One2One(cls)], 'identifier_builder': [cls.plural_name, 'extn']})
                     hduclasses[hduname] = hduclass
                     if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
                         raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")

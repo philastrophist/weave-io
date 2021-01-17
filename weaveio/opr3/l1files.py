@@ -6,7 +6,7 @@ from astropy.table import Table as AstropyTable
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, BinaryHDU
-from weaveio.hierarchy import unwind, collect, Multiple
+from weaveio.hierarchy import unwind, collect, Multiple, One2One
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
     OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU
@@ -104,7 +104,8 @@ class HeaderFibinfoFile(File):
 class RawFile(HeaderFibinfoFile):
     match_pattern = 'r*.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': SpectralBlockHDU, 'counts2': SpectralBlockHDU, 'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
-    produces = [RawSpectrum, Observation]
+    parents = [CASU]
+    produces = [One2One(Observation)]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -131,8 +132,9 @@ class L1File(HeaderFibinfoFile):
 
 class L1SingleFile(L1File):
     match_pattern = 'single_*.fit'
-    parents = [RawFile]
+    parents = [One2One(RawFile), CASU]
     produces = [L1SingleSpectrum]
+    version_on = ['rawfiles']
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -242,6 +244,7 @@ class L1SuperStackFile(L1StackedBaseFile):
 
 class L1SuperTargetFile(L1StackedBaseFile):
     match_pattern = 'WVE_*.fit'
+    parents = [WeaveTarget, Multiple(L1SingleFile, 2), CASU]
     produces = [L1SuperTargetSpectrum]
     recommended_batchsize = None
 

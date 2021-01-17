@@ -7,17 +7,10 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect
-from weaveio.opr3.hierarchy import ClassificationTable, GalaxyTable, GalaxySpectrum, ClassificationSpectrum, APS, L1SpectrumRow, FibreTarget, L2_FTYPES, L2_DTYPES, OB, OBSpec
-from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile
+from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable
+from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile
 from weaveio.writequery import CypherData
 
-
-# make new types based on stack level and type of data
-L2_TYPES = {}
-for ftype in L2_FTYPES:
-    for dtype in L2_DTYPES:
-        name = ftype.__name__.replace('L2', '') + dtype.__name__
-        L2_TYPES[name] = type(name, (ftype, dtype), {'is_template': False})
 
 
 class MissingDataError(Exception):
@@ -39,7 +32,7 @@ class L2File(File):
     is_template = True
     match_pattern = '*aps.fits'
     produces = [ClassificationTable, GalaxyTable]#, ClassificationSpectrum, GalaxySpectrum]
-    corresponding_hdus = ['class_table', 'galaxy_table']#, 'class_spectra', 'galaxy_spectra']
+    # corresponding_hdus = ['class_table', 'galaxy_table']#, 'class_spectra', 'galaxy_spectra']
     parents = [Multiple(L1File, 2, 3)]
     hdus = {'primary': PrimaryHDU, 'fibtable': TableHDU,
             'class_spectra': TableHDU,
@@ -153,10 +146,14 @@ class L2File(File):
         return l2rows
 
 
-class StackL2File(L2File):
-    produces = [L2_TYPES['StackClassificationTable'], L2_TYPES['StackGalaxyTable']]#,
-                #L2_TYPES['StackClassificationSpectrum'], L2_TYPES['StackGalaxySpectrum']]
-    corresponding_hdus = ['class_table', 'galaxy_table',]# 'class_spectra', 'galaxy_spectra']
+class L2SingleFile(L2File):
+    produces = [L2Single]
+    parents = [Multiple(L1SingleFile, 2, 3)]
+
+
+class L2StackFile(L2File):
+    produces = [L2Stack]
+    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3)]
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -176,10 +173,9 @@ class StackL2File(L2File):
         return {'ob': OB.find(obid=header['OBID'])}
 
 
-class SuperStackL2File(L2File):
-    produces = [L2_TYPES['SuperStackClassificationTable'], L2_TYPES['SuperStackGalaxyTable']]#,
-                #L2_TYPES['SuperStackClassificationSpectrum'], L2_TYPES['SuperStackGalaxySpectrum']]
-    corresponding_hdus = ['class_table', 'galaxy_table',]# 'class_spectra', 'galaxy_spectra']
+class L2SuperStackFile(L2File):
+    produces = [L2SuperStack]
+    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3)]
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -200,3 +196,8 @@ class SuperStackL2File(L2File):
     def find_shared_hierarchy(cls, path) -> Dict:
         header = cls.read_header(path)
         return {'obspec': OBSpec.find(xml=str(header['cat-name']))}
+
+
+class L2SuperTargetFile(L2File):
+    produces = [L2SuperTarget]
+    parents = [Multiple(L1SuperStackFile, 2, 3)]

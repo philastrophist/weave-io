@@ -3,9 +3,7 @@ from pathlib import Path
 import os
 
 from weaveio.config_tables import progtemp_config
-from weaveio.file import File
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed
-
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One
 
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -118,7 +116,7 @@ class ProgTemp(Hierarchy):
 
 class OBSpec(Hierarchy):
     factors = ['obtitle']
-    parents = [ObsTemp, ProgTemp]
+    parents = [ObsTemp, ProgTemp, Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
@@ -127,14 +125,13 @@ class FibreTarget(Hierarchy):
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
     parents = [OBSpec, Fibre, SurveyTarget]
     identifier_builder = ['obspec', 'fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-    # belongs_to = [OBSpec]
+    belongs_to = ['obspec']
 
 
 class OB(Hierarchy):
     idname = 'obid'  # This is globally unique by obid
     factors = ['obstartmjd']
     parents = [OBSpec]
-    # belongs_to = [OBSpec]
 
 
 class Exposure(Hierarchy):
@@ -148,11 +145,11 @@ class Run(Hierarchy):
 
 
 class Observation(Hierarchy):
-    parents = [Run, CASU, Simulator, System]
+    parents = [One2One(Run), CASU, Simulator, System]
     factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
     products = ['primary', 'guidinfo', 'metinfo']
-    identifier_builder = ['run', 'mjdobs']
-    version_on = ['run']
+    identifier_builder = ['runs', 'mjdobs']
+    version_on = ['runs']
 
     @classmethod
     def from_header(cls, run, header):
@@ -177,11 +174,11 @@ class Spectrum(SourcedData):
 
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
-    parents = [Observation, CASU]
+    parents = [One2One(Observation), CASU]
     factors = ['sourcefile']
     identifier_builder = ['sourcefile']
     products = ['counts1', 'counts2']
-    version_on = ['observation']
+    version_on = ['observations']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
 
@@ -232,34 +229,43 @@ class L1SuperTargetSpectrum(L1SpectrumRow):
 
 class L2(SourcedData):
     is_template = True
-    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS]
-    version_on = ['l1spectrumrows']
 
 
-class StackL2(L2):
+class L2Single(L2):
+    parents = [Multiple(L1SingleSpectrum, 2, 3), FibreTarget, APS, Exposure]
+    version_on = ['l1singlespectra']
+
+
+class L2Stack(L2):
+    parents = [Multiple(L1StackSpectrum, 0, 3), Multiple(L1SingleSpectrum, 0, 3), FibreTarget, APS, OB]
+    version_on = ['l1singlespectra', 'l1stackspectra']
+
+
+class L2SuperStack(L2):
+    parents = [Multiple(L1SuperStackSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), Multiple(L1SingleSpectrum, 0, 3), FibreTarget, APS, OBSpec]
+    version_on = ['l1singlespectra', 'l1stackspectra', 'l1superstackspectra']
+
+
+class L2SuperTarget(L2):
+    parents = [Multiple(L1SuperTargetSpectrum, 2, 3), APS, WeaveTarget]
+    version_on = ['l1supertargetspectra']
+
+
+class L2SourcedData(SourcedData):
     is_template = True
-    parents = L2.parents + [OB]
+    parents = [One2One(L2)]
 
 
-class SuperStackL2(L2):
-    is_template = True
-    parents = L2.parents + [OBSpec]
-
-
-L2_FTYPES = [StackL2, SuperStackL2]
-
-
-class L2TableRow(L2):
+class L2TableRow(L2SourcedData):
     is_template = True
 
 
-class L2Spectrum(Spectrum, L2):
+class L2Spectrum(L2SourcedData):
     is_template = True
     plural_name = 'l2spectra'
 
 
 class ClassificationTable(L2TableRow):
-    is_template = True
     factors = L2TableRow.factors + ['class', 'subclass', 'z', 'z_err', 'auto_class_alls',
                                     'auto_subclass_alls', 'z_alls', 'z_err_alls', 'rchi2diff',
                                     'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
@@ -270,26 +276,18 @@ class ClassificationTable(L2TableRow):
 
 
 class GalaxyTable(L2TableRow):
-    is_template = True
     with open(HERE / 'galaxy_table_columns.txt', 'r') as _f:
         factors = L2TableRow.factors + [x.lower().strip() for x in _f.readlines() if len(x)]
 
 
 class ClassificationSpectrum(L2Spectrum):
     plural_name = 'classification_spectra'
-    is_template = True
     products = [Indexed('class_spectra', 'flux'), Indexed('class_spectra', 'ivar'), Indexed('class_spectra', 'model'),
                 Indexed('class_spectra', 'lambda')]
 
 
 class GalaxySpectrum(L2Spectrum):
     plural_name = 'galaxy_spectra'
-    is_template = True
     products = [Indexed('galaxy_spectra', 'flux'), Indexed('galaxy_spectra', 'ivar'),
                 Indexed('galaxy_spectra', 'model_ab'), Indexed('galaxy_spectra', 'model_em'),
                 Indexed('galaxy_spectra', 'lambda')]
-
-
-L2_DTYPES = [ClassificationTable, GalaxyTable, ClassificationSpectrum, GalaxySpectrum]
-
-

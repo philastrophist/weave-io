@@ -75,6 +75,9 @@ class TraversalPath:
                 self.nodes.append(str(entry))
                 self.path.append(f'(:{entry})')
 
+    def __len__(self):
+        return len(self.nodes) + 1
+
     def __str__(self):
         end = f'({self.end}:{self.end.namehint})'
         return ''.join(map(str, self.path)) + end
