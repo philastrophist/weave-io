@@ -128,7 +128,9 @@ class GraphableMeta(type):
         nparents_in_id = 0
         parentnames = {}
         for i in cls.parents:
-            if isinstance(i, Multiple):
+            if isinstance(i, One2One):
+                parentnames[i.singular_name] = (1, 1)
+            elif isinstance(i, Multiple):
                 parentnames[i.plural_name] = (i.minnumber, i.maxnumber)
             else:
                 parentnames[i.singular_name] = (1, 1)
@@ -148,7 +150,8 @@ class GraphableMeta(type):
         version_parents = []
         version_factors = []
         for i in cls.version_on:
-            if i in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
+            parents = [p.node if isinstance(p, One2One) else p for p in cls.parents]
+            if i in [p.singular_name if isinstance(p, type) else p.name for p in parents]:
                 version_parents.append(i)
             elif i in cls.factors:
                 version_factors.append(i)
@@ -167,17 +170,18 @@ class GraphableMeta(type):
             hduclasses = {}
             for i, (hduname, hdu) in enumerate(cls.hdus.items()):
                 if hdu is not None:
-                    typename = name+hduname[0].upper()+hduname[1:]
-                    typename = typename.replace('_', '')
-                    hduclass = type(typename, (hdu, ), {'parents': [One2One(cls)], 'identifier_builder': [cls.plural_name, 'extn']})
-                    hduclasses[hduname] = hduclass
+                    # typename = name+hduname[0].upper()+hduname[1:]
+                    # typename = typename.replace('_', '')
+                    # hduclass = type(typename, (hdu, ), {'parents': [One2One(cls)], 'identifier_builder': [cls.plural_name, 'extn']})
+                    # hduclasses[hduname] = hduclass
                     if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
                         raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")
                     for base in bases:
                         if (hduname in base.factors or hduname in base.parents or hasattr(base, hduname)) and hduname not in base.hdus:
                             raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {base}->{name}")
-                    setattr(cls, hduname, hduclass)  # add as an attribute
-            cls.hdus = hduclasses  # overwrite hdus
+                    # setattr(cls, hduname, hduclass)  # add as an attribute
+                    setattr(cls, hduname, hdu)
+            # cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
@@ -189,7 +193,6 @@ class GraphableMeta(type):
 
 class Graphable(metaclass=GraphableMeta):
     idname = None
-    name = None
     identifier = None
     indexer = None
     type_graph_attrs = {}
@@ -441,14 +444,11 @@ class Hierarchy(Graphable):
     factors = []
     is_template = True
 
-    def __repr__(self):
-        return self.name
-
     def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str]]:
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
-        parents = {p.singular_name if isinstance(p, type) else p.name: p for p in self.parents}
+        parents = {p.singular_name if isinstance(p, (type, One2One)) else p.name: p for p in self.parents}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
@@ -480,7 +480,7 @@ class Hierarchy(Graphable):
             else:
                 value = kwargs.pop(name)
             setattr(self, name, value)
-            if isinstance(nodetype, Multiple):
+            if isinstance(nodetype, Multiple) and not isinstance(nodetype, One2One):
                 if not isinstance(value, (tuple, list)):
                     if isinstance(value, Graphable):
                         if not getattr(value, 'uses_tables', False):
@@ -499,5 +499,4 @@ class Hierarchy(Graphable):
             if not do_not_create and self.identifier is None:
                 raise ValueError(f"Cannot assign an id of None to {self}")
             setattr(self, self.idname, self.identifier)
-        self.name = f"{self.__class__.__name__}({self.idname}={self.identifier})"
         super(Hierarchy, self).__init__(do_not_create, **predecessors)

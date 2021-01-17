@@ -60,7 +60,7 @@ class ObsTemp(Hierarchy):
 
 
 class Survey(Hierarchy):
-    idname = 'surveyname'
+    idname = 'name'
 
 
 class WeaveTarget(Hierarchy):
@@ -73,12 +73,14 @@ class Fibre(Hierarchy):
 
 class SubProgramme(Hierarchy):
     parents = [Multiple(Survey)]
-    idname = 'targprog'
+    factors = ['name']
+    idname = 'progid'
 
 
 class SurveyCatalogue(Hierarchy):
     parents = [SubProgramme]
-    idname = 'targcat'
+    factors = ['name']
+    idname = 'catid'
 
 
 class SurveyTarget(Hierarchy):
@@ -148,8 +150,8 @@ class Observation(Hierarchy):
     parents = [One2One(Run), CASU, Simulator, System]
     factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
     products = ['primary', 'guidinfo', 'metinfo']
-    identifier_builder = ['runs', 'mjdobs']
-    version_on = ['runs']
+    identifier_builder = ['run', 'mjdobs']
+    version_on = ['run']
 
     @classmethod
     def from_header(cls, run, header):
@@ -178,7 +180,7 @@ class RawSpectrum(Spectrum):
     factors = ['sourcefile']
     identifier_builder = ['sourcefile']
     products = ['counts1', 'counts2']
-    version_on = ['observations']
+    version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
 

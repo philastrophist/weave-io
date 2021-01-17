@@ -7,10 +7,9 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect
-from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable
-from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile
+from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget
+from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile
 from weaveio.writequery import CypherData
-
 
 
 class MissingDataError(Exception):
@@ -32,7 +31,7 @@ class L2File(File):
     is_template = True
     match_pattern = '*aps.fits'
     produces = [ClassificationTable, GalaxyTable]#, ClassificationSpectrum, GalaxySpectrum]
-    # corresponding_hdus = ['class_table', 'galaxy_table']#, 'class_spectra', 'galaxy_spectra']
+    corresponding_hdus = ['class_table', 'galaxy_table']#, 'class_spectra', 'galaxy_spectra']
     parents = [Multiple(L1File, 2, 3)]
     hdus = {'primary': PrimaryHDU, 'fibtable': TableHDU,
             'class_spectra': TableHDU,
@@ -148,12 +147,17 @@ class L2File(File):
 
 class L2SingleFile(L2File):
     produces = [L2Single]
-    parents = [Multiple(L1SingleFile, 2, 3)]
+    parents = [Multiple(L1SpectrumRow, 2, 3), Exposure]
+
+    @classmethod
+    def find_shared_hierarchy(cls, path) -> Dict:
+        header = cls.read_header(path)
+        return {'exposure': Exposure.find(obid=header['MJD-OBS'])}
 
 
 class L2StackFile(L2File):
     produces = [L2Stack]
-    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3)]
+    parents = [Multiple(L1SpectrumRow, 2, 3), OB]
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -175,7 +179,7 @@ class L2StackFile(L2File):
 
 class L2SuperStackFile(L2File):
     produces = [L2SuperStack]
-    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3)]
+    parents = [Multiple(L1SpectrumRow, 2, 3), OBSpec]
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -199,5 +203,13 @@ class L2SuperStackFile(L2File):
 
 
 class L2SuperTargetFile(L2File):
+    match_pattern = 'WVE_*aps.fits'
     produces = [L2SuperTarget]
-    parents = [Multiple(L1SuperStackFile, 2, 3)]
+    parents = [Multiple(L1SpectrumRow, 2, 3), WeaveTarget]
+
+    @classmethod
+    def find_shared_hierarchy(cls, path) -> Dict:
+        hdus = fits.open(path)
+        names = [i.name for i in hdus]
+        cname = hdus[names.index('CLASS_TABLE')].data['CNAME'][0]
+        return {'weavetarget': WeaveTarget.find(cname=cname)}

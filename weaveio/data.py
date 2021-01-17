@@ -286,14 +286,14 @@ class Data:
             start = time.time()
             try:
                 results = self.graph.execute(cypher, **params)
+                stats.append(results.stats())
+                timestamps.append(results.evaluate())
+                elapsed_times.append(time.time() - start)
             except py2neo.database.work.ClientError as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:
                     raise e
                 print(e)
-            stats.append(results.stats())
-            timestamps.append(results.evaluate())
-            elapsed_times.append(time.time() - start)
         df = pd.DataFrame(stats)
         df['timestamp'] = timestamps
         df['elapsed_time'] = elapsed_times
@@ -304,14 +304,14 @@ class Data:
             df['fname'], df['batch_start'], df['batch_end'] = [], [], []
         return df.set_index(['fname', 'batch_start', 'batch_end'])
 
-    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False):
+    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
         filelist = []
         extant_fnames = self.get_extant_files() if skip_extant_files else []
         print(f'Skipping {len(extant_fnames)} extant files (use skip_extant_files=False to go over them again)')
         if len(filetype_names) == 0:
             filetypes = self.filetypes
         else:
-            filetypes = [f for f in self.filetypes if f.singular_name in filetype_names]
+            filetypes = [f for f in self.filetypes if f.singular_name in filetype_names or f.plural_name in filetype_names]
         for filetype in filetypes:
             filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if str(i.relative_to(self.rootdir)) not in extant_fnames]
         return self.read_files(*filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
