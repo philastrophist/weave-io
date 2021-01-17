@@ -195,7 +195,6 @@ class L1SingleFile(L1File):
 
 class L1StackedBaseFile(L1File):
     is_template = True
-    recommended_batchsize = 900
 
 
 class L1StackFile(L1StackedBaseFile):

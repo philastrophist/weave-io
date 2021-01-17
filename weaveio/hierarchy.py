@@ -343,7 +343,10 @@ class Graphable(metaclass=GraphableMeta):
         if len(cls.identifier_builder) == 0:
             return False
         for p in cls.parents:
-            if isinstance(p, Multiple):
+            if isinstance(p, One2One):
+                if p.singular_name in cls.identifier_builder:
+                    return False
+            elif isinstance(p, Multiple):
                 if p.plural_name in cls.identifier_builder:
                     return False
             elif p.singular_name in cls.identifier_builder:
@@ -357,7 +360,10 @@ class Graphable(metaclass=GraphableMeta):
         if len(cls.identifier_builder) == 0:
             return False
         for p in cls.parents:
-            if isinstance(p, Multiple):
+            if isinstance(p, One2One):
+                if p.singular_name in cls.identifier_builder:
+                    return True
+            elif isinstance(p, Multiple):
                 if p.plural_name in cls.identifier_builder:
                     return True
             elif p.singular_name in cls.identifier_builder:

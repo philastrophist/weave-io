@@ -294,27 +294,33 @@ class Data:
                 if halt_on_error:
                     raise e
                 print(e)
-        df = pd.DataFrame(stats)
-        df['timestamp'] = timestamps
-        df['elapsed_time'] = elapsed_times
         if len(batches):
+            df = pd.DataFrame(stats)
+            df['timestamp'] = timestamps
+            df['elapsed_time'] = elapsed_times
             _, df['fname'], slcs = zip(*batches)
             df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
         else:
-            df['fname'], df['batch_start'], df['batch_end'] = [], [], []
+            df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
         return df.set_index(['fname', 'batch_start', 'batch_end'])
 
     def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
         filelist = []
-        extant_fnames = self.get_extant_files() if skip_extant_files else []
-        print(f'Skipping {len(extant_fnames)} extant files (use skip_extant_files=False to go over them again)')
         if len(filetype_names) == 0:
             filetypes = self.filetypes
         else:
             filetypes = [f for f in self.filetypes if f.singular_name in filetype_names or f.plural_name in filetype_names]
         for filetype in filetypes:
-            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern) if str(i.relative_to(self.rootdir)) not in extant_fnames]
-        return self.read_files(*filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
+            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern)]
+        if skip_extant_files:
+            extant_fnames = self.get_extant_files() if skip_extant_files else []
+            filtered_filelist = [i for i in filelist if str(i.relative_to(self.rootdir)) not in extant_fnames]
+        else:
+            filtered_filelist = filelist
+        diff = len(filelist) - len(filtered_filelist)
+        if diff:
+            print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
+        return self.read_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
