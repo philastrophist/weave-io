@@ -220,9 +220,7 @@ class Traversal(Action):
 
     def to_cypher(self):
         lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
-        if len(self.paths) == 1:
-            return lines[0]
-        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
+        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN DISTINCT {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
         return f"""CALL {{\n{lines}\n}}"""
 
     def __str__(self):
