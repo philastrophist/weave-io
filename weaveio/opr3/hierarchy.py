@@ -247,8 +247,10 @@ class L2SuperTarget(L2):
     parents = [Multiple(L1SpectrumRow, 2, 3), APS, WeaveTarget]
 
 
-class L2SourcedData(SourcedData):
+class L2SourcedData(Hierarchy):
     is_template = True
+    factors = ['sourcefile', 'hduname', 'nrow']
+    identifier_builder = ['sourcefile', 'hduname', 'nrow']
     parents = [One2One(L2)]
 
 

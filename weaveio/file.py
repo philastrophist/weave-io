@@ -1,7 +1,8 @@
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Tuple, Dict
 
 from astropy.io import fits
+from astropy.io.fits.hdu.base import _BaseHDU
 
 from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy
@@ -37,7 +38,7 @@ class File(Hierarchy):
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
-                  **hierarchies: Union[Hierarchy, List[Hierarchy]]):
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str,'HDU'], 'File', List[_BaseHDU]]:
         path = Path(directory) / Path(fname)
         file = cls(fname, **hierarchies)
         hdus = [i for i in fits.open(path)]

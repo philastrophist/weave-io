@@ -66,14 +66,17 @@ class GetItemStatement(Statement):
             ins.append(item)
         itemname = getattr(item, 'namehint', 'item') if not isinstance(item, str) else item
         self.out = CypherVariable(mapping.namehint + '_' + itemname)
-        super(GetItemStatement, self).__init__(ins, [self.out])
+        self.temp = CypherVariable('temp')
+        super(GetItemStatement, self).__init__(ins, [self.out], [self.temp])
 
     def to_cypher(self):
         if isinstance(self.item, CypherVariable):
             item = f'{self.item}'
         else:
             item = f"'{self.item}'"
-        return f'WITH *, {self.mapping}[{item}] as {self.out}'
+        convert = f"WITH *, CASE WHEN apoc.meta.type({item}) = 'STRING' THEN {item} ELSE toString(toFloat({item})) END as {self.temp}"
+        result = f'WITH *, {self.mapping}[{self.temp}] as {self.out}'
+        return '\n'.join([convert, result])
 
 
 class GroupBy(Statement):

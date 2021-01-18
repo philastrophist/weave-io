@@ -41,7 +41,7 @@ class L2File(File):
             'stellar_table': TableHDU,
             'stellar_table_rvs': TableHDU,
             'galaxy_table': TableHDU}
-    recommended_batchsize = 600
+    recommended_batchsize = 1000
 
     @classmethod
     def length(cls, path):
@@ -118,14 +118,14 @@ class L2File(File):
         return fits.open(path)[0].header
 
     @classmethod
-    def get_all_nspecs(cls, astropy_hdus) -> List[int]:
+    def get_all_nspecs(cls, astropy_hdus, slc) -> List[int]:
         nspecs = set()
         for hdu in astropy_hdus:
             try:
                 nspecs.update(hdu.data['nspec'].tolist())
             except (TypeError, ):  # dont do the primary header
                 pass
-        return list(nspecs)
+        return list(nspecs)[slc]
 
 
     @classmethod
@@ -138,46 +138,47 @@ class L2File(File):
         aps = APS(apsvers=header['APSVERS'])
         hierarchies = cls.find_shared_hierarchy(path)
         hdu_nodes, file, astropy_hdus = cls.read_hdus(directory, fname, l1files=l1files, aps=aps, **hierarchies)
+        nspecs = cls.get_all_nspecs(astropy_hdus, slc)
         produce = cls.produces[0]
         l1filenames = CypherData([l.fname for l in l1files], 'l1fnames')
-        nspecs = CypherData(cls.get_all_nspecs(astropy_hdus), 'nspecs')
-        with unwind(nspecs) as nspec:
+        with unwind(CypherData(nspecs, 'nspecs')) as nspec:
             with unwind(l1filenames) as l1fname:
                 spectrum = L1SpectrumRow.find(sourcefile=l1fname, nrow=nspec)
             l1spectra = collect(spectrum)
-        #     if not issubclass(cls, L2SuperTargetFile):
-        #         fibretarget = FibreTarget.find(anonymous_children=[l1spectra[0]])
-        #         hierarchies['fibretarget'] = fibretarget
-        #     l2 = produce(sourcefile=file.fname, nrow=nspec, l1spectrumrows=l1spectra, aps=aps, **hierarchies)
-        # l2s = collect(l2)
-        # l2_dict = groupby(l2s, 'nrow')
-        # for name in cls.corresponding_hdus.keys():
-        #     cls.make_data_rows(name, slc, file, l2_dict, astropy_hdus, hdu_nodes)
-        # return file
+            if not issubclass(cls, L2SuperTargetFile):
+                fibretarget = FibreTarget.find(anonymous_children=[l1spectra[0]])
+                hierarchies['fibretarget'] = fibretarget
+            l2 = produce(sourcefile=file.fname, nrow=nspec, l1spectrumrows=l1spectra, aps=aps, **hierarchies)
+        l2s = collect(l2)
+        l2_dict = groupby(l2s, 'nrow')
+        for name in cls.corresponding_hdus.keys():
+            cls.make_data_rows(name, nspecs, file, l2_dict, astropy_hdus, hdu_nodes)
+        return file
 
     @classmethod
-    def read_one_hdu_l2data(cls, hdus, hduname, slc=None):
-        slc = slice(None) if slc is None else slc
+    def read_one_hdu_l2data(cls, hdus, hduname, nspecs):
         names = [i.name.lower().strip() for i in hdus]
-        table = Table(hdus[names.index(hduname)].data)[slc]
+        table = Table(hdus[names.index(hduname)].data)
         if len(table.colnames):
             table.rename_columns(table.colnames, [i.lower() for i in table.colnames])
             table['spec_index'] = range(len(table))
         table = filter_products_from_table(table, 10)  # removes huge arrays that are best kept in binary files
+        if len(table):
+            table = table[[i in nspecs for i in table['nspec']]]
         data = CypherData(table, hduname)
         return data
 
     @classmethod
-    def make_data_rows(cls, hduname, slc, file, l2_by_nrow, astropyhdulist, hdus):
+    def make_data_rows(cls, hduname, nspecs: List[int], file, l2_by_nrow, astropyhdulist, hdus):
         """
         For each L2 row, there are 2-3 L1 rows
         Since we know the L1 files, we can identify those rows with nspec since they are the same
         """
         row_type = cls.corresponding_hdus[hduname]
-        table = cls.read_one_hdu_l2data(astropyhdulist, hduname, slc)
+        table = cls.read_one_hdu_l2data(astropyhdulist, hduname, nspecs)
         with unwind(table) as row:
             nspec = row['nspec']
-            l2row = row_type(sourcefile=file.fname, nrow=nspec, l2=l2_by_nrow[nspec], tables=row)
+            l2row = row_type(sourcefile=file.fname, nrow=nspec, hduname=hduname, l2=l2_by_nrow[nspec], tables=row)
             l2row.attach_products(file, index=row['spec_index'], **hdus)
         l2rows = collect(l2row)
         return l2rows

@@ -148,7 +148,7 @@ class RawFile(HeaderFibinfoFile):
         path = Path(directory) / Path(fname)
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         observation = hiers['observation']
-        hdus, file = cls.read_hdus(directory, fname, casu=observation.casu)
+        hdus, file, _ = cls.read_hdus(directory, fname, casu=observation.casu)
         raw = RawSpectrum(sourcefile=str(fname), casu=observation.casu, observation=observation, nrow=-1)
         raw.attach_products(file, **hdus)
         observation.attach_products(file, **hdus)
@@ -183,7 +183,7 @@ class L1SingleFile(L1File):
         inferred_raw_fname = str(fname.with_name(fname.name.replace('single_', 'r')))
         raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, observation=observation, nrow=-1)
         rawfile = RawFile(inferred_raw_fname, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
-        hdus, file = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)
+        hdus, file, _ = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             single_spectrum = L1SingleSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
                                                rawspectrum=raw, fibretarget=fibretarget,
@@ -237,7 +237,7 @@ class L1StackFile(L1StackedBaseFile):
         armconfig = hiers['armconfig']
         casu = observation.casu
         singlefiles = cls.get_single_files(directory, fname)
-        hdus, file = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
+        hdus, file, _ = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
                                    armconfig=armconfig, casu=casu)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             single_spectra = []
