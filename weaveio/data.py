@@ -13,9 +13,11 @@ import re
 
 import networkx as nx
 import py2neo
+from collections import Counter
 from tqdm import tqdm
 
 from weaveio.address import Address
+from weaveio.basequery.common import AmbiguousPathError
 from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.basequery.tree import BranchHandler, TraversalPath
 from weaveio.graph import Graph
@@ -103,6 +105,10 @@ class IndirectAccessError(Exception):
     pass
 
 
+class MultiplicityError(Exception):
+    pass
+
+
 class Data:
     filetypes = []
 
@@ -137,6 +143,7 @@ class Data:
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.relation_graph = self.make_relation_graph()
+        self.traversal_graph = self.make_traversal_graph()
         self.hierarchies = list(self.relation_graph.nodes)
         self.hierarchies += list({template for h in self.hierarchies for template in get_all_class_bases(h) if template.is_template})
         self.address = Address()
@@ -175,6 +182,13 @@ class Data:
                 d['user'] = self.user
             self._graph = Graph(host=self.host, port=self.port, write=self.write, **d)
         return self._graph
+
+    def make_traversal_graph(self):
+        graph = self.relation_graph.reverse(copy=True)
+        # for x, y in graph.edges:
+        #     if (y, x) not in graph.edges:
+        #         graph.add_edge(y, x, multiplicity=True, number=None, label='any', real=False)
+        return graph
 
     def make_relation_graph(self):
         hierarchies = set(get_all_subclasses(Hierarchy))
@@ -407,81 +421,74 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def node_implies_plurality_of(self, a: str, b: str) -> Tuple[bool, int, TraversalPath, Type[Hierarchy]]:
+    def _hierarchy_of_factor(self, starting_point: Type[Hierarchy], factor_name: str, plural: bool) -> Type[Hierarchy]:
         """
-        Finds the traversal path to b given you are starting at a.
-        Only builds unambiguous paths.
-        Returns multiplicity, TraversalPath, number, hierarchy class
+        Find the host hierarchy of the factor_name regardless of multiplicity.
         """
-        graph = self.relation_graph
-        if self.singular_hierarchies[a].is_template:
-            raise NotImplementedError(f"Starting from ambiguous nodes like {a} is not yet supported")
-        if self.singular_hierarchies[b].is_template:
-            results = []
-            for sub in get_all_subclasses(self.singular_hierarchies[b]):
-                if not sub.is_template and sub in self.hierarchies and sub.singular_name != a:
-                    try:
-                        result = self.node_implies_plurality_of(a, sub.singular_name)
-                        results.append(result)
-                    except (IndirectAccessError, nx.NodeNotFound):
-                        pass
-            mn = min(len(i[2]) for i in results)
-            results = [r for r in results if len(r[2]) == mn]
-            if len(results) == 0:
-                raise KeyError(f"There is no accessible super-hierarchy {b}")
-            elif len(results) == 1:
-                return results[0]
-            else:
-                raise nx.AmbiguousSolution(f'There is more than one {b} relative to {a}. Ambiguous super-hierarchy traversal is not yet implemented')
-        try:
+        reachable = list(nx.descendants(self.relation_graph, starting_point)) + list(nx.ancestors(self.relation_graph, starting_point))
+        found = [h for h in reachable if factor_name in h.products_and_factors]
+        subs = [sub for h in found for sub in get_all_class_bases(h) + [h] if factor_name in sub.products_and_factors]
+        candidates, ns = zip(*Counter(subs).most_common())  # this is in order
+        others = [c for c, n in zip(candidates, ns) if n == ns[0]]
+        if len(others) > 1:
+            others = ', '.join([f'{f.singular_name}.{factor_name}' for f in found])
+            raise AmbiguousPathError(f"The factor {factor_name} is ambiguous. It could be any of {others}")
+        candidate, n = candidates[0], ns[0]
+        if n != len(found):
+            others = ', '.join([f'{f.singular_name}.{factor_name}' for f in found])
+            raise AmbiguousPathError(f"The factor {factor_name} is ambiguous. It could be any of {others}")
+        return candidate
+
+    def _find_hierarchy_path(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> TraversalPath:
+        reversed = False
+        if plural:
+            graph = self.traversal_graph
             try:
-                reversed = False
-                path = nx.shortest_path(graph, self.singular_hierarchies[a], self.singular_hierarchies[b])
+                travel_path = nx.shortest_path(graph, a, b)
             except nx.NetworkXNoPath:
+                path = nx.shortest_path(graph, b, a)
+                travel_path = path[::-1]
                 reversed = True
-                path = nx.shortest_path(graph, self.singular_hierarchies[b], self.singular_hierarchies[a])
-        except nx.NetworkXNoPath:
-            paths = nx.shortest_simple_paths(graph.to_undirected(as_view=True), self.singular_hierarchies[a], self.singular_hierarchies[b])
-            for path in paths:
-                if not any(graph.predecessors(n) == 0 for n in path):
-                    shared = f"Try going via a shared node like {path}"
-                    break
-            else:
-                shared = ''
-            raise IndirectAccessError(f"There is no unambiguous path between {a} and {b}.\n"
-                                      f"This may be because the phrase '{b} has {self.plural_name(a)}' does not make sense.\n" + shared)
-        # work along the path from the bottom up, collecting multiplicity
-        travel_path = path[::-1] if reversed else path
+        else:
+            graph = nx.subgraph_view(self.traversal_graph, filter_edge=lambda x, y: not self.traversal_graph.edges[(x, y)]['multiplicity'])
+            travel_path = nx.shortest_path(graph, a, b)
         multiplicity = []
         number = []
         _direction = []
         for x, y in zip(travel_path[:-1], travel_path[1:]):
             try:
                 edge = graph.edges[(y, x)]
-                opposite = graph.edges.get((x, y), {'multiplicity': True, 'number': None})
                 multiplicity.append(edge['multiplicity'])
                 number.append(edge['number'])
             except KeyError:
                 multiplicity.append(True)
                 number.append(None)
-        _direction = ['<-' if reversed else '->' for _ in multiplicity]
         direction = []
         # now reverse the arrow direction if that direction is not real
-        for x, y, arrow in zip(travel_path[:-1], travel_path[1:], _direction):
-            if arrow == '->' and not graph.edges[(x, y)]['real']:
-                arrow = '<-'
-            elif arrow == '<-' and not graph.edges[(y, x)]['real']:
-                arrow = '->'
+        for x, y in zip(travel_path[:-1], travel_path[1:]):
+            try:
+                real = self.traversal_graph.edges[(x, y)].get('real', False)
+            except KeyError:
+                real = self.traversal_graph.edges[(y, x)].get('real', False)
+            arrow = '<-' if real else '->'
             direction.append(arrow)
-        total_multiplicity = reduce(or_, multiplicity)
-        total_number = np.product([np.inf if n is None else n for n in number])
-        if total_number == np.inf:
-            total_number = None
         total_path = []
         for i, node in enumerate(travel_path[1:]):
             total_path.append(direction[i])
             total_path.append(node.__name__)
-        return total_multiplicity, total_number, TraversalPath(*total_path), node
+        return TraversalPath(*total_path)
+
+    def _find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> List[TraversalPath]:
+        if a.is_template:
+            a = [i for i in get_all_subclasses(a) if not i.is_template]
+        else:
+            a = [a]
+        if b.is_template:
+            b = [i for i in get_all_subclasses(b) if not i.is_template]
+        else:
+            b = [b]
+        return [self._find_hierarchy_path(ai, bi, plural) for ai, bi in product(a, b)]
+
 
     def is_factor_name(self, name):
         try:
@@ -502,29 +509,31 @@ class Data:
     def is_singular_factor(self, value):
         return value.split('.')[-1] in self.singular_factors
 
-    def plural_name(self, singular_name):
-        split = singular_name.split('.')
-        before, singular_name = '.'.join(split[:-1]), split[-1]
-        if singular_name in self.singular_idnames:
-            return singular_name + 's'
+    def plural_name(self, name):
+        split = name.split('.')
+        before, name = '.'.join(split[:-1]), split[-1]
+        if self.is_plural_name(name):
+            return name
+        if name in self.singular_idnames:
+            return name + 's'
         else:
             try:
-                return before + self.singular_factors[singular_name] + 's'
+                return before + self.singular_factors[name] + 's'
             except KeyError:
-                return before + self.singular_hierarchies[singular_name].plural_name
+                return before + self.singular_hierarchies[name].plural_name
 
-    def singular_name(self, plural_name):
-        split = plural_name.split('.')
-        before, plural_name = '.'.join(split[:-1]), split[-1]
-        if self.is_singular_name(plural_name):
-            return plural_name
-        if plural_name in self.plural_idnames:
-            return plural_name[:-1]
+    def singular_name(self, name):
+        split = name.split('.')
+        before, name = '.'.join(split[:-1]), split[-1]
+        if self.is_singular_name(name):
+            return name
+        if name in self.plural_idnames:
+            return name[:-1]
         else:
             try:
-                return before + self.plural_factors[plural_name]
+                return before + self.plural_factors[name]
             except KeyError:
-                return before + self.plural_hierarchies[plural_name].singular_name
+                return before + self.plural_hierarchies[name].singular_name
 
     def is_plural_name(self, name):
         """
