@@ -189,6 +189,8 @@ class GraphableMeta(type):
         clses = clses[:clses.index('Graphable')]
         cls.neotypes = clses
         cls.products_and_factors = cls.factors + list(cls.products.keys())
+        if cls.idname is not None:
+            cls.products_and_factors.append(cls.idname)
         super().__init__(name, bases, dct)
 
 

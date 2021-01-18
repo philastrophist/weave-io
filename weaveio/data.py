@@ -7,7 +7,7 @@ import networkx
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Union, List, Tuple, Type, Dict
+from typing import Union, List, Tuple, Type, Dict, Optional
 import pandas as pd
 import re
 
@@ -421,12 +421,25 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def _hierarchy_of_factor(self, starting_point: Type[Hierarchy], factor_name: str, plural: bool) -> Type[Hierarchy]:
+    def _find_factor_path(self, starting_point: Type[Hierarchy], factor_name: str, plural: bool) -> List[Tuple[Type[Hierarchy], Optional[TraversalPath]]]:
         """
         Find the host hierarchy of the factor_name regardless of multiplicity.
         """
+        if factor_name in starting_point.products_and_factors:
+            return [(starting_point, None)]
         reachable = list(nx.descendants(self.relation_graph, starting_point)) + list(nx.ancestors(self.relation_graph, starting_point))
-        found = [h for h in reachable if factor_name in h.products_and_factors]
+        reachable = [h for h in reachable if factor_name in h.products_and_factors]
+        if not len(reachable):
+            raise KeyError(f"No such factor, product or idname {factor_name}")
+        found = []
+        pathlist = []
+        for r in reachable:
+            try:
+                paths = self._find_hierarchy_paths(starting_point, r, plural=plural)
+                pathlist.append(paths)
+                found.append(r)
+            except nx.NetworkXNoPath:
+                continue
         subs = [sub for h in found for sub in get_all_class_bases(h) + [h] if factor_name in sub.products_and_factors]
         candidates, ns = zip(*Counter(subs).most_common())  # this is in order
         others = [c for c, n in zip(candidates, ns) if n == ns[0]]
@@ -437,10 +450,9 @@ class Data:
         if n != len(found):
             others = ', '.join([f'{f.singular_name}.{factor_name}' for f in found])
             raise AmbiguousPathError(f"The factor {factor_name} is ambiguous. It could be any of {others}")
-        return candidate
+        return [(f, paths) for f, paths in zip(found, pathlist) if issubclass(f, candidate)]
 
-    def _find_hierarchy_path(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> TraversalPath:
-        reversed = False
+    def _find_hierarchy_path(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[TraversalPath, List[bool]]:
         if plural:
             graph = self.traversal_graph
             try:
@@ -448,21 +460,23 @@ class Data:
             except nx.NetworkXNoPath:
                 path = nx.shortest_path(graph, b, a)
                 travel_path = path[::-1]
-                reversed = True
         else:
             graph = nx.subgraph_view(self.traversal_graph, filter_edge=lambda x, y: not self.traversal_graph.edges[(x, y)]['multiplicity'])
             travel_path = nx.shortest_path(graph, a, b)
         multiplicity = []
         number = []
         _direction = []
+        one_way = []
         for x, y in zip(travel_path[:-1], travel_path[1:]):
             try:
                 edge = graph.edges[(y, x)]
                 multiplicity.append(edge['multiplicity'])
                 number.append(edge['number'])
+                one_way.append(edge['oneway'])
             except KeyError:
                 multiplicity.append(True)
                 number.append(None)
+                one_way.append(False)
         direction = []
         # now reverse the arrow direction if that direction is not real
         for x, y in zip(travel_path[:-1], travel_path[1:]):
@@ -476,9 +490,9 @@ class Data:
         for i, node in enumerate(travel_path[1:]):
             total_path.append(direction[i])
             total_path.append(node.__name__)
-        return TraversalPath(*total_path)
+        return TraversalPath(*total_path), one_way
 
-    def _find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> List[TraversalPath]:
+    def _find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[List[TraversalPath], List[Type[Hierarchy]]]:
         if a.is_template:
             a = [i for i in get_all_subclasses(a) if not i.is_template]
         else:
@@ -487,7 +501,28 @@ class Data:
             b = [i for i in get_all_subclasses(b) if not i.is_template]
         else:
             b = [b]
-        return [self._find_hierarchy_path(ai, bi, plural) for ai, bi in product(a, b)]
+        paths = set()
+        ends = set()
+        for ai, bi in product(a, b):
+            try:
+                path, oneways = self._find_hierarchy_path(ai, bi, plural)
+                if sum(oneways):
+                    if sum(oneways) > 1:
+                        raise NotImplementedError("Resolving paths with more than 1 oneway is not yet implemented")
+                    elif oneways[-1] != True:
+                        raise NotImplementedError("Resolving paths with the oneway at the end is not yet implemented")
+                    for before in self.traversal_graph.predecessors(bi):
+                        path, _ = self._find_hierarchy_path(ai, before, plural)
+                        paths.add(TraversalPath(*path._path, '->', bi.__name__))
+                        ends.add(bi)
+                else:
+                    paths.add(path)
+                    ends.add(bi)
+            except nx.NetworkXNoPath:
+                pass
+        if len(paths) == 0:
+            raise nx.NetworkXNoPath(f'There are no paths from {a} to {b} with the constraint of plural={plural}')
+        return list(paths), list(ends)
 
 
     def is_factor_name(self, name):
