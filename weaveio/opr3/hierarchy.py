@@ -149,7 +149,7 @@ class Run(Hierarchy):
 class Observation(Hierarchy):
     parents = [One2One(Run), CASU, Simulator, System]
     factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
-    products = ['primary', 'guidinfo', 'metinfo']
+    products = {'primary': 'primary', 'guidinfo': 'guidinfo', 'metinfo': 'metinfo'}
     identifier_builder = ['run', 'mjdobs']
     version_on = ['run']
 
@@ -177,7 +177,7 @@ class Spectrum(SourcedData):
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
     parents = [One2One(Observation), CASU]
-    products = ['counts1', 'counts2']
+    products = {'counts1': 'counts1', 'counts2': 'counts2'}
     version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
@@ -186,7 +186,8 @@ class RawSpectrum(Spectrum):
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
-    products = ['primary', Indexed('flux'), Indexed('ivar'), Indexed('flux_noss'), Indexed('ivar_noss'), 'sensfunc']
+    products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
+                'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': 'sensfunc'}
 
 
 class L1SingleSpectrum(L1SpectrumRow):
@@ -280,12 +281,12 @@ class GalaxyTable(L2TableRow):
 
 class ClassificationSpectrum(L2Spectrum):
     plural_name = 'classification_spectra'
-    products = [Indexed('class_spectra', 'flux'), Indexed('class_spectra', 'ivar'), Indexed('class_spectra', 'model'),
-                Indexed('class_spectra', 'lambda')]
+    products = {'flux': Indexed('class_spectra', 'flux'), 'ivar': Indexed('class_spectra', 'ivar'), 'model': Indexed('class_spectra', 'model'),
+                'lambda': Indexed('class_spectra', 'lambda')}
 
 
 class GalaxySpectrum(L2Spectrum):
     plural_name = 'galaxy_spectra'
-    products = [Indexed('galaxy_spectra', 'flux'), Indexed('galaxy_spectra', 'ivar'),
-                Indexed('galaxy_spectra', 'model_ab'), Indexed('galaxy_spectra', 'model_em'),
-                Indexed('galaxy_spectra', 'lambda')]
+    products = {'flux': Indexed('galaxy_spectra', 'flux'), 'ivar': Indexed('galaxy_spectra', 'ivar'),
+                'model_ab': Indexed('galaxy_spectra', 'model_ab'), 'model_em': Indexed('galaxy_spectra', 'model_em'),
+                'lambda': Indexed('galaxy_spectra', 'lambda')}

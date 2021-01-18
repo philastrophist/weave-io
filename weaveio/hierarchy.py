@@ -188,6 +188,7 @@ class GraphableMeta(type):
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
         cls.neotypes = clses
+        cls.products_and_factors = cls.factors + list(cls.products.keys())
         super().__init__(name, bases, dct)
 
 
@@ -204,7 +205,7 @@ class Graphable(metaclass=GraphableMeta):
     data = None
     query = None
     is_template = True
-    products = []
+    products = {}
     indexes = []
     identifier_builder = None
     version_on = []
@@ -212,6 +213,7 @@ class Graphable(metaclass=GraphableMeta):
     produces = []
     concatenation_constants = []
     belongs_to = []
+    products_and_factors = []
 
     @property
     def node(self):
@@ -408,7 +410,7 @@ class Graphable(metaclass=GraphableMeta):
     def attach_products(self, file, index=None, **hdus):
         """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
         collision_manager = CypherQuery.get_context().collision_manager
-        for name in self.products:
+        for productname, name in self.products.items():
             props = {}
             if isinstance(name, Indexed):
                 if name.column_name is not None:
@@ -417,7 +419,7 @@ class Graphable(metaclass=GraphableMeta):
                 if index is None:
                     raise IndexError(f"{self} requires an index for {file} product {name}")
                 props['index'] = index
-            props['name'] = name
+            props['name'] = productname
             hdu = hdus[name]
             merge_relationship(hdu, self, 'product', props, {}, collision_manager=collision_manager)
         merge_relationship(file, self, 'is_required_by', {'name': 'file'}, {}, collision_manager=collision_manager)
