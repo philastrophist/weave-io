@@ -47,7 +47,7 @@ class File(Hierarchy):
         hduinstances = {}
         for i, ((hduname, hduclass), hdu) in enumerate(zip(cls.hdus.items(), hdus)):
             hduinstances[hduname] = hduclass.from_hdu(hduname, hdu, i, file)
-        return hduinstances, file
+        return hduinstances, file, hdus
 
     def read_product(self, product_name):
         self.build_index()

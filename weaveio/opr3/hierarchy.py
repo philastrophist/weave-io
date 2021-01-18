@@ -177,8 +177,6 @@ class Spectrum(SourcedData):
 class RawSpectrum(Spectrum):
     plural_name = 'rawspectra'
     parents = [One2One(Observation), CASU]
-    factors = ['sourcefile']
-    identifier_builder = ['sourcefile']
     products = ['counts1', 'counts2']
     version_on = ['observation']
     # any duplicates under a run will be versioned based on their appearance in the database
@@ -234,23 +232,19 @@ class L2(SourcedData):
 
 
 class L2Single(L2):
-    parents = [Multiple(L1SingleSpectrum, 2, 3), FibreTarget, APS, Exposure]
-    version_on = ['l1singlespectra']
+    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS, Exposure]
 
 
 class L2Stack(L2):
-    parents = [Multiple(L1StackSpectrum, 0, 3), Multiple(L1SingleSpectrum, 0, 3), FibreTarget, APS, OB]
-    version_on = ['l1singlespectra', 'l1stackspectra']
+    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS, OB]
 
 
 class L2SuperStack(L2):
-    parents = [Multiple(L1SuperStackSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), Multiple(L1SingleSpectrum, 0, 3), FibreTarget, APS, OBSpec]
-    version_on = ['l1singlespectra', 'l1stackspectra', 'l1superstackspectra']
+    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS, OBSpec]
 
 
 class L2SuperTarget(L2):
-    parents = [Multiple(L1SuperTargetSpectrum, 2, 3), APS, WeaveTarget]
-    version_on = ['l1supertargetspectra']
+    parents = [Multiple(L1SpectrumRow, 2, 3), APS, WeaveTarget]
 
 
 class L2SourcedData(SourcedData):

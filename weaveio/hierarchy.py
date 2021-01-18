@@ -1,6 +1,6 @@
 import inspect
 from functools import wraps, partial
-from typing import Tuple, Dict, Type, Union, List
+from typing import Tuple, Dict, Type, Union, List, Optional
 from warnings import warn
 
 from . import writequery
@@ -371,7 +371,7 @@ class Graphable(metaclass=GraphableMeta):
         return False
 
     @classmethod
-    def make_schema(cls):
+    def make_schema(cls) -> Optional[str]:
         name = cls.__name__
         if cls.idname is not None:
             prop = cls.idname
@@ -385,8 +385,14 @@ class Graphable(metaclass=GraphableMeta):
                 if not len(key):
                     raise TypeError(f"No factors are present in the identity builder of {name} to make an index from ")
                 return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
-        key = ', '.join([f'n.{i}' for i in cls.indexes])
-        return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+        elif cls.indexes:
+            key = ', '.join([f'n.{i}' for i in cls.indexes])
+            return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+        elif cls.is_template:
+            return None
+        else:
+            raise RuleBreakingException(f"A hierarchy must define an idname, identifier_builder, or index, "
+                                        f"unless it is marked as template class for something else (`is_template=True`)")
 
     @classmethod
     def merge_strategy(cls):

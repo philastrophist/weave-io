@@ -149,7 +149,7 @@ class RawFile(HeaderFibinfoFile):
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         observation = hiers['observation']
         hdus, file = cls.read_hdus(directory, fname, casu=observation.casu)
-        raw = RawSpectrum(sourcefile=str(fname), casu=observation.casu, observation=observation)
+        raw = RawSpectrum(sourcefile=str(fname), casu=observation.casu, observation=observation, nrow=-1)
         raw.attach_products(file, **hdus)
         observation.attach_products(file, **hdus)
         return file
@@ -181,7 +181,7 @@ class L1SingleFile(L1File):
         observation = hiers['observation']
         casu = observation.casu
         inferred_raw_fname = str(fname.with_name(fname.name.replace('single_', 'r')))
-        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, observation=observation)
+        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, observation=observation, nrow=-1)
         rawfile = RawFile(inferred_raw_fname, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
         hdus, file = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):

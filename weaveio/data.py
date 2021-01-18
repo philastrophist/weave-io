@@ -137,7 +137,8 @@ class Data:
         self.filelists = {}
         self.rootdir = Path(rootdir)
         self.relation_graph = self.make_relation_graph()
-        self.hierarchies = self.relation_graph.nodes
+        self.hierarchies = list(self.relation_graph.nodes)
+        self.hierarchies += list({template for h in self.hierarchies for template in get_all_class_bases(h) if template.is_template})
         self.address = Address()
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
@@ -231,13 +232,27 @@ class Data:
         return nx.DiGraph(nx.subgraph(graph, bunch))
 
     def make_constraints_cypher(self):
-        return [hierarchy.make_schema() for hierarchy in self.hierarchies]
+        return {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
 
     def apply_constraints(self):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
-        for q in tqdm(self.make_constraints_cypher(), desc='applying constraints'):
-            self.graph.neograph.run(q)
+        templates = []
+        equivalencies = []
+        for hier, q in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
+            if q is None:
+                templates.append(hier)
+            else:
+                try:
+                    self.graph.neograph.run(q)
+                except py2neo.ClientError as e:
+                    if '[Schema.EquivalentSchemaRuleAlreadyExists]' in str(e):
+                       equivalencies.append(hier)
+                       templates.append(hier)
+        if len(templates):
+            print(f'No index/constraint was made for {templates}')
+        if len(equivalencies):
+            print(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
 
     def drop_all_constraints(self):
         if not self.write_allowed:
