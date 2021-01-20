@@ -1,12 +1,14 @@
+from collections import defaultdict
 from pathlib import Path
-from typing import Union, List, Dict, Type, Set
+from typing import Union, List, Dict, Type, Set, Tuple
 
 from astropy.io import fits
+from astropy.io.fits.hdu.base import _BaseHDU
 from astropy.table import Table
 
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, unwind, collect
+from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
 from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget, L2
 from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
@@ -127,6 +129,24 @@ class L2File(File):
                 pass
         return list(nspecs)[slc]
 
+    @classmethod
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], l1files: List[L1File],
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
+        fdict = defaultdict(list)  # parse the 1lfile types separately
+        for f in l1files:
+            fdict[f.plural_name].append(f)
+        hierarchies.update(fdict)
+        return super().read_hdus(directory, fname, **hierarchies)
+
+    @classmethod
+    def produce_spectrum(cls, sourcefile, nrow, l1spectrumrows, aps, **hierarchies):
+        sdict = defaultdict(list)  # parse the l1spectrum types separately
+        for f in l1spectrumrows:
+            sdict[f.plural_name].append(f)
+        hierarchies.update(sdict)
+        assert len(cls.produce) == 1
+        l2 = cls.produce[0](sourcefile=sourcefile, nrow=nrow, aps=aps, **hierarchies)
+        return l2
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
@@ -139,16 +159,16 @@ class L2File(File):
         hierarchies = cls.find_shared_hierarchy(path)
         hdu_nodes, file, astropy_hdus = cls.read_hdus(directory, fname, l1files=l1files, aps=aps, **hierarchies)
         nspecs = cls.get_all_nspecs(astropy_hdus, slc)
-        produce = cls.produces[0]
-        l1filenames = CypherData([l.fname for l in l1files], 'l1fnames')
+        l1filenames = [l.fname for l in l1files]
         with unwind(CypherData(nspecs, 'nspecs')) as nspec:
-            with unwind(l1filenames) as l1fname:
+            l1spectra = []
+            for l1fname in l1filenames:
                 spectrum = L1SpectrumRow.find(sourcefile=l1fname, nrow=nspec)
-            l1spectra = collect(spectrum)
+                l1spectra.append(spectrum)
             if not issubclass(cls, L2SuperTargetFile):
                 fibretarget = FibreTarget.find(anonymous_children=[l1spectra[0]])
                 hierarchies['fibretarget'] = fibretarget
-            l2 = produce(sourcefile=file.fname, nrow=nspec, l1spectrumrows=l1spectra, aps=aps, **hierarchies)
+            l2 = cls.produce_spectrum(sourcefile=file.fname, nrow=nspec, l1spectrumrows=l1spectra, aps=aps, **hierarchies)
         l2s = collect(l2)
         l2_dict = groupby(l2s, 'nrow')
         for name in cls.corresponding_hdus.keys():
@@ -186,7 +206,7 @@ class L2File(File):
 
 class L2SingleFile(L2File):
     produces = [L2Single]
-    parents = [Multiple(L1File, 2, 3), Exposure, APS]
+    parents = [Multiple(L1SingleFile, 2, 3), Exposure, APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -196,7 +216,7 @@ class L2SingleFile(L2File):
 
 class L2StackFile(L2File):
     produces = [L2Stack]
-    parents = [Multiple(L1File, 2, 3), OB, APS]
+    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 1, 3), OB, APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -206,7 +226,7 @@ class L2StackFile(L2File):
 
 class L2SuperStackFile(L2File):
     produces = [L2SuperStack]
-    parents = [Multiple(L1File, 2, 3), OBSpec, APS]
+    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3), OBSpec, APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -217,7 +237,7 @@ class L2SuperStackFile(L2File):
 class L2SuperTargetFile(L2File):
     match_pattern = 'WVE_*aps.fits'
     produces = [L2SuperTarget]
-    parents = [Multiple(L1File, 2, 3), WeaveTarget, APS]
+    parents = [Multiple(L1SuperTargetFile, 2, 3), WeaveTarget, APS]
 
     @classmethod
     def parse_fname(cls, header, fname, instantiate=True) -> List[L1File]:

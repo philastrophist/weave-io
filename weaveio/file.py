@@ -90,6 +90,7 @@ class PrimaryHDU(HDU):
 
 
 class BaseDataHDU(HDU):
+    is_template = True
     concatenation_constants = ['ncols']
     factors = HDU.factors + ['nrows', 'ncols']
 

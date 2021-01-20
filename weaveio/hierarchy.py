@@ -170,18 +170,17 @@ class GraphableMeta(type):
             hduclasses = {}
             for i, (hduname, hdu) in enumerate(cls.hdus.items()):
                 if hdu is not None:
-                    # typename = name+hduname[0].upper()+hduname[1:]
-                    # typename = typename.replace('_', '')
-                    # hduclass = type(typename, (hdu, ), {'parents': [One2One(cls)], 'identifier_builder': [cls.plural_name, 'extn']})
-                    # hduclasses[hduname] = hduclass
+                    typename = name+hduname[0].upper()+hduname[1:]
+                    typename = typename.replace('_', '')
+                    hduclass = type(typename, (hdu, ), {'parents': [One2One(cls)], 'identifier_builder': [cls.singular_name, 'extn', 'name']})
+                    hduclasses[hduname] = hduclass
                     if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
                         raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")
                     for base in bases:
                         if (hduname in base.factors or hduname in base.parents or hasattr(base, hduname)) and hduname not in base.hdus:
                             raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {base}->{name}")
-                    # setattr(cls, hduname, hduclass)  # add as an attribute
-                    setattr(cls, hduname, hdu)
-            # cls.hdus = hduclasses  # overwrite hdus
+                    setattr(cls, hduname, hduclass)  # add as an attribute
+            cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']

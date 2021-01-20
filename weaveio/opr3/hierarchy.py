@@ -233,19 +233,19 @@ class L2(SourcedData):
 
 
 class L2Single(L2):
-    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS, Exposure]
+    parents = [Multiple(L1SingleSpectrum, 2, 3), FibreTarget, APS, Exposure]
 
 
 class L2Stack(L2):
-    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS, OB]
+    parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), FibreTarget, APS, OB]
 
 
 class L2SuperStack(L2):
-    parents = [Multiple(L1SpectrumRow, 2, 3), FibreTarget, APS, OBSpec]
+    parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), Multiple(L1SuperStackSpectrum, 0, 3), FibreTarget, APS, OBSpec]
 
 
 class L2SuperTarget(L2):
-    parents = [Multiple(L1SpectrumRow, 2, 3), APS, WeaveTarget]
+    parents = [Multiple(L1SuperTargetSpectrum, 2, 3), APS, WeaveTarget]
 
 
 class L2SourcedData(Hierarchy):
@@ -253,6 +253,7 @@ class L2SourcedData(Hierarchy):
     factors = ['sourcefile', 'hduname', 'nrow']
     identifier_builder = ['sourcefile', 'hduname', 'nrow']
     parents = [One2One(L2)]
+    belongs_to = ['l2']
 
 
 class L2TableRow(L2SourcedData):

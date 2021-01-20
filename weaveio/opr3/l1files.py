@@ -137,7 +137,7 @@ class RawFile(HeaderFibinfoFile):
     match_pattern = 'r*.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': SpectralBlockHDU, 'counts2': SpectralBlockHDU, 'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
-    produces = [One2One(Observation)]
+    produces = [One2One(Observation), One2One(RawSpectrum)]
 
     @classmethod
     def fname_from_runid(cls, runid):
