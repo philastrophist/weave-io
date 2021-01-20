@@ -408,7 +408,7 @@ class Graphable(metaclass=GraphableMeta):
                 return 'NODE+RELATIONSHIP'
         return 'NODE FIRST'
 
-    def attach_products(self, file, index=None, **hdus):
+    def attach_products(self, file=None, index=None, **hdus):
         """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
         collision_manager = CypherQuery.get_context().collision_manager
         for productname, name in self.products.items():
@@ -423,7 +423,8 @@ class Graphable(metaclass=GraphableMeta):
             props['name'] = productname
             hdu = hdus[name]
             merge_relationship(hdu, self, 'product', props, {}, collision_manager=collision_manager)
-        merge_relationship(file, self, 'is_required_by', {'name': 'file'}, {}, collision_manager=collision_manager)
+        if file is not None:
+            merge_relationship(file, self, 'is_required_by', {'name': 'file'}, {}, collision_manager=collision_manager)
 
     @classmethod
     def without_creation(cls, **kwargs):

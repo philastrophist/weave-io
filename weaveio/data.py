@@ -2,6 +2,7 @@ import time
 from functools import reduce
 from itertools import product
 from operator import or_, and_
+from warnings import warn
 
 import networkx
 import numpy as np
@@ -338,7 +339,11 @@ class Data:
             try:
                 results = self.graph.execute(cypher, **params)
                 stats.append(results.stats())
-                timestamps.append(results.evaluate())
+                timestamp = results.evaluate()
+                if timestamp is None:
+                    warn(f"This query terminated early due to an empty input table/data. "
+                         f"Adjust your `.read` method to allow for empty tables/data")
+                timestamps.append(timestamp)
                 elapsed_times.append(time.time() - start)
             except py2neo.database.work.ClientError as e:
                 logging.exception('ClientError:', exc_info=True)
@@ -480,17 +485,33 @@ class Data:
                 pathlists[hier].update(paths)
         return dict(pathlists)
 
-    def _find_restricted_path(self, traversal_graph, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[TraversalPath, List[bool]]:
+    @staticmethod
+    def shortest_path_without_oneway_violation(graph: nx.Graph, a, b):
+        """Iterate over shortest paths until one without reusing a one-way path is found"""
+        for path in nx.shortest_simple_paths(graph, a, b):
+            oneway_node = None
+            for x, y in zip(path[:-1], path[1:]):
+                oneway = graph.edges[(x, y)].get('oneway', False)  # is it oneway?
+                if oneway:
+                    if x == oneway_node:  # violated
+                        break
+                    else:
+                        oneway_node = y
+            else:
+                return path
+
+    def _find_restricted_path(self, traversal_graph: nx.DiGraph, a: Type[Hierarchy], b: Type[Hierarchy],
+                              plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
         if plural:
             graph = traversal_graph
             try:
-                travel_path = nx.shortest_path(graph, a, b)
+                travel_path = self.shortest_path_without_oneway_violation(graph, a, b)
             except nx.NetworkXNoPath:
-                path = nx.shortest_path(graph, b, a)
+                path = self.shortest_path_without_oneway_violation(graph, b, a)
                 travel_path = path[::-1]
         else:
             graph = nx.subgraph_view(traversal_graph, filter_edge=lambda x, y: not self.traversal_graph.edges[(x, y)]['multiplicity'])
-            travel_path = nx.shortest_path(graph, a, b)
+            travel_path = self.shortest_path_without_oneway_violation(graph, a, b)
         multiplicity = []
         number = []
         _direction = []
@@ -513,19 +534,19 @@ class Data:
                 real = traversal_graph.edges[(x, y)].get('real', False)
             except KeyError:
                 real = not traversal_graph.edges[(y, x)].get('real', False)
-            arrow = '<-' if real else '->'
+            arrow = '->' if real else '<-'
             direction.append(arrow)
         total_path = []
         for i, node in enumerate(travel_path[1:]):
             total_path.append(direction[i])
             total_path.append(node.__name__)
-        return TraversalPath(*total_path), one_way
+        return TraversalPath(*total_path), one_way, graph
 
-    def _find_hierarchy_path(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[TraversalPath, List[bool]]:
-        for graph in self.relation_graphs:
+    def _find_hierarchy_path(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
+        for i, graph in enumerate(self.relation_graphs):
             try:
                 return self._find_restricted_path(graph, a, b, plural)
-            except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
+            except (nx.NetworkXNoPath, nx.NodeNotFound, KeyError) as e:
                 continue
         raise nx.NetworkXNoPath(f"The is no path between {a} and {b} with a constraint of plural={plural}")
 
@@ -542,16 +563,18 @@ class Data:
         ends = set()
         for ai, bi in product(a, b):
             try:
-                path, oneways = self._find_hierarchy_path(ai, bi, plural)
-                if sum(oneways):
+                path, oneways, graph = self._find_hierarchy_path(ai, bi, plural)
+                if sum(oneways) and len(oneways) > 1:  # if >1 there are more paths, if 1 then you are directly connected (so dont explore)
                     if sum(oneways) > 1:
-                        raise NotImplementedError("Resolving paths with more than 1 oneway is not yet implemented")
+                        raise NotImplementedError(f"Resolving paths with more than 1 oneway is not yet implemented: {path.repr_path}")
                     elif oneways[-1] != True:
-                        raise NotImplementedError("Resolving paths with the oneway at the end is not yet implemented")
-                    for before in self.traversal_graph.predecessors(bi):
-                        path, _ = self._find_hierarchy_path(ai, before, plural)
-                        paths.add(TraversalPath(*path._path, '->', bi.__name__))
-                        ends.add(bi)
+                        raise NotImplementedError(f"Resolving paths with the oneway not at the end is not yet implemented: {path.repr_path}")
+                    else:
+                        just_before = set(nx.descendants(graph, ai)) & set(graph.predecessors(bi))
+                        for before in just_before:
+                            path, _, _ = self._find_restricted_path(graph, ai, before, plural)
+                            paths.add(TraversalPath(*path._path, '->', bi.__name__))
+                            ends.add(bi)
                 else:
                     paths.add(path)
                     ends.add(bi)

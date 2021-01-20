@@ -127,7 +127,7 @@ class FibreTarget(Hierarchy):
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
     parents = [OBSpec, Fibre, SurveyTarget]
     identifier_builder = ['obspec', 'fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-    belongs_to = ['obspec']
+    belongs_to = ['obspec', 'surveytarget']
 
 
 class OB(Hierarchy):
