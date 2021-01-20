@@ -149,18 +149,22 @@ class EntryPoint(Action):
 
 
 class StartingPoint(Action):
-    compare = ['label']
+    compare = ['labels']
 
-    def __init__(self, label):
-        self.label = label
-        self.hierarchy = CypherVariable(self.label)
+    def __init__(self, *labels):
+        self.labels = labels
+        self.hierarchy = CypherVariable(self.labels[-1])
         super().__init__([], [self.hierarchy], target=self.hierarchy)
 
     def to_cypher(self):
-        return f"OPTIONAL MATCH ({self.hierarchy}:{self.label})"
+        s = f"OPTIONAL MATCH ({self.hierarchy}:{self.labels[0]})"
+        if len(self.labels) == 1:
+            return s
+        condition = ' OR '.join([f'{self.hierarchy}:{l}' for l in self.labels[1:]])
+        return s + f" WHERE {condition}"
 
     def __str__(self):
-        return f'{self.label}'
+        return '|'.join(self.labels)
 
 
 class DataReference(Action):
@@ -281,18 +285,19 @@ class Collection(Action):
 class Operation(Action):
     compare = ['string_function', 'hashable_inputs']
 
-    def __init__(self, string_function: str, **inputs):
-        self.string_function = string_function
-        self.output = CypherVariable('operation')
+    def __init__(self, *string_functions: str, namehint=None, **inputs):
+        self.string_functions = string_functions
+        self.outputs = [CypherVariable(namehint) for _ in string_functions]
         self.inputs = inputs
         self.hashable_inputs = tuple(self.inputs.items())
-        super().__init__(list(inputs.values()), [self.output], target=self.output)
+        super().__init__(list(inputs.values()), self.outputs, target=self.outputs[0])
 
     def to_cypher(self):
-        return f"WITH *, {self.string_function.format(**self.inputs)} as {self.output_variables[0]}"
+        assignments = [f"{func.format(**self.inputs)} as {out}" for func, out in zip(self.string_functions, self.outputs)]
+        return f"WITH *, {', '.join(assignments)}"
 
     def __str__(self):
-        return self.string_function
+        return ', '.join(self.string_functions)
 
 
 class Filter(Operation):
@@ -436,8 +441,8 @@ class BranchHandler:
         self.current_hierarchy = current_hierarchy
         return instance
 
-    def begin(self, label):
-        action = StartingPoint(label)
+    def begin(self, *labels):
+        action = StartingPoint(*labels)
         return self.new(action, [self.entry], [], action.hierarchy, [action.hierarchy], [], [action.hierarchy])
 
     def relevant_graph(self, branch):
@@ -593,7 +598,7 @@ class Branch:
         return self.handler.new(action, [self], singular + multiple, None, variables + hierarchies,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
-    def operate(self, string_function, **inputs) -> 'Branch':
+    def operate(self, *string_functions, namehint=None, **inputs) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
@@ -601,7 +606,7 @@ class Branch:
         # missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
         # if missing:
         #     raise ValueError(f"inputs {missing} are not in scope for {self}")
-        op = Operation(string_function, **inputs)
+        op = Operation(*string_functions, namehint=namehint, **inputs)
         return self.handler.new(op, [self], [], None, op.output_variables,
                                 variables=self.variables + op.output_variables, hierarchies=self.hierarchies)
 

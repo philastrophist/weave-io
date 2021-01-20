@@ -116,7 +116,7 @@ def shared_base_class(*classes):
         all_classes.sort(key=lambda x: len(get_all_class_bases(x)), reverse=True)
         if all_classes:
             return all_classes[0]
-    return object
+    return Hierarchy
 
 
 class Data:
@@ -448,7 +448,8 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def _find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str, plural: bool) -> Dict[Type[Hierarchy], Set[TraversalPath]]:
+    def _find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
+                           plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
         """
         Find the host hierarchy of the factor_name regardless of multiplicity.
         """
@@ -463,7 +464,7 @@ class Data:
         for r in reachable:
             try:
                 assert not r.is_template
-                paths, _ = self.find_hierarchy_paths(starting_point, r, plural=plural)
+                paths, _, _, _ = self.find_hierarchy_paths(starting_point, r, plural=plural)
                 pathlist[r].update(paths)
             except nx.NetworkXNoPath:
                 continue
@@ -472,18 +473,28 @@ class Data:
             others = ', '.join([f'{f.singular_name}.{factor_name}' for f in pathlist.keys()])
             raise AmbiguousPathError(f"{factor_name} could refer to any of '{others}'. "
                                      f"Be specific by traversing first.")
-        return dict(pathlist)
+        return dict(pathlist), base
 
-    def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str, plural: bool) -> Dict[Type[Hierarchy], Set[TraversalPath]]:
-        if starting_point.is_template:
+    def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
+                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
+        if starting_point is None:
+            todo = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors}
+        elif starting_point.is_template:
             todo = set(get_all_subclasses(starting_point))
         else:
             todo = {starting_point}
         pathlists = defaultdict(set)
+        bases = set()
         for h in todo:
-            for hier, paths in self._find_factor_paths(h, factor_name, plural).items():
+            pathdict, base = self._find_factor_paths(h, factor_name, plural)
+            bases.add(base)
+            for hier, paths in pathdict.items():
                 pathlists[hier].update(paths)
-        return dict(pathlists)
+        base = shared_base_class(*bases)
+        if factor_name not in getattr(base, 'products_and_factors', []):
+            raise AmbiguousPathError(f"{factor_name} could refer to many objects. "
+                                     f"Be specific by traversing first.")
+        return dict(pathlists), base
 
     @staticmethod
     def shortest_path_without_oneway_violation(graph: nx.Graph, a, b):
@@ -550,7 +561,8 @@ class Data:
                 continue
         raise nx.NetworkXNoPath(f"The is no path between {a} and {b} with a constraint of plural={plural}")
 
-    def find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[List[TraversalPath], List[Type[Hierarchy]]]:
+    def find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy],
+                             plural: bool) -> Tuple[List[TraversalPath], List[Type[Hierarchy]], Type[Hierarchy], Type[Hierarchy]]:
         if a.is_template:
             a = [i for i in get_all_subclasses(a) if not i.is_template]
         else:
@@ -582,7 +594,7 @@ class Data:
                 pass
         if len(paths) == 0:
             raise nx.NetworkXNoPath(f'There are no paths from {a} to {b} with the constraint of plural={plural}')
-        return list(paths), list(ends)
+        return list(paths), list(ends), shared_base_class(*a), shared_base_class(*b)
 
     def is_factor_name(self, name):
         try:

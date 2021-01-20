@@ -1,21 +1,23 @@
-from typing import List, Union
+from typing import List
 
 import numpy as np
 import py2neo
-from astropy.table import Table, Column, hstack
+from astropy.table import Table, Column
 
 from weaveio.basequery.common import FrozenQuery, UnexpectedResult, NotYetImplementedError
+from weaveio.basequery.dissociated import Dissociated
+from weaveio.basequery.functions import OperableMixin
 from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherVariable, CypherQuery
 
 
-class FactorFrozenQuery(FrozenQuery):
+class FactorFrozenQuery(Dissociated):
     def __init__(self, handler, branch: Branch, factors: List[str], factor_variables: List[CypherVariable],
-                 numbers: List[Union[int, None]], parent: FrozenQuery = None):
+                 plurals: List[bool], parent: FrozenQuery = None):
         super().__init__(handler, branch, parent)
         self.factors = factors
         self.factor_variables = factor_variables
-        self.numbers = numbers
+        self.plurals = plurals
 
     def _prepare_query(self) -> CypherQuery:
         with super()._prepare_query() as query:
@@ -29,33 +31,18 @@ class FactorFrozenQuery(FrozenQuery):
         return f'{self.parent}{factors}'
 
     def _post_process(self, result: py2neo.Cursor) -> Table:
-        coldata = list(zip(*result.to_table()))
-        columns = []
-        for i, (name, number, data) in enumerate(zip(self.factors, self.numbers, map(list, coldata))):
-            if number is None:
-                #  make an unstructured list
-                shape = len(data)
-                dtype = object
-                data[0].append('placeholder')  # to force astropy to pay attention!!!
-                data.append(['placeholder'])
-            elif number == 0:
-                #  make a single scalar column
-                shape = len(data)
-                dtype = None
-            else:
-                # make a shaped vector Column
-                shape = (len(data), number)
-                dtype = None
-            column = Column(data, name=name, shape=shape, length=len(data), dtype=dtype)
-            if number is None:
-                del column[0][-1]  # delete the placeholder
-                column = column[:-1]
-            columns.append(column)
-        table = hstack(columns)
+        df = result.to_data_frame()
+        table = Table.from_pandas(df)
+        for colname, plural in zip(df.columns, self.plurals):
+            if plural:
+                if df.dtypes[colname] == 'O':
+                    lengths = set(map(len, df[colname]))
+                    if len(lengths) == 1:  # all the same length
+                        table[colname] = Column(df[colname], name=colname, shape=lengths.pop(), length=len(df))
         return table
 
 
-class SingleFactorFrozenQuery(FactorFrozenQuery):
+class SingleFactorFrozenQuery(FactorFrozenQuery, OperableMixin):
     """A single factor of a single hierarchy instance"""
 
     def _post_process(self, result: py2neo.Cursor):
@@ -65,7 +52,7 @@ class SingleFactorFrozenQuery(FactorFrozenQuery):
         return t[t.colnames[0]][0]
 
 
-class ColumnFactorFrozenQuery(FactorFrozenQuery):
+class ColumnFactorFrozenQuery(FactorFrozenQuery, OperableMixin):
     """A list of the same factor values for different hierarchy instances"""
     def _post_process(self, result: py2neo.Cursor):
         t = super(ColumnFactorFrozenQuery, self)._post_process(result)
