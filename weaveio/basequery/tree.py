@@ -555,10 +555,29 @@ class Branch:
                 branches.append(branch)
         return branches
 
+    def get_variables(self, variables: List[CypherVariable]):
+        squeeze = False
+        if not isinstance(variables, (list, tuple)):
+            variables = [variables]
+            squeeze = True
+        for branch in self.iterdown(self.relevant_graph):
+            for i, variable in enumerate(variables):
+                if variable in branch.current_variables:
+                    pass
+                else:
+                    try:
+                        variables[i] = branch.action.transformed_variables[variable]
+                    except (AttributeError, KeyError):
+                        pass
+        if squeeze and len(variables) == 1:
+            return variables[0]
+        return variables
+
+
     def add_data(self, *data) -> 'Branch':
         action = DataReference(*data)
         return self.handler.new(action, [self], [], current_hierarchy=None, current_variables=action.input_variables,
-                         variables=self.variables+[action.input_variables], hierarchies=self.hierarchies)
+                         variables=self.variables + action.input_variables, hierarchies=self.hierarchies)
 
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
@@ -601,7 +620,7 @@ class Branch:
         return self.handler.new(action, [self], singular + multiple, None, variables + hierarchies,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
-    def operate(self, *string_functions, namehint=None, **inputs) -> 'Branch':
+    def operate(self, *string_functions, namehint=None, **inputs: CypherVariable) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible

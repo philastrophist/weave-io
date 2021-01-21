@@ -127,7 +127,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             h = self._process_result_row(row, self.hierarchy_type)
             results.append(h)
         if len(results) == 1 and squeeze:
-            return result[0]
+            return results[0]
         return results
 
     def _get_hierarchy(self, name, plural):
@@ -152,17 +152,18 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if basehier == self.hierarchy_type:
                 local.append((name, plural))
             else:
-                remote_paths[basehier] = (pathsdict, plural)
+                remote_paths[basehier] = ({path for pathset in pathsdict.values() for path in pathset}, plural)
                 remote[basehier].append(name)
 
         variables = {}
         branch = self.branch
-        branch = branch.operate(*[f'{{h}}.{name}' for name, plural in local], h=self.hierarchy_variable)
-        for v, (k, _) in zip(branch.action.output_variables, local):
-            variables[k] = v
+        if len(local):
+            branch = branch.operate(*[f'{{h}}.{name}' for name, plural in local], h=self.hierarchy_variable)
+            for v, (k, _) in zip(branch.action.output_variables, local):
+                variables[k] = v
 
         for basehier, factors in remote.items():
-            paths = remote_paths[basehier][0].values()
+            paths = remote_paths[basehier][0]
             plural = remote_paths[basehier][1]
             travel = branch.traverse(*paths)
             operate = travel.operate(*[f'{{h}}.{name}' for name in factors], h=travel.current_hierarchy)
@@ -173,7 +174,10 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             for v, name in zip(operate.current_variables, factors):
                 variables[name] = branch.action.transformed_variables[v]
 
-        return branch, [variables[name] for name in names]
+        # now propagate variables forward
+        values = [variables[name] for name in names]
+        variables = branch.get_variables(values)
+        return branch, variables
 
     def _get_factor(self, name, plural):
         branch, factor_variables = self._get_factor_query([name], [plural])
@@ -192,7 +196,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         returns query and the labels (if any) for the table
         """
         if isinstance(item, tuple):  # return without headers
-            return_keys = None
+            return_keys = list(item)
             keys = list(item)
         elif isinstance(item, list):
             keys = item
@@ -201,7 +205,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             raise TypeError("item must be of type list, tuple, or str")
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
-        plurals = [not self.is_singular_name(i) for i in item]
+        plurals = [not self.data.is_singular_name(i) for i in item]
         branch, factor_variables = self._get_factor_query(keys, plurals)
         return TableFactorFrozenQuery(self.handler, branch, keys, factor_variables, plurals, return_keys, self.parent)
 

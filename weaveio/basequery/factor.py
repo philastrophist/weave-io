@@ -72,8 +72,6 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
 
     def _post_process(self, result, squeeze: bool = True):
         t = super(TableFactorFrozenQuery, self)._post_process(result, squeeze)
-        if self.return_keys is None:
-            t = np.asarray([t[c].data for c in t.colnames]).T  # without column names
         return t
 
     def __getattr__(self, item):
