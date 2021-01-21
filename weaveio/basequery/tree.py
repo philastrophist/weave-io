@@ -183,19 +183,6 @@ class DataReference(Action):
         return 'DataReference'
 
 
-
-# class OrderBy(Action):
-#
-#     def __init__(self, base_hierarchies, ):
-#
-#     def to_cypher(self):
-#         collections = f'collect({self.sort_node}) as {self.collected_variable}'
-#         with_statement = ', '.join(map(str, self.base_hierarchies + collections))
-#         call_statement = f'with {self.collected_variable} UNWIND {self.collected_variable} as {self.sort_node} RETURN {self.sort_node}' \
-#                          f' ORDER BY {self.sort_node}.{self.sort_property}'
-#         return f"WITH {with_statement} + CALL {{ {call_statement} }}"
-
-
 class Traversal(Action):
     """
     Traverse from one hierarchy level to another. This extends the branch and
@@ -257,11 +244,13 @@ class Collection(Action):
         self._reference = reference
 
         self.references = reference.find_hierarchies()
-        self.references += [v for v in reference.find_variables() if v not in self.references]
-        self.insingle_hierarchies = [h for x in singles for h in x.find_hierarchies() if h not in self.references]
-        self.insingle_variables = [v for x in singles for v in x.find_variables() if v not in self.insingle_hierarchies and v not in self.references]
-        self.inmultiple_hierarchies = [h for x in multiples  for h in x.find_hierarchies() if h not in self.references]
-        self.inmultiple_variables = [v for x in multiples for v in x.variables if v not in self.insingle_hierarchies and v not in self.references]
+        self.references += [v for v in reference.find_variables() if v not in self.references and not isinstance(v, CypherData)]
+        self.insingle_hierarchies = [h for x in singles for h in x.find_hierarchies() if h not in self.references and not isinstance(h, CypherData)]
+        self.insingle_variables = [v for x in singles for v in x.find_variables() if v not in self.insingle_hierarchies
+                                   and v not in self.references and not isinstance(v, CypherData)]
+        self.inmultiple_hierarchies = [h for x in multiples  for h in x.find_hierarchies() if h not in self.references and not isinstance(h, CypherData)]
+        self.inmultiple_variables = [v for x in multiples for v in x.variables if v not in self.insingle_hierarchies
+                                     and v not in self.references and not isinstance(v, CypherData)]
 
         self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
         self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
