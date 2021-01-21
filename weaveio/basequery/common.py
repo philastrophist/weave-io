@@ -28,6 +28,7 @@ class FrozenQuery:
         self.branch = branch
         self.parent = parent
         self.data = self.handler.data
+        self.string = ''
 
     def _traverse_frozenquery_stages(self):
         query = self
@@ -59,11 +60,14 @@ class FrozenQuery:
         cypher, params = self._prepare_cypher()
         return self.data.graph.execute(cypher, **params)
 
-    def _post_process(self, result: py2neo.Cursor):
+    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
         raise NotImplementedError
 
-    def __call__(self):
+    def __call__(self, squeeze=True):
         """Prepare and execute the query contained by this frozen object"""
         result = self._execute_query()
-        return self._post_process(result)
+        return self._post_process(result, squeeze)
+
+    def __repr__(self):
+        return f'{self.parent}{self.string}'

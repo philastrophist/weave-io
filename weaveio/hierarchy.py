@@ -454,6 +454,12 @@ class Graphable(metaclass=GraphableMeta):
         obj.node = node
         return obj
 
+    def __repr__(self):
+        i = ''
+        if self.idname is not None:
+            i = f'{self.identifier}'
+        return f"<{self.__class__.__name__}({self.idname}={i})>"
+
 
 class Hierarchy(Graphable):
     parents = []

@@ -84,14 +84,5 @@ class OperableMixin:
     def __len__(self) -> int:
         return super().__len__()
 
-    @overload
-    def __getitem__(self, i: int) -> _T: ...
-
-    @overload
-    def __getitem__(self, s: slice) -> List[_T]: ...
-
-    def __getitem__(self, i: int) -> _T:
-        return super().__getitem__(i)
-
     def __contains__(self, o: object) -> bool:
         return super().__contains__(o)

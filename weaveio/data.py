@@ -455,7 +455,7 @@ class Data:
         """
         assert not starting_point.is_template
         if factor_name in starting_point.products_and_factors:
-            return {starting_point: set()}
+            return {starting_point: set()}, starting_point
         reachable = list(nx.descendants(self.relation_graph, starting_point)) + list(nx.ancestors(self.relation_graph, starting_point))
         reachable = [h for h in reachable if factor_name in h.products_and_factors]
         if not len(reachable):
@@ -515,14 +515,13 @@ class Data:
                               plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
         if plural:
             graph = traversal_graph
-            try:
-                travel_path = self.shortest_path_without_oneway_violation(graph, a, b)
-            except nx.NetworkXNoPath:
-                path = self.shortest_path_without_oneway_violation(graph, b, a)
-                travel_path = path[::-1]
         else:
-            graph = nx.subgraph_view(traversal_graph, filter_edge=lambda x, y: not self.traversal_graph.edges[(x, y)]['multiplicity'])
+            graph = nx.subgraph_view(traversal_graph, filter_edge=lambda x, y: not traversal_graph.edges[(x, y)]['multiplicity'])
+        try:
             travel_path = self.shortest_path_without_oneway_violation(graph, a, b)
+        except nx.NetworkXNoPath:
+            path = self.shortest_path_without_oneway_violation(graph, b, a)
+            travel_path = path[::-1]
         multiplicity = []
         number = []
         _direction = []
@@ -640,6 +639,11 @@ class Data:
                 return before + self.plural_factors[name]
             except KeyError:
                 return before + self.plural_hierarchies[name].singular_name
+
+    def is_valid_name(self, name):
+        if isinstance(name, str):
+            return self.is_plural_name(name) or self.is_singular_name(name)
+        return False
 
     def is_plural_name(self, name):
         """

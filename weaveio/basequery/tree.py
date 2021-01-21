@@ -283,11 +283,13 @@ class Collection(Action):
 
 
 class Operation(Action):
-    compare = ['string_function', 'hashable_inputs']
+    compare = ['string_functions', 'hashable_inputs']
 
     def __init__(self, *string_functions: str, namehint=None, **inputs):
         self.string_functions = string_functions
-        self.outputs = [CypherVariable(namehint) for _ in string_functions]
+        if not isinstance(namehint, (list, tuple)):
+            namehint = [namehint] * len(string_functions)
+        self.outputs = [CypherVariable(nh) for _, nh in zip(string_functions, namehint)]
         self.inputs = inputs
         self.hashable_inputs = tuple(self.inputs.items())
         super().__init__(list(inputs.values()), self.outputs, target=self.outputs[0])
@@ -304,6 +306,7 @@ class Filter(Operation):
     shape = 'diamond'
     def __init__(self, string_function, **inputs):
         super().__init__(string_function, **inputs)
+        self.string_function = string_function
 
     def to_cypher(self):
         return f"WHERE {self.string_function.format(**self.inputs)}"

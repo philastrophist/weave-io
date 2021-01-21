@@ -4,7 +4,7 @@ import networkx as nx
 
 from .common import AmbiguousPathError
 from .hierarchy import *
-from .tree import BranchHandler
+from .tree import BranchHandler, TraversalPath
 
 
 class Handler:
