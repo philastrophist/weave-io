@@ -51,9 +51,9 @@ class Step:
         else:
             mid = f'-[:{self.label} {self.properties}]-'
         if self.direction == '->':
-            return f"{mid}>"
+            return f"{mid}"
         elif self.direction == '<-':
-            return f"<{mid}"
+            return f"{mid}"
         else:
             return mid
 
@@ -65,6 +65,7 @@ class TraversalPath:
         self.steps = []
         self.path = []
         self.end = CypherVariable(str(path[-1]))
+        self.repr_path = ''.join(path)
         for i, entry in enumerate(path[:-1]):
             if not i % 2:  # even number
                 step = Step(entry)
@@ -74,9 +75,15 @@ class TraversalPath:
                 self.nodes.append(str(entry))
                 self.path.append(f'(:{entry})')
 
+    def __len__(self):
+        return len(self.nodes) + 1
+
     def __str__(self):
         end = f'({self.end}:{self.end.namehint})'
         return ''.join(map(str, self.path)) + end
+
+    def __repr__(self):
+        return f'<TraversalPath({str(self.repr_path)})>'
 
     def __eq__(self, other):
         if self.__class__ != other.__class__:
@@ -142,18 +149,22 @@ class EntryPoint(Action):
 
 
 class StartingPoint(Action):
-    compare = ['label']
+    compare = ['labels']
 
-    def __init__(self, label):
-        self.label = label
-        self.hierarchy = CypherVariable(self.label)
+    def __init__(self, *labels):
+        self.labels = labels
+        self.hierarchy = CypherVariable(self.labels[-1])
         super().__init__([], [self.hierarchy], target=self.hierarchy)
 
     def to_cypher(self):
-        return f"OPTIONAL MATCH ({self.hierarchy}:{self.label})"
+        s = f"OPTIONAL MATCH ({self.hierarchy}:{self.labels[0]})"
+        if len(self.labels) == 1:
+            return s
+        condition = ' OR '.join([f'{self.hierarchy}:{l}' for l in self.labels[1:]])
+        return s + f" WHERE {condition}"
 
     def __str__(self):
-        return f'{self.label}'
+        return '|'.join(self.labels)
 
 
 class DataReference(Action):
@@ -170,19 +181,6 @@ class DataReference(Action):
 
     def __str__(self):
         return 'DataReference'
-
-
-
-# class OrderBy(Action):
-#
-#     def __init__(self, base_hierarchies, ):
-#
-#     def to_cypher(self):
-#         collections = f'collect({self.sort_node}) as {self.collected_variable}'
-#         with_statement = ', '.join(map(str, self.base_hierarchies + collections))
-#         call_statement = f'with {self.collected_variable} UNWIND {self.collected_variable} as {self.sort_node} RETURN {self.sort_node}' \
-#                          f' ORDER BY {self.sort_node}.{self.sort_property}'
-#         return f"WITH {with_statement} + CALL {{ {call_statement} }}"
 
 
 class Traversal(Action):
@@ -213,9 +211,7 @@ class Traversal(Action):
 
     def to_cypher(self):
         lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
-        if len(self.paths) == 1:
-            return lines[0]
-        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
+        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN DISTINCT {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
         return f"""CALL {{\n{lines}\n}}"""
 
     def __str__(self):
@@ -247,11 +243,14 @@ class Collection(Action):
         self._multiples = tuple(multiples)
         self._reference = reference
 
-        self.references = reference.hierarchies
-        self.insingle_hierarchies = [x.hierarchies[-1] for x in singles]
-        self.insingle_variables = [v for x in singles for v in x.variables]
-        self.inmultiple_hierarchies = [x.hierarchies[-1] for x in multiples]
-        self.inmultiple_variables = [v for x in multiples for v in x.variables]
+        self.references = reference.find_hierarchies()
+        self.references += [v for v in reference.find_variables() if v not in self.references and not isinstance(v, CypherData)]
+        self.insingle_hierarchies = [h for x in singles for h in x.find_hierarchies() if h not in self.references and not isinstance(h, CypherData)]
+        self.insingle_variables = [v for x in singles for v in x.find_variables() if v not in self.insingle_hierarchies
+                                   and v not in self.references and not isinstance(v, CypherData)]
+        self.inmultiple_hierarchies = [h for x in multiples  for h in x.find_hierarchies() if h not in self.references and not isinstance(h, CypherData)]
+        self.inmultiple_variables = [v for x in multiples for v in x.variables if v not in self.insingle_hierarchies
+                                     and v not in self.references and not isinstance(v, CypherData)]
 
         self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
         self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
@@ -263,9 +262,9 @@ class Collection(Action):
 
     def to_cypher(self):
         base = [f'{r}' for r in self.references + ['time0']]
-        single_hierarchies = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
+        single_hierarchies = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
         multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
-        single_variables = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
+        single_variables = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
         return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
 
@@ -274,26 +273,30 @@ class Collection(Action):
 
 
 class Operation(Action):
-    compare = ['string_function', 'hashable_inputs']
+    compare = ['string_functions', 'hashable_inputs']
 
-    def __init__(self, string_function: str, **inputs):
-        self.string_function = string_function
-        self.output = CypherVariable('operation')
+    def __init__(self, *string_functions: str, namehint=None, **inputs):
+        self.string_functions = string_functions
+        if not isinstance(namehint, (list, tuple)):
+            namehint = [namehint] * len(string_functions)
+        self.outputs = [CypherVariable(nh) for _, nh in zip(string_functions, namehint)]
         self.inputs = inputs
         self.hashable_inputs = tuple(self.inputs.items())
-        super().__init__(list(inputs.values()), [self.output], target=self.output)
+        super().__init__(list(inputs.values()), self.outputs, target=self.outputs[0])
 
     def to_cypher(self):
-        return f"WITH *, {self.string_function.format(**self.inputs)} as {self.output_variables[0]}"
+        assignments = [f"{func.format(**self.inputs)} as {out}" for func, out in zip(self.string_functions, self.outputs)]
+        return f"WITH *, {', '.join(assignments)}"
 
     def __str__(self):
-        return self.string_function
+        return ', '.join(self.string_functions)
 
 
 class Filter(Operation):
     shape = 'diamond'
     def __init__(self, string_function, **inputs):
         super().__init__(string_function, **inputs)
+        self.string_function = string_function
 
     def to_cypher(self):
         return f"WHERE {self.string_function.format(**self.inputs)}"
@@ -431,8 +434,8 @@ class BranchHandler:
         self.current_hierarchy = current_hierarchy
         return instance
 
-    def begin(self, label):
-        action = StartingPoint(label)
+    def begin(self, *labels):
+        action = StartingPoint(*labels)
         return self.new(action, [self.entry], [], action.hierarchy, [action.hierarchy], [], [action.hierarchy])
 
     def relevant_graph(self, branch):
@@ -542,10 +545,32 @@ class Branch:
                 branches.append(branch)
         return branches
 
+    def get_variables(self, variables: List[CypherVariable]):
+        squeeze = False
+        if not isinstance(variables, (list, tuple)):
+            variables = [variables]
+            squeeze = True
+        accessible_variables = self.find_variables()
+        for branch in self.iterdown(self.relevant_graph):
+            for i, variable in enumerate(variables):
+                if variable in accessible_variables:
+                    pass
+                if variable in branch.current_variables:
+                    pass
+                else:
+                    try:
+                        variables[i] = branch.action.transformed_variables[variable]
+                    except (AttributeError, KeyError):
+                        pass
+        if squeeze and len(variables) == 1:
+            return variables[0]
+        return variables
+
+
     def add_data(self, *data) -> 'Branch':
         action = DataReference(*data)
         return self.handler.new(action, [self], [], current_hierarchy=None, current_variables=action.input_variables,
-                         variables=self.variables+[action.input_variables], hierarchies=self.hierarchies)
+                         variables=self.variables + action.input_variables, hierarchies=self.hierarchies)
 
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
@@ -588,7 +613,7 @@ class Branch:
         return self.handler.new(action, [self], singular + multiple, None, variables + hierarchies,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
-    def operate(self, string_function, **inputs) -> 'Branch':
+    def operate(self, *string_functions, namehint=None, **inputs: CypherVariable) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
@@ -596,7 +621,7 @@ class Branch:
         # missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
         # if missing:
         #     raise ValueError(f"inputs {missing} are not in scope for {self}")
-        op = Operation(string_function, **inputs)
+        op = Operation(*string_functions, namehint=namehint, **inputs)
         return self.handler.new(op, [self], [], None, op.output_variables,
                                 variables=self.variables + op.output_variables, hierarchies=self.hierarchies)
 

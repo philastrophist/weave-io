@@ -1,7 +1,8 @@
 from pathlib import Path
-from typing import Union, Dict, List
+from typing import Union, List, Tuple, Dict
 
 from astropy.io import fits
+from astropy.io.fits.hdu.base import _BaseHDU
 
 from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy
@@ -37,7 +38,7 @@ class File(Hierarchy):
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
-                  **hierarchies: Union[Hierarchy, List[Hierarchy]]):
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str,'HDU'], 'File', List[_BaseHDU]]:
         path = Path(directory) / Path(fname)
         file = cls(fname, **hierarchies)
         hdus = [i for i in fits.open(path)]
@@ -46,8 +47,8 @@ class File(Hierarchy):
                             f" whereas {path} has {len(hdus)} ({[i.name for i in hdus]})")
         hduinstances = {}
         for i, ((hduname, hduclass), hdu) in enumerate(zip(cls.hdus.items(), hdus)):
-            hduinstances[hduname] = hduclass.from_hdu(hdu, i, file)
-        return hduinstances, file
+            hduinstances[hduname] = hduclass.from_hdu(hduname, hdu, i, file)
+        return hduinstances, file, hdus
 
     def read_product(self, product_name):
         self.build_index()
@@ -57,8 +58,8 @@ class File(Hierarchy):
 class HDU(Hierarchy):
     is_template = True
     parents = [File]
-    factors = ['sourcefile', 'extn']
-    identifier_builder = ['sourcefile', 'extn']
+    factors = ['sourcefile', 'extn', 'name']
+    identifier_builder = ['sourcefile', 'extn', 'name']
     binaries = ['header', 'data']
     concatenation_constants = None
 
@@ -67,11 +68,12 @@ class HDU(Hierarchy):
         return {}
 
     @classmethod
-    def from_hdu(cls, hdu, extn, file):
+    def from_hdu(cls, name, hdu, extn, file):
         input_dict = cls._from_hdu(hdu)
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
         input_dict['sourcefile'] = file.fname
+        input_dict['name'] = name
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 for c in cls.concatenation_constants:
@@ -88,6 +90,7 @@ class PrimaryHDU(HDU):
 
 
 class BaseDataHDU(HDU):
+    is_template = True
     concatenation_constants = ['ncols']
     factors = HDU.factors + ['nrows', 'ncols']
 

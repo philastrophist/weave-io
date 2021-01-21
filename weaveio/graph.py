@@ -74,6 +74,7 @@ class Graph(metaclass=ContextMeta):
         return instance
 
     def __init__(self, profile=None, name=None, **settings):
+        self.write_allowed = settings.pop('write', False)
         self.neograph = NeoGraph(profile, name, **settings)
 
     def create_unique_constraint(self, label, key):
@@ -103,6 +104,8 @@ class Graph(metaclass=ContextMeta):
             return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
+        if not self.write_allowed:
+            raise IOError(f"Write is not allowed, set `write=True` to permit writing.")
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
         return self._execute(cypher, d)
 
