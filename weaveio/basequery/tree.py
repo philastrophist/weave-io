@@ -51,9 +51,9 @@ class Step:
         else:
             mid = f'-[:{self.label} {self.properties}]-'
         if self.direction == '->':
-            return f"{mid}>"
+            return f"{mid}"
         elif self.direction == '<-':
-            return f"<{mid}"
+            return f"{mid}"
         else:
             return mid
 

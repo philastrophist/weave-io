@@ -6,7 +6,7 @@ import py2neo
 from .common import FrozenQuery, AmbiguousPathError
 from .factor import SingleFactorFrozenQuery, TableFactorFrozenQuery
 from .tree import Branch
-from ..hierarchy import Hierarchy, Multiple
+from ..hierarchy import Hierarchy, Multiple, One2One
 from ..writequery import CypherVariable
 
 
@@ -104,9 +104,15 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         inputs = {}
         for f in nodetype.factors:
             inputs[f] = node[f]
+        if nodetype.idname is not None:
+            inputs[nodetype.idname] = node[nodetype.idname]
+        if node is None:
+            return None
         base_query = self.handler.hierarchy_from_neo4j_identity(nodetype, node.identity)
         for p in nodetype.parents:
-            if isinstance(p, Multiple):
+            if isinstance(p, One2One):
+                inputs[p.singular_name] = getattr(base_query, p.plural_name)
+            elif isinstance(p, Multiple):
                 inputs[p.plural_name] = getattr(base_query, p.plural_name)
             else:
                 try:
