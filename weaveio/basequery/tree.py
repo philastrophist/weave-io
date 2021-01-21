@@ -256,11 +256,12 @@ class Collection(Action):
         self._multiples = tuple(multiples)
         self._reference = reference
 
-        self.references = reference.hierarchies
-        self.insingle_hierarchies = [x.hierarchies[-1] for x in singles]
-        self.insingle_variables = [v for x in singles for v in x.variables]
-        self.inmultiple_hierarchies = [x.hierarchies[-1] for x in multiples]
-        self.inmultiple_variables = [v for x in multiples for v in x.variables]
+        self.references = reference.find_hierarchies()
+        self.references += [v for v in reference.find_variables() if v not in self.references]
+        self.insingle_hierarchies = [h for x in singles for h in x.find_hierarchies() if h not in self.references]
+        self.insingle_variables = [v for x in singles for v in x.find_variables() if v not in self.insingle_hierarchies and v not in self.references]
+        self.inmultiple_hierarchies = [h for x in multiples  for h in x.find_hierarchies() if h not in self.references]
+        self.inmultiple_variables = [v for x in multiples for v in x.variables if v not in self.insingle_hierarchies and v not in self.references]
 
         self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
         self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
@@ -272,9 +273,9 @@ class Collection(Action):
 
     def to_cypher(self):
         base = [f'{r}' for r in self.references + ['time0']]
-        single_hierarchies = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
+        single_hierarchies = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
         multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
-        single_variables = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
+        single_variables = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
         return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
 
@@ -560,8 +561,11 @@ class Branch:
         if not isinstance(variables, (list, tuple)):
             variables = [variables]
             squeeze = True
+        accessible_variables = self.find_variables()
         for branch in self.iterdown(self.relevant_graph):
             for i, variable in enumerate(variables):
+                if variable in accessible_variables:
+                    pass
                 if variable in branch.current_variables:
                     pass
                 else:

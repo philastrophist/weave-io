@@ -144,6 +144,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             names = [names]
         if not isinstance(plurals, (list, tuple)):
             plurals = [plurals]
+        names = [self.data.singular_name(name) for name in names]
         local = []
         remote = defaultdict(list)
         remote_paths = {}
@@ -157,10 +158,6 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
         variables = {}
         branch = self.branch
-        if len(local):
-            branch = branch.operate(*[f'{{h}}.{name}' for name, plural in local], h=self.hierarchy_variable)
-            for v, (k, _) in zip(branch.action.output_variables, local):
-                variables[k] = v
 
         for basehier, factors in remote.items():
             paths = remote_paths[basehier][0]
@@ -173,6 +170,11 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
                 branch = branch.collect([operate], [])
             for v, name in zip(operate.current_variables, factors):
                 variables[name] = branch.action.transformed_variables[v]
+
+        if len(local):
+            branch = branch.operate(*[f'{{h}}.{name}' for name, plural in local], h=self.hierarchy_variable)
+            for v, (k, _) in zip(branch.action.output_variables, local):
+                variables[k] = v
 
         # now propagate variables forward
         values = [variables[name] for name in names]
