@@ -15,6 +15,13 @@ class Handler:
     def begin_with_heterogeneous(self):
         return HeterogeneousHierarchyFrozenQuery(self, self.branch_handler.entry)
 
+    def hierarchy_from_neo4j_identity(self, htype, identity):
+        begin = self.branch_handler.begin(htype.__name__)
+        new = begin.add_data(identity)
+        identifier_var = new.current_variables[0]
+        branch = new.filter('id({h}) = {identifier}', h=begin.current_hierarchy, identifier=identifier_var)
+        return DefiniteHierarchyFrozenQuery(self, branch, htype, branch.current_hierarchy, [], None)
+
     def paths2factor(self, factor_name: str,  plural: bool,
                      start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
         """

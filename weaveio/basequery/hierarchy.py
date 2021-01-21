@@ -104,8 +104,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         inputs = {}
         for f in nodetype.factors:
             inputs[f] = node[f]
-        inputs[nodetype.idname] = node[nodetype.idname]
-        base_query = getattr(self.handler.begin_with_heterogeneous(), nodetype.plural_name)[node['id']]
+        base_query = self.handler.hierarchy_from_neo4j_identity(nodetype, node.identity)
         for p in nodetype.parents:
             if isinstance(p, Multiple):
                 inputs[p.plural_name] = getattr(base_query, p.plural_name)

@@ -53,20 +53,22 @@ class FrozenQuery:
         cypher, params = query.render_query()
         return cypher, params
 
-    def _execute_query(self):
+    def _execute_query(self, limit=None):
         """Override to allow custom edits as to how the cypher text is run"""
         if not self.executable:
             raise TypeError(f"{self.__class__} may not be executed as queries in their own right")
         cypher, params = self._prepare_cypher()
+        if limit is not None:
+            cypher += f'\nLIMIT {limit}'
         return self.data.graph.execute(cypher, **params)
 
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
         raise NotImplementedError
 
-    def __call__(self, squeeze=True):
+    def __call__(self, limit=None, squeeze=True):
         """Prepare and execute the query contained by this frozen object"""
-        result = self._execute_query()
+        result = self._execute_query(limit=limit)
         return self._post_process(result, squeeze)
 
     def __repr__(self):
