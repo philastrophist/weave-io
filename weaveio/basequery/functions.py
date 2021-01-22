@@ -13,11 +13,11 @@ def _template_aggregator(string_function, name, item: Dissociated, wrt: FrozenQu
     new = branch.aggregate(string_function, item.variable, item.branch, True, name)
     return Dissociated(item.handler, new, new.action.target)
 
-def sum(item, wrt):
+def sum(item, wrt=None):
     return _template_aggregator('sum({x})', 'sum', item, wrt)
 
 
-def max(item, wrt):
+def max(item, wrt=None):
     return _template_aggregator('max({x})', 'max', item, wrt)
 
 
@@ -25,13 +25,13 @@ def min(item, wrt):
     return _template_aggregator('min({x})', 'min', item, wrt)
 
 
-def all(item, wrt):
+def all(item, wrt=None):
     raise NotImplementedError
 
 
-def any(item, wrt):
+def any(item, wrt=None):
     raise NotImplementedError
 
 
-def count(item, wrt):
+def count(item, wrt=None):
     raise NotImplementedError

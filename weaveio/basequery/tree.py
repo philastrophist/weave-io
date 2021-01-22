@@ -271,7 +271,7 @@ class Branch:
         branch_is_scalar = branch.find_hierarchy_branches(True)[-1] is shared
         self_is_scalar = self.find_hierarchy_branches(True)[-1] is shared
         if branch_is_scalar and self_is_scalar:
-            return self.handler._align_same_level(shared, self, branch)
+            return self.handler._align_different_level(shared, self, branch)
         if branch_is_scalar:
             return self.handler._align_scalar(shared, self, branch)
         elif self_is_scalar:

@@ -25,12 +25,6 @@ class Dissociated(FrozenQuery):
                     'x': aligned.action.transformed_variables.get(self.variable, self.variable),
                     'y': aligned.action.transformed_variables.get(other.variable, other.variable)
                 }
-                # try:
-                #     y = aligned.action.transformed_variables[other.variable]
-                #     inputs = {'x': self.variable, 'y': y}
-                # except KeyError:  # the alignment swapped them round
-                #     x = aligned.action.transformed_variables[self.variable]
-                #     inputs = {'y': other.variable, 'x': x}
             elif isinstance(other, FrozenQuery):
                 raise TypeError(f"Cannot compare types {self.__class__} and {other.__class__}")
             else:
