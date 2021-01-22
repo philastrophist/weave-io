@@ -17,6 +17,15 @@ class Dissociated(FrozenQuery):
         super().__init__(handler, branch, parent)
         self.variable = variable
 
+    def _filter_by_boolean(self, boolean_filter: 'FrozenQuery'):
+        new = self._make_filtered_branch(boolean_filter)
+        return self.__class__(self.handler, new, self.variable, self)
+
+    def __getitem__(self, boolean_filter: 'Dissociated'):
+        if not isinstance(boolean_filter, Dissociated):
+            raise TypeError(f"Factors may only be filtered with `[]` using a boolean filter")
+        return self._filter_by_boolean(boolean_filter)
+
     def _apply_func(self, string, other: 'Dissociated' = None):
         if other is not None:
             if isinstance(other, Dissociated):  # now we have to align first

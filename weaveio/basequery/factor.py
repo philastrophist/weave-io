@@ -17,6 +17,10 @@ class FactorFrozenQuery(Dissociated):
         self.factor_variables = factor_variables
         self.plurals = plurals
 
+    def _filter_by_boolean(self, boolean_filter: 'Dissociated'):
+        new = self._make_filtered_branch(boolean_filter)
+        return self.__class__(self.handler, new, self.factors, self.factor_variables, self.plurals, self)
+
     def _prepare_query(self) -> CypherQuery:
         with super()._prepare_query() as query:
             return query.returns(*self.factor_variables)
@@ -72,4 +76,15 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
         return t
 
     def __getattr__(self, item):
-        raise NotYetImplementedError
+        return self.__getitem__(item)
+
+    def __getitem__(self, item):
+        if isinstance(item, str):
+            try:
+                i = self.factors.index(item)
+            except ValueError:
+                raise KeyError(f"{item} is not a factor contained within {self}. Only {self.factors} are accessible.")
+            else:
+                return SingleFactorFrozenQuery(self.handler, self.branch, item, self.factor_variables[i], self.plurals[i], self)
+        else:
+            return super(TableFactorFrozenQuery, self).__getitem__(item)
