@@ -21,12 +21,16 @@ class Dissociated(FrozenQuery):
         if other is not None:
             if isinstance(other, Dissociated):  # now we have to align first
                 aligned = self.branch.align(other.branch)
-                try:
-                    y = aligned.action.transformed_variables[other.variable]
-                    inputs = {'x': self.variable, 'y': y}
-                except KeyError:  # the alignment swapped them round
-                    x = aligned.action.transformed_variables[self.variable]
-                    inputs = {'y': other.variable, 'x': x}
+                inputs = {
+                    'x': aligned.action.transformed_variables.get(self.variable, self.variable),
+                    'y': aligned.action.transformed_variables.get(other.variable, other.variable)
+                }
+                # try:
+                #     y = aligned.action.transformed_variables[other.variable]
+                #     inputs = {'x': self.variable, 'y': y}
+                # except KeyError:  # the alignment swapped them round
+                #     x = aligned.action.transformed_variables[self.variable]
+                #     inputs = {'y': other.variable, 'x': x}
             elif isinstance(other, FrozenQuery):
                 raise TypeError(f"Cannot compare types {self.__class__} and {other.__class__}")
             else:
@@ -75,10 +79,10 @@ class Dissociated(FrozenQuery):
         return self._apply_func('{x} < {y}', other)
 
     def __le__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
-        return self._apply_func('{x} >= {y}', other)
+        return self._apply_func('{x} <= {y}', other)
 
     def __gt__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
-        return self._apply_func('{x} < {y}', other)
+        return self._apply_func('{x} > {y}', other)
 
     def __ge__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
         return self._apply_func('{x} >= {y}', other)

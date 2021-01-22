@@ -116,5 +116,8 @@ def branch2query(branch) -> CypherQuery:
             if isinstance(node.action, DataReference):
                 query.data += node.action.input_variables
         for s in subqueries:
+            if isinstance(s, list):
+                if len(s) == 0:
+                    continue
             write_tree(s)
     return query

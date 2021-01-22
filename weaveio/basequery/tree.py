@@ -6,8 +6,8 @@ from typing import List, Dict, Optional
 import networkx as nx
 from networkx import OrderedDiGraph
 
-from weaveio.basequery.actions import Action, EntryPoint, StartingPoint, DataReference, Traversal, Collection, Aggregation, Operation, Filter, shared_branch_without_filters, Results, TraversalPath, ScalarAlignment
-from weaveio.writequery.base import CypherVariable
+from weaveio.basequery.actions import Action, EntryPoint, StartingPoint, DataReference, Traversal, Collection, Aggregation, Operation, Filter, shared_branch_without_filters, Results, TraversalPath, ScalarAlignment, DifferentLevelAlignment
+from weaveio.writequery.base import CypherVariable, CypherData
 
 
 class BranchHandler:
@@ -62,15 +62,35 @@ class BranchHandler:
         return distances[distances.index(min(distances, key=lambda x: x[0]))][1]
 
     def _align_scalar(self, shared: 'Branch', vector: 'Branch', scalar: 'Branch'):
+        scalar_collected = shared.collect([scalar], [])
+        action = ScalarAlignment(vector, [scalar_collected])
+        action.transformed_variables = scalar_collected.action.transformed_variables
+        return self.new(action, [vector], [scalar_collected], None, action.outs, [], [])
+
+    def _align_different_level(self, shared: 'Branch', branch1: 'Branch', branch2: 'Branch'):
         """
         1. collect the vector back to the shared level
         2. coalesce the scalar back to the shared level
         3. unwind the vector
         """
-        scalar_collected = shared.collect([scalar], [])
-        action = ScalarAlignment(vector, [scalar_collected])
-        action.transformed_variables = scalar_collected.action.transformed_variables
-        return self.new(action, [vector], [scalar_collected], None, action.outs, [], [])
+        collected1 = shared.collect([], [branch1])
+        collected2 = shared.collect([], [branch2])
+        action = DifferentLevelAlignment(shared, [collected1, collected2])
+        transformed_variables = {}
+        shared_variables = {v: v for v in shared.find_variables()}
+        for v in branch1.find_variables():
+            if v not in shared_variables and not isinstance(v, CypherData):
+                transformed_variables[v] = action.transformed_variables[collected1.action.transformed_variables[v]]
+        for v in branch2.find_variables():
+            if v not in shared_variables and not isinstance(v, CypherData):
+                transformed_variables[v] = action.transformed_variables[collected2.action.transformed_variables[v]]
+        transformed_variables.update(shared_variables)
+        # transformed_variables = collected1.action.transformed_variables
+        # transformed_variables.update(collected2.action.transformed_variables)
+        # transformed_variables.update(action.transformed_variables)
+        action.transformed_variables = transformed_variables
+        return self.new(action, [shared], [collected1, collected2], None, action.outs, [], [])
+
 
 
 def plot(graph, fname):
@@ -251,13 +271,13 @@ class Branch:
         branch_is_scalar = branch.find_hierarchy_branches(True)[-1] is shared
         self_is_scalar = self.find_hierarchy_branches(True)[-1] is shared
         if branch_is_scalar and self_is_scalar:
-            return self.handler._align_same_level(self, branch)
+            return self.handler._align_same_level(shared, self, branch)
         if branch_is_scalar:
             return self.handler._align_scalar(shared, self, branch)
         elif self_is_scalar:
             return self.handler._align_scalar(shared, branch, self)
         else:
-            return self.handler._align_different_level(self, branch)
+            return self.handler._align_different_level(shared, self, branch)
 
 
 

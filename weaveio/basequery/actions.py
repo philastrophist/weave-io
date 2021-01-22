@@ -422,28 +422,26 @@ class Results(Action):
         return 'return {}'.format(', '.join(names))
 
 
-class OldScalarAlignment(Alignment):
-    compare = ['shared_variables', 'scalar_variables', 'vector_variables']
-    continues_on = True
+class DifferentLevelAlignment(Alignment):
+    compare = ['reference', 'branches']
+    continues_on = False
 
-    def __init__(self, reference, branches, shared_variables: List[CypherVariable],
-                 vector_variables: List[CypherVariable], scalar_variables: List[CypherVariable]):
+    def __init__(self, reference, branches):
         self.reference = reference
-        self.branches = branches
-        self.shared_variables = tuple(shared_variables)
-        self.vector_variables = tuple(vector_variables)
-        self.scalar_variables = tuple(scalar_variables)
-        ins = shared_variables + vector_variables + scalar_variables
-        self.outs = [CypherVariable(v.namehint) for v in vector_variables]
+        self.branches = tuple(branches)
+        self.shared_variables = reference.find_variables()
+        self.to_unwind = [v for branch in branches for v in branch.find_variables() if v not in self.shared_variables]
+        ins = self.shared_variables + self.to_unwind
+        self.outs = [CypherVariable(v.namehint) for v in self.to_unwind]
         self.indexer = CypherVariable('i')
-        transformed = {v: o for v, o in zip(vector_variables, self.outs)}
-        transformed.update({v: v for v in scalar_variables + shared_variables})
+        transformed = {v: o for v, o in zip(self.to_unwind, self.outs)}
+        transformed.update({v: v for v in self.shared_variables})
         super().__init__(ins, self.outs, [self.indexer], transformed)
 
     def to_cypher(self):
-        unwind = f'UNWIND range(0, size({self.vector_variables[0]})-1) as {self.indexer}'
-        unzip = [f'{v}[{self.indexer}] as {o}' for v, o in zip(self.vector_variables, self.outs)]
-        static = [f'{v}' for v in self.scalar_variables + self.shared_variables]
+        unwind = f'UNWIND range(0, size({self.to_unwind[0]})-1) as {self.indexer}'
+        unzip = [f'{v}[{self.indexer}] as {o}' for v, o in zip(self.to_unwind, self.outs)]
+        static = [f'{v}' for v in self.shared_variables]
         get = f'WITH {", ".join(["time0"] + static + unzip)}'
         return f'{unwind}\n{get}'
 
