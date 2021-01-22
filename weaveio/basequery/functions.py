@@ -26,12 +26,12 @@ def min(item, wrt):
 
 
 def all(item, wrt=None):
-    raise NotImplementedError
+    return _template_aggregator('all({x})', 'all', item, wrt)
 
 
 def any(item, wrt=None):
-    raise NotImplementedError
+    return _template_aggregator('any({x})', 'any', item, wrt)
 
 
 def count(item, wrt=None):
-    raise NotImplementedError
+    return _template_aggregator('count({x})', 'count', item, wrt)

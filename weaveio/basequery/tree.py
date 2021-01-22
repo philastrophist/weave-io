@@ -83,11 +83,11 @@ class BranchHandler:
                 transformed_variables[v] = action.transformed_variables[collected1.action.transformed_variables[v]]
         for v in branch2.find_variables():
             if v not in shared_variables and not isinstance(v, CypherData):
-                transformed_variables[v] = action.transformed_variables[collected2.action.transformed_variables[v]]
+                try:
+                    transformed_variables[v] = action.transformed_variables[collected2.action.transformed_variables[v]]
+                except KeyError:
+                    pass
         transformed_variables.update(shared_variables)
-        # transformed_variables = collected1.action.transformed_variables
-        # transformed_variables.update(collected2.action.transformed_variables)
-        # transformed_variables.update(action.transformed_variables)
         action.transformed_variables = transformed_variables
         return self.new(action, [shared], [collected1, collected2], None, action.outs, [], [])
 

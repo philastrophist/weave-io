@@ -81,6 +81,12 @@ class Dissociated(FrozenQuery):
     def __ge__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
         return self._apply_func('{x} >= {y}', other)
 
+    def __and__(self, other: 'Dissociated') -> 'Dissociated':
+        return self._apply_func('({x} AND {y})', other)
+
+    def __or__(self, other: 'Dissociated') -> 'Dissociated':
+        return self._apply_func('({x} OR {y})', other)
+
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
         df = result.to_data_frame()
         assert len(df.columns) == 1
