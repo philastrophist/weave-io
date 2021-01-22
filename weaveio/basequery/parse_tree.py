@@ -5,7 +5,8 @@ from typing import List
 
 import networkx as nx
 
-from weaveio.basequery.tree import Branch, DataReference, Alignment
+from weaveio.basequery.tree import Branch
+from weaveio.basequery.actions import DataReference, Alignment
 from weaveio.writequery import CypherQuery
 from weaveio.writequery.base import Statement, CypherData
 
@@ -91,7 +92,7 @@ def write_tree(parsed_tree):
     if isinstance(parsed_tree, list):
         inputs = [i for n in flatten(parsed_tree) for i in n.action.input_variables]
         outputs = [i for n in flatten(parsed_tree) for i in n.action.output_variables]
-        subquery_inputs = list({i for i in inputs if getattr(i, 'parent', i) not in outputs})
+        subquery_inputs = list({i for i in inputs if getattr(i, 'parent', i) not in outputs and not isinstance(i, CypherData)})
 
         open = OpenSubquery(subquery_inputs, [])
         query.add_statement(open, safe=False)
@@ -102,7 +103,7 @@ def write_tree(parsed_tree):
         query.add_statement(close)
         return subquery_output
     else:
-        query.add_statement(parsed_tree.action)
+        query.add_statement(parsed_tree.action, safe=False)
         return parsed_tree.find_variables()
 
 def branch2query(branch) -> CypherQuery:

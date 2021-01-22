@@ -1,12 +1,10 @@
 from typing import List
 
-import numpy as np
 import py2neo
 from astropy.table import Table, Column
 
-from weaveio.basequery.common import FrozenQuery, UnexpectedResult, NotYetImplementedError
+from weaveio.basequery.common import FrozenQuery, NotYetImplementedError
 from weaveio.basequery.dissociated import Dissociated
-from weaveio.basequery.functions import OperableMixin
 from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherVariable, CypherQuery
 
@@ -14,7 +12,7 @@ from weaveio.writequery import CypherVariable, CypherQuery
 class FactorFrozenQuery(Dissociated):
     def __init__(self, handler, branch: Branch, factors: List[str], factor_variables: List[CypherVariable],
                  plurals: List[bool], parent: FrozenQuery = None):
-        super().__init__(handler, branch, parent)
+        super().__init__(handler, branch, factor_variables[0], parent)
         self.factors = factors
         self.factor_variables = factor_variables
         self.plurals = plurals
@@ -40,20 +38,19 @@ class FactorFrozenQuery(Dissociated):
                     if len(lengths) == 1:  # all the same length
                         table[colname] = Column(df[colname], name=colname, shape=lengths.pop(), length=len(df))
         if len(table) == 1 and squeeze:
-            return table[0]
+            table = table[0]
+        if len(table.colnames) == 1 and squeeze:
+            table = table[table.colnames[0]]
         return table
 
 
-class SingleFactorFrozenQuery(FactorFrozenQuery, OperableMixin):
+class SingleFactorFrozenQuery(FactorFrozenQuery):
     def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable, plural: bool, parent: FrozenQuery = None):
         super().__init__(handler, branch, [factor], [factor_variable], [plural], parent)
 
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
         t = super(SingleFactorFrozenQuery, self)._post_process(result, squeeze)
-        column = t[t.colnames[0]].data
-        if len(column) == 1 and squeeze:
-            return column[0]
-        return column
+        return t
 
 
 class TableFactorFrozenQuery(FactorFrozenQuery):
