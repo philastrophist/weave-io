@@ -19,14 +19,20 @@ class Dissociated(FrozenQuery):
 
     def _apply_func(self, string, other: 'Dissociated' = None):
         if other is not None:
-            if isinstance(other, FrozenQuery):
+            if isinstance(other, Dissociated):  # now we have to align first
                 aligned = self.branch.align(other.branch)
-                variables = aligned.get_variables([self.variable, other.variable])
-                inputs = {'x': variables[0], 'y': variables[1]}
+                try:
+                    y = aligned.action.transformed_variables[other.variable]
+                    inputs = {'x': self.variable, 'y': y}
+                except KeyError:  # the alignment swapped them round
+                    x = aligned.action.transformed_variables[self.variable]
+                    inputs = {'y': other.variable, 'x': x}
+            elif isinstance(other, FrozenQuery):
+                raise TypeError(f"Cannot compare types {self.__class__} and {other.__class__}")
             else:
                 aligned = self.branch.add_data(other)
                 inputs = {'x': self.variable, 'y': aligned.current_variables[0]}
-        else:
+        else: # only one variable
             inputs = {'x': self.variable}
             aligned = self.branch
         newbranch = aligned.operate(string, **inputs)
@@ -79,12 +85,11 @@ class Dissociated(FrozenQuery):
 
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
         df = result.to_data_frame()
-        table = Table.from_pandas(df)
-        if len(table) == 1 and squeeze:
-            table = table[0]
-        if len(table.colnames) == 1 and squeeze:
-            table = table[table.colnames[0]]
-        return table
+        assert len(df.columns) == 1
+        vs = df.iloc[:, 0].values
+        if squeeze and len(vs) == 1:
+            return vs[0]
+        return vs
 
     def _prepare_query(self) -> CypherQuery:
         with super()._prepare_query() as query:

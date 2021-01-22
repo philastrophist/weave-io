@@ -1,25 +1,37 @@
-from typing import overload, List
+from weaveio.basequery.common import FrozenQuery
+from weaveio.basequery.dissociated import Dissociated
+from weaveio.data import Data
 
 
-def sum(x):
-    pass
+def _template_aggregator(string_function, name, item: Dissociated, wrt: FrozenQuery = None):
+    if isinstance(wrt, Data):
+        branch = item.branch.handler.entry
+    elif wrt is None:
+        branch = item.branch.handler.entry
+    else:
+        branch = wrt.branch
+    new = branch.aggregate(string_function, item.variable, item.branch, True, name)
+    return Dissociated(item.handler, new, new.action.target)
+
+def sum(item, wrt):
+    return _template_aggregator('sum({x})', 'sum', item, wrt)
 
 
-def max(x):
-    pass
+def max(item, wrt):
+    return _template_aggregator('max({x})', 'max', item, wrt)
 
 
-def min(x):
-    pass
+def min(item, wrt):
+    return _template_aggregator('min({x})', 'min', item, wrt)
 
 
-def all(x):
-    pass
+def all(item, wrt):
+    raise NotImplementedError
 
 
-def any(x):
-    pass
+def any(item, wrt):
+    raise NotImplementedError
 
 
-def count(x):
-    pass
+def count(item, wrt):
+    raise NotImplementedError

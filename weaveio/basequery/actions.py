@@ -381,6 +381,9 @@ def shared_branch_without_filters(a: 'Branch', b: 'Branch'):
 #         return 'align'
 
 class Alignment(Action):
+    compare = ['reference', 'branches']
+    continues_on = False
+
     def __str__(self):
         return f'{self.__class__.__name__}'
 
@@ -419,8 +422,9 @@ class Results(Action):
         return 'return {}'.format(', '.join(names))
 
 
-class ScalarAlignment(Alignment):
+class OldScalarAlignment(Alignment):
     compare = ['shared_variables', 'scalar_variables', 'vector_variables']
+    continues_on = True
 
     def __init__(self, reference, branches, shared_variables: List[CypherVariable],
                  vector_variables: List[CypherVariable], scalar_variables: List[CypherVariable]):
@@ -443,54 +447,15 @@ class ScalarAlignment(Alignment):
         get = f'WITH {", ".join(["time0"] + static + unzip)}'
         return f'{unwind}\n{get}'
 
-# class Alignment(Action):
-#     compare = ['branches', 'reference']
-#     shape = 'house'
-#
-#     def __init__(self, reference: 'Branch', *branches: 'Branch'):
-#         """
-#         Collects and unwinds all variables/hierarchies that came after the reference branch
-#         Persists all variables/hierarchies that came before the reference branch
-#         """
-#         self.reference = reference
-#         self.branches = branches
-#         base = tuple() if reference is None else (self.reference, )
-#         ref_vars = [] if reference is None else reference.variables + reference.hierarchies
-#
-#         ins = []
-#         before, after = set(), []
-#         for branch in branches + base:
-#             ins += branch.variables + branch.hierarchies
-#             before |= {v for v in branch.variables + branch.hierarchies if v in ref_vars}
-#             after += [v for v in branch.variables + branch.hierarchies if v not in ref_vars]
-#         hidden = [CypherVariable(x.namehint+'_collected') for x in after]
-#         outs = [CypherVariable(x.namehint+'_aligned') for x in after]
-#         self.indexer = CypherVariable('i')
-#         self.after = []
-#         self.hidden = []
-#         self.outs = []  # remove correlated duplicates
-#         for a, h, o in zip(after, hidden, outs):
-#             if a not in self.after:
-#                 self.after.append(a)
-#                 self.hidden.append(h)
-#                 self.outs.append(o)
-#         self.before = list(before)
-#         self.output_variables = [o for a, o in zip(after, outs) if any(a in b.variables for b in branches)]
-#         self.output_variables += reference.variables
-#         self.output_hierarchies = [o for a, o in zip(after, outs) if any(a in b.hierarchies for b in branches)]
-#         self.output_hierarchies += reference.hierarchies
-#         transformed = {a: o for a, o in zip(after, outs)}
-#         transformed.update({r: r for r in ref_vars})
-#         super().__init__(ins, self.outs, self.hidden + [self.indexer], transformed)
-#
-#     def to_cypher(self):
-#         base = ['time0'] + [str(b) for b in self.before]
-#         base += [f'collect({i}) as {h}' for i, h in zip(self.after, self.hidden)]
-#         unwind = f'UNWIND range(0, apoc.coll.max([x in {self.hidden} | size(x)])-1) as {self.indexer}'
-#         get = [f'{h}[{self.indexer}] as {o}' for h, o in zip(self.hidden, self.outs)]
-#         if len(self.after):
-#             return f"WITH {', '.join(base)}\n{unwind}\nWITH *, {', '.join(get)}"
-#         return f"WITH {', '.join(base)}"
-#
-#     def __str__(self):
-#         return 'align'
+
+class ScalarAlignment(Alignment):
+    continues_on = True
+
+    def __init__(self, reference, branches):
+        self.reference = reference
+        self.branches = tuple(branches)
+        self.outs = []
+        super().__init__([], [])
+
+    def to_cypher(self):
+        return f""

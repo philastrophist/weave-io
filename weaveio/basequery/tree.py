@@ -68,12 +68,9 @@ class BranchHandler:
         3. unwind the vector
         """
         scalar_collected = shared.collect([scalar], [])
-        vector_collected = shared.collect([], [vector])
-        shared_variables = shared.find_variables()
-        scalar_variables = [i for i in scalar_collected.find_variables() if i not in shared_variables]
-        vector_variables = [i for i in vector_collected.find_variables() if i not in shared_variables and i not in scalar_variables]
-        action = ScalarAlignment(shared, [vector_collected, scalar_collected], shared_variables, vector_variables, scalar_variables)
-        return self.new(action, [shared, scalar_collected], [vector_collected], None, action.outs, [], [])
+        action = ScalarAlignment(vector, [scalar_collected])
+        action.transformed_variables = scalar_collected.action.transformed_variables
+        return self.new(action, [vector], [scalar_collected], None, action.outs, [], [])
 
 
 def plot(graph, fname):

@@ -62,9 +62,11 @@ def parse(graph) -> List:
                 for d in done:
                     if d in todo:
                         del todo[todo.index(d)]
-                # reference_subquery = subqueries.pop(-1)
+                if align.action.continues_on:
+                    reference_subquery = subqueries.pop(-1)
                 query += subqueries
-                # query += reference_subquery
+                if align.action.continues_on:
+                    query += reference_subquery
         else:
             query.append(node)
     return query
