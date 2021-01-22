@@ -20,7 +20,8 @@ from tqdm import tqdm
 from weaveio.address import Address
 from weaveio.basequery.common import AmbiguousPathError
 from weaveio.basequery.handler import Handler, defaultdict
-from weaveio.basequery.tree import BranchHandler, TraversalPath
+from weaveio.basequery.tree import BranchHandler
+from weaveio.basequery.actions import TraversalPath
 from weaveio.graph import Graph
 from weaveio.writequery import Unwind
 from weaveio.hierarchy import Multiple, Hierarchy, Indexed, Graphable, One2One

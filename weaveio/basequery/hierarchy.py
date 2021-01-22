@@ -4,6 +4,7 @@ from typing import List, Union, Type, Tuple
 import py2neo
 
 from .common import FrozenQuery, AmbiguousPathError
+from .dissociated import Dissociated
 from .factor import SingleFactorFrozenQuery, TableFactorFrozenQuery
 from .tree import Branch
 from ..hierarchy import Hierarchy, Multiple, One2One
@@ -32,7 +33,7 @@ class HierarchyFrozenQuery(FrozenQuery):
     def _filter_by_identifier(self, item):
         raise NotImplementedError(f"Filtering by an identifier is not supported for {self.__class__.__name__}")
 
-    def _filter_by_condition(self, condition):
+    def _filter_by_boolean(self, condition):
         raise NotImplementedError(f"Filtering by a boolean condition is not supported for {self.__class__.__name__}")
 
 
@@ -91,6 +92,10 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         self.hierarchy_variable = hierarchy_variable
         self.identifiers = identifiers
         self.string = f"{self.hierarchy_type.singular_name}"
+
+    def _filter_by_boolean(self, boolean_filter: 'FrozenQuery'):
+        new = self._make_filtered_branch(boolean_filter)
+        return self.__class__(self.handler, new, self.hierarchy_type, self.hierarchy_variable, self.identifiers, self)
 
     def _prepare_query(self):
         """Add a hierarchy node return statement"""
@@ -236,6 +241,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         The order of resolution is:
             vector hierarchy/
         """
+        if isinstance(item, Dissociated):
+            return self._filter_by_boolean(item)
         if isinstance(item, (list, tuple)):
             if all(map(self.data.is_valid_name, item)):
                 return self._get_factor_table_query(item)
@@ -260,22 +267,3 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         else:
             return self._get_hierarchy(item, plural=plural)
 
-
-
-# class SingleHierarchyFrozenQuery(DefiniteHierarchyFrozenQuery):
-#     """Contains only a single hierarchy type with an identifier"""
-#
-#     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
-#         rows = super()._post_process(result)
-#         if len(rows) != 1:
-#             idents = defaultdict(list)
-#             for frozen in self._traverse_frozenquery_stages():
-#                 if isinstance(frozen, SingleHierarchyFrozenQuery):
-#                     idents[frozen.hierarchy_type.idname].append(frozen._identifier)
-#                 elif isinstance(frozen, IdentifiedHomogeneousHierarchyFrozenQuery):
-#                     idents[frozen.hierarchy_type.idname] += frozen._identifiers
-#             if idents:
-#                 d = {k: [i for i in v if i is not None] for k, v in idents.items()}
-#                 d = {k: v for k, v in d.items() if len(v)}
-#                 raise KeyError(f"One or more identifiers in {d} are not present in the database")
-#         return rows[0]

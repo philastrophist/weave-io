@@ -30,6 +30,14 @@ class FrozenQuery:
         self.data = self.handler.data
         self.string = ''
 
+    def _make_filtered_branch(self, boolean_filter: 'FrozenQuery'):
+        collected = self.branch.collect([boolean_filter.branch], [])
+        return collected.filter('{x}', x=collected.action.transformed_variables[boolean_filter.variable])
+
+    def _filter_by_boolean(self, boolean_filter):
+        new = self._make_filtered_branch(boolean_filter)
+        return self.__class__(self.handler, new, self)
+
     def _traverse_frozenquery_stages(self):
         query = self
         yield query
