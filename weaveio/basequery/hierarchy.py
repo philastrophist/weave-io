@@ -115,13 +115,13 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _process_result_row(self, row, nodetype):
         node = row[0]
+        if node is None:
+            return None
         inputs = {}
         for f in nodetype.factors:
             inputs[f] = node[f]
         if nodetype.idname is not None:
             inputs[nodetype.idname] = node[nodetype.idname]
-        if node is None:
-            return None
         base_query = self.handler.hierarchy_from_neo4j_identity(nodetype, node.identity)
         for p in nodetype.parents:
             if isinstance(p, One2One):
