@@ -1,1 +1,2 @@
-__version__ = "2020.0.0"
+__version__ = "2020.1.0"
+__changes__ = 'fixed problems ready for beta testing'

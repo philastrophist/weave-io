@@ -8,7 +8,7 @@ from setuptools import find_packages, setup, Command
 # Package meta-data.
 NAME = 'weaveio'
 DESCRIPTION = 'WEAVE-IO query interface for accessing WEAVE data'
-URL = 'https://github.com/philastrophist/weaveio'
+URL = 'https://github.com/WEAVE-LOFAR/weave-io'
 EMAIL = 'shaun.c.read@gmail.com'
 AUTHOR = 'philastrophist'
 
@@ -33,6 +33,8 @@ with io.open(os.path.join(here, 'README.md'), encoding='utf-8') as f:
 about = {}
 with open(os.path.join(here, NAME, '__version__.py')) as f:
     exec(f.read(), about)
+
+long_description += '\n' + 'machine-readable-change-log\n###########################\n' + about['__version__'] + ': ' + about['__changes__']
 
 
 class UploadCommand(Command):
@@ -74,6 +76,7 @@ setup(
     version=about['__version__'],
     description=DESCRIPTION,
     long_description=long_description,
+    long_description_content_type='text/markdown',
     author=AUTHOR,
     author_email=EMAIL,
     url=URL,
@@ -91,6 +94,7 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: Implementation :: CPython',
         'Programming Language :: Python :: Implementation :: PyPy'

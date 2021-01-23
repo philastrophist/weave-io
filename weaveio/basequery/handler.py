@@ -1,56 +1,54 @@
-from copy import deepcopy as copy
-from typing import Union, Any, Tuple
+from typing import Tuple, Dict, Set
 
 import networkx as nx
 
+from .common import AmbiguousPathError
 from .hierarchy import *
-from .factor import *
-from .query import AmbiguousPathError, FullQuery
-from .query_objects import Path, Generator
-from ..utilities import quote
+from .tree import BranchHandler
+from .actions import TraversalPath
 
 
 class Handler:
-    def __init__(self, data):
+    def __init__(self, data: 'Data'):
         self.data = data
-        self.generator = Generator()
+        self.branch_handler = data.branch_handler
 
     def begin_with_heterogeneous(self):
-        return HeterogeneousHierarchyFrozenQuery(self, FullQuery())
+        return HeterogeneousHierarchyFrozenQuery(self, self.branch_handler.entry)
 
-    def hierarchy_of_factor(self, factor_name: str, start: Type[Hierarchy] = None) -> Tuple[str, str, str]:
-        namelist = factor_name.split('.')
-        hierarchy_names = None
-        singular_name = None
-        if len(namelist) > 1:
-            hierarchy_name_list, factor_name = namelist[:-1], namelist[-1]
-            singular_name = self.data.singular_name(factor_name)
-            if not all(h in self.data.singular_hierarchies for h in hierarchy_name_list):
-                raise KeyError(f"Not all of {hierarchy_name_list} are valid factor names")
-            if not nx.has_path(self.data.relation_graph, hierarchy_name_list[0], hierarchy_name_list[-1]):
-                raise KeyError(f"The path {'-'.join(hierarchy_name_list)} does not exist in the schema")
-            hierarchy_names = []
-            for n in self.data.factor_hierarchies[singular_name]:
-                if hierarchy_name_list[-1] == n or nx.has_path(self.data.relation_graph, hierarchy_name_list[-1], n.singular_name):
-                    hierarchy_names.append(n)
-            if len(hierarchy_names) == 0:
-                raise KeyError(f"`{hierarchy_name_list[-1]}` does not have a factor `{singular_name}`")
-        elif start is not None:
-            if factor_name in start.factors:
-                hierarchy_names = [start]
-        if singular_name is None:
-            singular_name = self.data.singular_name(factor_name)  # singular_name
-        if hierarchy_names is None:
-            hierarchy_names = self.data.factor_hierarchies[singular_name]
-        if len(hierarchy_names) > 1:
-            raise AmbiguousPathError(f"The factor {singular_name} is ambiguous. "
-                                     f"{singular_name} has {len(hierarchy_names)} parents: {hierarchy_names}."
-                                     f"Be explicit and choose one of them. "
-                                     f"E.g. {hierarchy_names[0]}.{factor_name}")
-        else:
-            return hierarchy_names[0].singular_name.lower(), factor_name, singular_name
+    def hierarchy_from_neo4j_identity(self, htype, identity):
+        begin = self.branch_handler.begin(htype.__name__)
+        new = begin.add_data(identity)
+        identifier_var = new.current_variables[0]
+        branch = new.filter('id({h}) = {identifier}', h=begin.current_hierarchy, identifier=identifier_var)
+        return DefiniteHierarchyFrozenQuery(self, branch, htype, branch.current_hierarchy, [], None)
 
-    def path(self, start, end) -> Path:
+    def paths2factor(self, factor_name: str,  plural: bool,
+                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], bool]:
+        """
+        returns a dictionary of hierarchy: [path,...] and a shared hierarchy
+        """
+        factor_name = self.data.singular_name(factor_name)
+        pathsetdict, base = self.data.find_factor_paths(start, factor_name, plural)
+        is_product = factor_name in base.products.keys()
+        return pathsetdict, base, is_product
+
+
+    def paths2hierarchy(self, hierarchy_name, plural,
+                        start: Type[Hierarchy] = None) -> Tuple[List[TraversalPath], List[Type[Hierarchy]], Type[Hierarchy], Type[Hierarchy]]:
+        """
+        Returns:
+            list of possible paths
+            list of hierarchies those paths end with
+            the shared start hierarchy
+            the shared end hierarchy
+        """
+        if start is None:
+            end = self.data.singular_hierarchies[self.data.singular_name(hierarchy_name)]
+            return [], [end], None, end
+        return self.data.find_hierarchy_paths(start, self.data.singular_hierarchies[self.data.singular_name(hierarchy_name)], plural)
+
+    def path(self, start, end) -> 'Path':
         raise NotImplementedError
 
     def _filter_by_boolean(self, parent, boolean):
