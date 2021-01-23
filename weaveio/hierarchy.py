@@ -233,6 +233,8 @@ class Graphable(metaclass=GraphableMeta):
                 if issubclass(p, Graphable):
                     l.append(p.singular_name)
             else:
+                if isinstance(p, One2One):
+                    l.append(p.singular_name)
                 if isinstance(p, Multiple):
                     l.append(p.plural_name)
                 else:
@@ -315,7 +317,7 @@ class Graphable(metaclass=GraphableMeta):
                         if k in self.version_on:
                             version_parents.append(parent)
         elif merge_strategy == 'NODE+RELATIONSHIP':
-            parentnames = [p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
+            parentnames = [p.singular_name if isinstance(p, One2One) else p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
             parents = []
             others = []
             for k, parent_list in predecessors.items():
