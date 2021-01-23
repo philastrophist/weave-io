@@ -73,7 +73,7 @@ class MatchNode(Statement):
     def __init__(self, labels: List[str], properties: dict):
         self.labels = [camelcase(l) for l in labels]
         self.properties, inputs = neo4j_dictionary(properties)
-        self.out = CypherVariable(labels[-1])
+        self.out = CypherVariable(labels[0])
         super(MatchNode, self).__init__(inputs, [self.out])
 
     def to_cypher(self):
@@ -103,7 +103,7 @@ class MatchPatternNode(Statement):
         self.properties, inputs = neo4j_dictionary(properties)
         self.parents = parents
         self.children = children
-        self.out = CypherVariable(labels[-1])
+        self.out = CypherVariable(labels[0])
         super().__init__(inputs+parents+children, [self.out], [])
 
     def to_cypher(self):
@@ -212,7 +212,7 @@ class MergeNode(CollisionManager):
     def __init__(self, labels: List[str], identproperties: Dict[str, Union[str, int, float, CypherVariable]],
                  properties: Dict[str, Union[str, int, float, CypherVariable]], collision_manager='track&flag'):
         self.labels = [camelcase(l) for l in labels]
-        out = CypherVariable(labels[-1])
+        out = CypherVariable(labels[0])
         super().__init__(out, identproperties, properties, collision_manager)
 
     @property
@@ -271,7 +271,7 @@ class MergeDependentNode(CollisionManager):
             relidentpropins += identpropins
             relpropins += propins
         self.parents = parents
-        self.outnode = CypherVariable(labels[-1])
+        self.outnode = CypherVariable(labels[0])
         self.relvars = [CypherVariable(reltype) for reltype in reltypes]
         self.dummyrelvars = [CypherVariable('dummy'+reltype) for reltype in reltypes]
         self.dummy = CypherVariable('dummy')

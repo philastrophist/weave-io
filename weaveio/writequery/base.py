@@ -85,8 +85,7 @@ class CypherQuery(metaclass=ContextMeta):
         if not isinstance(self.statements[-1], Returns):
             self.statements.append(Returns(*args, **kwargs))
         else:
-            warn(f"Cannot have more than one return, overwriting...")
-        self.statements[-1] = Returns(*args, **kwargs)
+            self.statements[-1] = Returns(*args, **kwargs)
         return self
 
 

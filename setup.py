@@ -34,6 +34,8 @@ about = {}
 with open(os.path.join(here, NAME, '__version__.py')) as f:
     exec(f.read(), about)
 
+long_description += '\n' + 'machine-readable-change-log\n###########################\n' + about['__version__'] + ': ' + about['__changes__']
+
 
 class UploadCommand(Command):
     """Support setup.py upload."""
@@ -74,6 +76,7 @@ setup(
     version=about['__version__'],
     description=DESCRIPTION,
     long_description=long_description,
+    long_description_content_type='text/markdown',
     author=AUTHOR,
     author_email=EMAIL,
     url=URL,
@@ -91,6 +94,7 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python',
         'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: Implementation :: CPython',
         'Programming Language :: Python :: Implementation :: PyPy'

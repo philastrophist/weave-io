@@ -28,6 +28,15 @@ class FrozenQuery:
         self.branch = branch
         self.parent = parent
         self.data = self.handler.data
+        self.string = ''
+
+    def _make_filtered_branch(self, boolean_filter: 'FrozenQuery'):
+        collected = self.branch.collect([boolean_filter.branch], [])
+        return collected.filter('{x}', x=collected.action.transformed_variables[boolean_filter.variable])
+
+    def _filter_by_boolean(self, boolean_filter):
+        new = self._make_filtered_branch(boolean_filter)
+        return self.__class__(self.handler, new, self)
 
     def _traverse_frozenquery_stages(self):
         query = self
@@ -52,18 +61,23 @@ class FrozenQuery:
         cypher, params = query.render_query()
         return cypher, params
 
-    def _execute_query(self):
+    def _execute_query(self, limit=None):
         """Override to allow custom edits as to how the cypher text is run"""
         if not self.executable:
             raise TypeError(f"{self.__class__} may not be executed as queries in their own right")
         cypher, params = self._prepare_cypher()
+        if limit is not None:
+            cypher += f'\nLIMIT {limit}'
         return self.data.graph.execute(cypher, **params)
 
-    def _post_process(self, result: py2neo.Cursor):
+    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
         raise NotImplementedError
 
-    def __call__(self):
+    def __call__(self, limit=None, squeeze=True):
         """Prepare and execute the query contained by this frozen object"""
-        result = self._execute_query()
-        return self._post_process(result)
+        result = self._execute_query(limit=limit)
+        return self._post_process(result, squeeze)
+
+    def __repr__(self):
+        return f'{self.parent}{self.string}'

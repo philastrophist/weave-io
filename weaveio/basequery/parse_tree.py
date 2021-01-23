@@ -5,7 +5,8 @@ from typing import List
 
 import networkx as nx
 
-from weaveio.basequery.tree import Branch, DataReference, Alignment
+from weaveio.basequery.tree import Branch
+from weaveio.basequery.actions import DataReference, Alignment
 from weaveio.writequery import CypherQuery
 from weaveio.writequery.base import Statement, CypherData
 
@@ -61,9 +62,11 @@ def parse(graph) -> List:
                 for d in done:
                     if d in todo:
                         del todo[todo.index(d)]
-                # reference_subquery = subqueries.pop(-1)
+                if align.action.continues_on:
+                    reference_subquery = subqueries.pop(-1)
                 query += subqueries
-                # query += reference_subquery
+                if align.action.continues_on:
+                    query += reference_subquery
         else:
             query.append(node)
     return query
@@ -91,7 +94,7 @@ def write_tree(parsed_tree):
     if isinstance(parsed_tree, list):
         inputs = [i for n in flatten(parsed_tree) for i in n.action.input_variables]
         outputs = [i for n in flatten(parsed_tree) for i in n.action.output_variables]
-        subquery_inputs = list({i for i in inputs if getattr(i, 'parent', i) not in outputs})
+        subquery_inputs = list({i for i in inputs if getattr(i, 'parent', i) not in outputs and not isinstance(i, CypherData)})
 
         open = OpenSubquery(subquery_inputs, [])
         query.add_statement(open, safe=False)
@@ -102,7 +105,7 @@ def write_tree(parsed_tree):
         query.add_statement(close)
         return subquery_output
     else:
-        query.add_statement(parsed_tree.action)
+        query.add_statement(parsed_tree.action, safe=False)
         return parsed_tree.find_variables()
 
 def branch2query(branch) -> CypherQuery:
@@ -113,5 +116,8 @@ def branch2query(branch) -> CypherQuery:
             if isinstance(node.action, DataReference):
                 query.data += node.action.input_variables
         for s in subqueries:
+            if isinstance(s, list):
+                if len(s) == 0:
+                    continue
             write_tree(s)
     return query

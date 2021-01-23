@@ -6,3 +6,7 @@ numpy==1.18.1
 pandas==1.0.3
 pytest==5.4.1
 tqdm
+boxing
+colored
+pkg_info
+semver
