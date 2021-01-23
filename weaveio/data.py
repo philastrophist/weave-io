@@ -498,9 +498,11 @@ class Data:
         return dict(pathlists), base
 
     @staticmethod
-    def shortest_path_without_oneway_violation(graph: nx.Graph, a, b):
+    def shortest_path_without_oneway_violation(graph: nx.Graph, a, b, cutoff=50):
         """Iterate over shortest paths until one without reusing a one-way path is found"""
-        for path in nx.shortest_simple_paths(graph, a, b):
+        for count, path in enumerate(nx.shortest_simple_paths(graph, a, b)):
+            if count == cutoff:
+                raise nx.NetworkXNoPath(f'No viable path between {a} and {b} (exploration timed out)')
             oneway_node = None
             for x, y in zip(path[:-1], path[1:]):
                 oneway = graph.edges[(x, y)].get('oneway', False)  # is it oneway?
@@ -511,6 +513,8 @@ class Data:
                         oneway_node = y
             else:
                 return path
+        else:
+            raise nx.NetworkXNoPath(f'No viable path between {a} and {b}')
 
     def _find_restricted_path(self, traversal_graph: nx.DiGraph, a: Type[Hierarchy], b: Type[Hierarchy],
                               plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
