@@ -1,403 +1,13 @@
 from collections import defaultdict
-from functools import reduce, wraps
+from functools import reduce
 from operator import xor
-from typing import Union, List, Dict, Optional
+from typing import List, Dict, Optional
 
 import networkx as nx
 from networkx import OrderedDiGraph
 
-from weaveio.writequery.base import BaseStatement, CypherVariable, CypherQuery, DerivedCypherVariable, CypherVariableItem, CypherData
-
-
-def typeerror_is_false(func):
-    @wraps(func)
-    def inner(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except TypeError:
-            return False
-    return inner
-
-
-def sort_rooted_dag(graph):
-    for n, d in graph.in_degree():
-        if d == 0:
-            break
-    return nx.algorithms.traversal.dfs_tree(graph, n)
-
-
-class Step:
-    def __init__(self, direction: str, label: str = 'is_required_by', properties: Dict = None):
-        if isinstance(direction, Step):
-            self.direction = direction.direction
-            self.label = direction.label
-            self.properties = direction.properties
-        elif direction in ['->', '<-', '-']:
-            self.direction = direction
-            self.label = label
-            self.properties = properties
-        else:
-            raise ValueError(f"Direction {direction} is not supported")
-
-    @typeerror_is_false
-    def __eq__(self, other):
-        if self.__class__ != other.__class__:
-            return False
-        return self.direction == other.direction and self.properties == other.properties and self.label == other.label
-
-    def __str__(self):
-        if self.properties is None:
-            mid = f'-[:{self.label}]-'
-        else:
-            mid = f'-[:{self.label} {self.properties}]-'
-        if self.direction == '->':
-            return f"{mid}>"
-        elif self.direction == '<-':
-            return f"<{mid}"
-        else:
-            return mid
-
-
-class TraversalPath:
-    def __init__(self, *path: Union[Step, str]):
-        self._path = path
-        self.nodes = []
-        self.steps = []
-        self.path = []
-        self.end = CypherVariable(str(path[-1]))
-        for i, entry in enumerate(path[:-1]):
-            if not i % 2:  # even number
-                step = Step(entry)
-                self.steps.append(step)
-                self.path.append(step)
-            else:
-                self.nodes.append(str(entry))
-                self.path.append(f'(:{entry})')
-
-    def __str__(self):
-        end = f'({self.end}:{self.end.namehint})'
-        return ''.join(map(str, self.path)) + end
-
-    def __eq__(self, other):
-        if self.__class__ != other.__class__:
-            return False
-        return self._path == other._path
-
-    def __hash__(self):
-        return hash(self._path)
-
-
-class Action(BaseStatement):
-    compare = None
-    shape = None
-
-    def to_cypher(self):
-        raise NotImplementedError
-
-    def __getitem__(self, item: CypherVariable):
-        if isinstance(item, CypherVariableItem):
-            return self.transformed_variables[item.parent].get(item.args)
-        return self.transformed_variables[item]
-
-    def __init__(self, input_variables: List[CypherVariable], output_variables: List[CypherVariable],
-                 hidden_variables: List[CypherVariable] = None, transformed_variables: Dict[CypherVariable, CypherVariable] = None, target: CypherVariable = None):
-        super(Action, self).__init__(input_variables, output_variables, hidden_variables)
-        self.transformed_variables = {} if transformed_variables is None else transformed_variables
-        self.target = target
-
-    def __eq__(self, other):
-        if self.__class__ is not other.__class__:
-            return False
-        base = set(self.input_variables) == set(other.input_variables) and self.__class__ is other.__class__
-        for c in self.compare:
-            selfthing = getattr(self, c, None)
-            otherthing = getattr(other, c, None)
-            base &= selfthing == otherthing
-        return base
-
-    def __hash__(self):
-        base = reduce(xor, map(hash, [tuple(self.input_variables), self.__class__.__name__]))
-        for c in self.compare:
-            base ^= hash(getattr(self, c))
-        return base
-
-    def __str__(self):
-        raise NotImplementedError
-
-    def __repr__(self):
-        return f'<{str(self)}>'
-
-
-class EntryPoint(Action):
-    compare = []
-
-    def __init__(self):
-        super().__init__([], [])
-
-    def to_cypher(self):
-        return ''
-
-    def __str__(self):
-        return 'EntryPoint'
-
-
-class StartingPoint(Action):
-    compare = ['label']
-
-    def __init__(self, label):
-        self.label = label
-        self.hierarchy = CypherVariable(self.label)
-        super().__init__([], [self.hierarchy], target=self.hierarchy)
-
-    def to_cypher(self):
-        return f"OPTIONAL MATCH ({self.hierarchy}:{self.label})"
-
-    def __str__(self):
-        return f'{self.label}'
-
-
-class DataReference(Action):
-    compare = ['hashes']
-
-    def __init__(self, *data):
-        import numpy as np
-        self.hashes = reduce(xor, [hash(np.array(a).tobytes()) for a in data])
-        ins = [CypherData(datum, delay=True) for datum in data]
-        super().__init__(ins, [])
-
-    def to_cypher(self):
-        return '// added data here'
-
-    def __str__(self):
-        return 'DataReference'
-
-
-
-# class OrderBy(Action):
-#
-#     def __init__(self, base_hierarchies, ):
-#
-#     def to_cypher(self):
-#         collections = f'collect({self.sort_node}) as {self.collected_variable}'
-#         with_statement = ', '.join(map(str, self.base_hierarchies + collections))
-#         call_statement = f'with {self.collected_variable} UNWIND {self.collected_variable} as {self.sort_node} RETURN {self.sort_node}' \
-#                          f' ORDER BY {self.sort_node}.{self.sort_property}'
-#         return f"WITH {with_statement} + CALL {{ {call_statement} }}"
-
-
-class Traversal(Action):
-    """
-    Traverse from one hierarchy level to another. This extends the branch and
-    potentially increases the cardinality.
-    Given a `source` branch and one or more `paths` of form (minnumber, maxnumber, direction),
-     traverse to the nodes described by the `paths`.
-    For example:
-        >>> Traversal(branch, TraversalPath(['->', 'Exposure', '->', 'OB', '->', 'OBSpec']))
-        results in `OPTIONAL MATCH (run)-[]->(:Exposure)-[]->(:OB)-[]->(obspec:OBSpec)`
-    To traverse multiple paths at once, we use unions in a subquery
-    """
-    compare = ['paths', 'source']
-
-    def __init__(self, source: CypherVariable, *paths: TraversalPath, name=None):
-        if name is None:
-            name = ''.join(p.end.namehint for p in paths)
-        if len(paths) > 1:
-            self.out = CypherVariable(name)
-            outs = [p.end for p in paths] + [self.out]
-        else:
-            self.out = paths[0].end
-            outs = [self.out]
-        super(Traversal, self).__init__([source], outs, target=self.out)
-        self.source = source
-        self.paths = paths
-
-    def to_cypher(self):
-        lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
-        if len(self.paths) == 1:
-            return lines[0]
-        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
-        return f"""CALL {{\n{lines}\n}}"""
-
-    def __str__(self):
-        return f'{self.source.namehint}->{self.out.namehint}'
-
-
-class Return(Action):
-    compare = ['branch', 'varnames']  # just compare input_variables
-
-    def __init__(self, branch: 'Branch', *varnames):
-        self.branch = branch
-        self.varnames = varnames
-        super(Return, self).__init__([branch.hierarchies[-1]], [])
-
-    def to_cypher(self):
-        proj = ', '.join([f'{self.branch.hierarchies[-1].get(v)}' for v in self.varnames])
-        return f"RETURN {proj}"
-
-    def __str__(self):
-        return f'return {self.varnames}'
-
-
-class Collection(Action):
-    shape = 'rect'
-    compare = ['_singles', '_multiples', '_reference']
-
-    def __init__(self, reference: 'Branch', singles: List['Branch'], multiples: List['Branch']):
-        self._singles = tuple(singles)
-        self._multiples = tuple(multiples)
-        self._reference = reference
-
-        self.references = reference.hierarchies
-        self.insingle_hierarchies = [x.hierarchies[-1] for x in singles]
-        self.insingle_variables = [v for x in singles for v in x.variables]
-        self.inmultiple_hierarchies = [x.hierarchies[-1] for x in multiples]
-        self.inmultiple_variables = [v for x in multiples for v in x.variables]
-
-        self.outsingle_hierarchies = [CypherVariable(s.namehint) for s in self.insingle_hierarchies]
-        self.outsingle_variables = [CypherVariable(s.namehint) for s in self.insingle_variables]
-        self.outmultiple_hierarchies = [CypherVariable(s.namehint+'_list') for s in self.inmultiple_hierarchies]
-        self.outmultiple_variables = [CypherVariable(s.namehint+'_list') for s in self.inmultiple_variables]
-        inputs = self.insingle_hierarchies + self.insingle_variables + self.inmultiple_variables + self.inmultiple_hierarchies
-        outputs = self.outsingle_hierarchies + self.outsingle_variables + self.outmultiple_variables + self.outmultiple_hierarchies
-        super().__init__(inputs + self.references, outputs, [], transformed_variables={i: o for i, o in zip(inputs, outputs)})
-
-    def to_cypher(self):
-        base = [f'{r}' for r in self.references + ['time0']]
-        single_hierarchies = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
-        multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
-        single_variables = [f'coalesce({i}) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
-        multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
-        return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
-
-    def __str__(self):
-        return f'collect'
-
-
-class Operation(Action):
-    compare = ['string_function', 'hashable_inputs']
-
-    def __init__(self, string_function: str, **inputs):
-        self.string_function = string_function
-        self.output = CypherVariable('operation')
-        self.inputs = inputs
-        self.hashable_inputs = tuple(self.inputs.items())
-        super().__init__(list(inputs.values()), [self.output], target=self.output)
-
-    def to_cypher(self):
-        return f"WITH *, {self.string_function.format(**self.inputs)} as {self.output_variables[0]}"
-
-    def __str__(self):
-        return self.string_function
-
-
-class Filter(Operation):
-    shape = 'diamond'
-    def __init__(self, string_function, **inputs):
-        super().__init__(string_function, **inputs)
-
-    def to_cypher(self):
-        return f"WHERE {self.string_function.format(**self.inputs)}"
-
-
-# class Alignment(Action):
-#     compare = ['branches', 'reference']
-#     shape = 'house'
-#
-#     def __init__(self, reference: 'Branch', *branches: 'Branch'):
-#         """
-#         Collects and unwinds all variables/hierarchies that came after the reference branch
-#         Persists all variables/hierarchies that came before the reference branch
-#         """
-#         self.reference = reference
-#         self.branches = branches
-#         base = tuple() if reference is None else (self.reference, )
-#         ref_vars = [] if reference is None else reference.variables + reference.hierarchies
-#
-#         ins = []
-#         before, after = set(), []
-#         for branch in branches + base:
-#             ins += branch.variables + branch.hierarchies
-#             before |= {v for v in branch.variables + branch.hierarchies if v in ref_vars}
-#             after += [v for v in branch.variables + branch.hierarchies if v not in ref_vars]
-#         hidden = [CypherVariable(x.namehint+'_collected') for x in after]
-#         outs = [CypherVariable(x.namehint+'_aligned') for x in after]
-#         self.indexer = CypherVariable('i')
-#         self.after = []
-#         self.hidden = []
-#         self.outs = []  # remove correlated duplicates
-#         for a, h, o in zip(after, hidden, outs):
-#             if a not in self.after:
-#                 self.after.append(a)
-#                 self.hidden.append(h)
-#                 self.outs.append(o)
-#         self.before = list(before)
-#         self.output_variables = [o for a, o in zip(after, outs) if any(a in b.variables for b in branches)]
-#         self.output_variables += reference.variables
-#         self.output_hierarchies = [o for a, o in zip(after, outs) if any(a in b.hierarchies for b in branches)]
-#         self.output_hierarchies += reference.hierarchies
-#         transformed = {a: o for a, o in zip(after, outs)}
-#         transformed.update({r: r for r in ref_vars})
-#         super().__init__(ins, self.outs, self.hidden + [self.indexer], transformed)
-#
-#     def to_cypher(self):
-#         base = ['time0'] + [str(b) for b in self.before]
-#         base += [f'collect({i}) as {h}' for i, h in zip(self.after, self.hidden)]
-#         unwind = f'UNWIND range(0, apoc.coll.max([x in {self.hidden} | size(x)])-1) as {self.indexer}'
-#         get = [f'{h}[{self.indexer}] as {o}' for h, o in zip(self.hidden, self.outs)]
-#         if len(self.after):
-#             return f"WITH {', '.join(base)}\n{unwind}\nWITH *, {', '.join(get)}"
-#         return f"WITH {', '.join(base)}"
-#
-#     def __str__(self):
-#         return 'align'
-
-class Alignment(Action):
-    compare = ['reference', 'branches']
-
-    def __init__(self, reference, *branches):
-        self.reference = reference
-        self.branches = branches
-        super(Alignment, self).__init__([], [])
-
-    def to_cypher(self):
-        return ''
-
-    def __str__(self):
-        return 'align'
-
-
-class Slice(Action):
-    compare = []
-
-    def __init__(self, slc):
-        self.slc = slc
-        self.skip = slc.start
-        self.limit = slc.stop - slc.start
-        super().__init__([], [], [])
-
-    def __str__(self):
-        return f'{self.slc}'
-
-    def to_cypher(self):
-        return f'WITH * SKIP {self.skip} LIMIT {self.limit}'
-
-
-class Results(Action):
-    compare = ['branches']
-
-    def __init__(self, branch_attributes):
-        self.branch_attributes = branch_attributes
-        self.branches = tuple(branch_attributes.keys())
-        ins = [j for i in self.branch_attributes.values() for j in i]
-        super(Results, self).__init__(ins, [], [], {}, None)
-
-    def to_cypher(self):
-        return 'RETURN {}'.format(', '.join(map(str, self.input_variables)))
-
-    def __str__(self):
-        names = [i.namehint for i in self.input_variables]
-        return 'return {}'.format(', '.join(names))
-
+from weaveio.basequery.actions import Action, EntryPoint, StartingPoint, DataReference, Traversal, Collection, Aggregation, Operation, Filter, shared_branch_without_filters, Results, TraversalPath, ScalarAlignment, DifferentLevelAlignment
+from weaveio.writequery.base import CypherVariable, CypherData
 
 
 class BranchHandler:
@@ -431,8 +41,8 @@ class BranchHandler:
         self.current_hierarchy = current_hierarchy
         return instance
 
-    def begin(self, label):
-        action = StartingPoint(label)
+    def begin(self, *labels):
+        action = StartingPoint(*labels)
         return self.new(action, [self.entry], [], action.hierarchy, [action.hierarchy], [], [action.hierarchy])
 
     def relevant_graph(self, branch):
@@ -450,6 +60,37 @@ class BranchHandler:
             return None
         distances = [(sum(nx.shortest_path_length(self.graph, ancestor, b) for b in branches), ancestor) for ancestor in common]
         return distances[distances.index(min(distances, key=lambda x: x[0]))][1]
+
+    def _align_scalar(self, shared: 'Branch', vector: 'Branch', scalar: 'Branch'):
+        scalar_collected = shared.collect([scalar], [])
+        action = ScalarAlignment(vector, [scalar_collected])
+        action.transformed_variables = scalar_collected.action.transformed_variables
+        return self.new(action, [vector], [scalar_collected], None, action.outs, [], [])
+
+    def _align_different_level(self, shared: 'Branch', branch1: 'Branch', branch2: 'Branch'):
+        """
+        1. collect the vector back to the shared level
+        2. coalesce the scalar back to the shared level
+        3. unwind the vector
+        """
+        collected1 = shared.collect([], [branch1])
+        collected2 = shared.collect([], [branch2])
+        action = DifferentLevelAlignment(shared, [collected1, collected2])
+        transformed_variables = {}
+        shared_variables = {v: v for v in shared.find_variables()}
+        for v in branch1.find_variables():
+            if v not in shared_variables and not isinstance(v, CypherData):
+                transformed_variables[v] = action.transformed_variables[collected1.action.transformed_variables[v]]
+        for v in branch2.find_variables():
+            if v not in shared_variables and not isinstance(v, CypherData):
+                try:
+                    transformed_variables[v] = action.transformed_variables[collected2.action.transformed_variables[v]]
+                except KeyError:
+                    pass
+        transformed_variables.update(shared_variables)
+        action.transformed_variables = transformed_variables
+        return self.new(action, [shared], [collected1, collected2], None, action.outs, [], [])
+
 
 
 def plot(graph, fname):
@@ -535,17 +176,39 @@ class Branch:
             variables += branch.current_variables
         return variables
 
-    def find_hierarchy_branches(self):
+    def find_hierarchy_branches(self, entry=False):
         branches = []
         for branch in self.iterdown(self.accessible_graph):
-            if branch.current_hierarchy is not None:
+            if branch.current_hierarchy is not None or (branch is self.handler.entry and entry):
                 branches.append(branch)
         return branches
+
+    def get_variables(self, variables: List[CypherVariable]):
+        squeeze = False
+        if not isinstance(variables, (list, tuple)):
+            variables = [variables]
+            squeeze = True
+        accessible_variables = self.find_variables()
+        for branch in self.iterdown(self.relevant_graph):
+            for i, variable in enumerate(variables):
+                if variable in accessible_variables:
+                    pass
+                if variable in branch.current_variables:
+                    pass
+                else:
+                    try:
+                        variables[i] = branch.action.transformed_variables[variable]
+                    except (AttributeError, KeyError):
+                        pass
+        if squeeze and len(variables) == 1:
+            return variables[0]
+        return variables
+
 
     def add_data(self, *data) -> 'Branch':
         action = DataReference(*data)
         return self.handler.new(action, [self], [], current_hierarchy=None, current_variables=action.input_variables,
-                         variables=self.variables+[action.input_variables], hierarchies=self.hierarchies)
+                         variables=self.variables + action.input_variables, hierarchies=self.hierarchies)
 
     def traverse(self, *paths: TraversalPath) -> 'Branch':
         """
@@ -556,18 +219,67 @@ class Branch:
         return self.handler.new(action, [self], [], current_hierarchy=action.out, current_variables=[action.out],
                                 variables=self.variables, hierarchies=self.hierarchies+[action.out])
 
+    # def align(self, branch: 'Branch') -> 'Branch':
+    #     """
+    #     Join branches into one, keeping the highest cardinality.
+    #     This is used to to directly compare arrays:
+    #         * ob1.runs == ob2.runs  (unequal sizes are zipped up together)
+    #         * ob1.runs == run1  (array to single comparisons are left as is)
+    #         * run1 == run2  (single to single comparisons are left as is)
+    #     zip ups and unwinds take place relative to the branch's shared ancestor
+    #     """
+    #     shared = join_branches(self, branch)
+    #     a = shared.collect([self], [])
+    #     b = shared.collect([branch], [])
+    #     action = Alignment(a, b)
+    #     return self.handler.new(action, [a], [b], None, current_variables=action.outs,
+    #                             variables=a.variables, hierarchies=a.hierarchies)
+
     def align(self, branch: 'Branch') -> 'Branch':
         """
-        Join branches into one, keeping the highest cardinality.
-        This is used to to directly compare arrays:
-            * ob1.runs == ob2.runs  (unequal sizes are zipped up together)
-            * ob1.runs == run1  (array to single comparisons are left as is)
-            * run1 == run2  (single to single comparisons are left as is)
-        zip ups and unwinds take place relative to the branch's shared ancestor
+        Aligning a scalar (1 of them is at the level of the shared hierarchy):
+        =======================================================================================
+            To align things like: data.obs.targets.ra == max(data.obs.runids, wrt=data.obs),
+            we find the shared parent (data.obs)
+            for each:
+                if hierarchy level is above the shared parent, collect the results
+                if hierarchy level is at the shared parent, do nothing
+                if hierarchy level is below the shared parent, raise error
+            we are now at the level of the shared parent
+            zip up and unwind the variables together so they are aligned (using the length of variable which was collected)
+
+        Aligning two different branches (neither of them are at the level of shared hierarchy):
+        =======================================================================================
+            To align things like data.obs[all(data.obs.targets[x].runs == data.obs.targets[y].runs)]
+                i.e. this thing:  data.obs.targets[x].runs == data.obs.targets[y].runs
+            we find the shared parent (data.obs)
+            for each:
+                collect the results
+            we are now at the level of the shared parent
+            zip up and unwind the variables together so they are aligned (using the length of variable which was collected)
+
+        Aligning on the same branch:
+        =======================================================================================
+            To align things like:
+                1) data.obs.runs == data.obs.runs
+                    they share the exact same tree, so `.align` does nothing
+                2) data.obs.runs == max(data.obs.runs.target.ra, wrt=data.obs.runs)
+                    the share the same tree but since the right-hand-side splits off and aggregates back,
+                    we do nothing but return the split off branch
         """
-        action = Alignment(self, branch)
-        return self.handler.new(action, [self, branch], [], None, current_variables=[],
-                                variables=self.variables, hierarchies=self.hierarchies)
+        shared = shared_branch_without_filters(self, branch)
+        branch_is_scalar = branch.find_hierarchy_branches(True)[-1] is shared
+        self_is_scalar = self.find_hierarchy_branches(True)[-1] is shared
+        if branch_is_scalar and self_is_scalar:
+            return self.handler._align_different_level(shared, self, branch)
+        if branch_is_scalar:
+            return self.handler._align_scalar(shared, self, branch)
+        elif self_is_scalar:
+            return self.handler._align_scalar(shared, branch, self)
+        else:
+            return self.handler._align_different_level(shared, self, branch)
+
+
 
     def collect(self, singular: List['Branch'], multiple: List['Branch']) -> 'Branch':
         """
@@ -588,7 +300,11 @@ class Branch:
         return self.handler.new(action, [self], singular + multiple, None, variables + hierarchies,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
-    def operate(self, string_function, **inputs) -> 'Branch':
+    def aggregate(self, string_function: str, variable: CypherVariable, branch: 'Branch', remove_infs: bool, namehint: str) -> 'Branch':
+        action = Aggregation(string_function, variable, branch, self, remove_infs, namehint)
+        return self.handler.new(action, [self], [branch], None, [action.target], [action.target], [])
+
+    def operate(self, *string_functions, namehint=None, **inputs: CypherVariable) -> 'Branch':
         """
         Adds a new variable to the namespace
         e.g. y = x*2 uses extant variable x to define a new variable y which is then subsequently accessible
@@ -596,7 +312,7 @@ class Branch:
         # missing = [k for k, v in inputs.items() if getattr(v, 'parent', v) not in self.variables + self.hierarchies]
         # if missing:
         #     raise ValueError(f"inputs {missing} are not in scope for {self}")
-        op = Operation(string_function, **inputs)
+        op = Operation(*string_functions, namehint=namehint, **inputs)
         return self.handler.new(op, [self], [], None, op.output_variables,
                                 variables=self.variables + op.output_variables, hierarchies=self.hierarchies)
 
