@@ -150,7 +150,7 @@ class Data:
 
 
     def __init__(self, rootdir: Union[Path, str] = '/beegfs/weave/weaveio/',
-                 host: str = '127.0.01', port=7687, write=False,
+                 host: str = '127.0.0.1', port=7687, write=False,
                  password='weavepassword', user='weaveuser'):
         self.branch_handler = BranchHandler()
         self.handler = Handler(self)
