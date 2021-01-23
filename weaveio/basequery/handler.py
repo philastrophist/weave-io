@@ -24,12 +24,15 @@ class Handler:
         return DefiniteHierarchyFrozenQuery(self, branch, htype, branch.current_hierarchy, [], None)
 
     def paths2factor(self, factor_name: str,  plural: bool,
-                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
+                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], bool]:
         """
         returns a dictionary of hierarchy: [path,...] and a shared hierarchy
         """
         factor_name = self.data.singular_name(factor_name)
-        return self.data.find_factor_paths(start, factor_name, plural)
+        pathsetdict, base = self.data.find_factor_paths(start, factor_name, plural)
+        is_product = factor_name in base.products.keys()
+        return pathsetdict, base, is_product
+
 
     def paths2hierarchy(self, hierarchy_name, plural,
                         start: Type[Hierarchy] = None) -> Tuple[List[TraversalPath], List[Type[Hierarchy]], Type[Hierarchy], Type[Hierarchy]]:

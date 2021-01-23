@@ -255,6 +255,9 @@ class L2TableRow(L2SourcedData):
 class L2Spectrum(L2SourcedData):
     is_template = True
     plural_name = 'l2spectra'
+    products = {'flux': Indexed('*_spectra', 'flux'), 'ivar': Indexed('*_spectra', 'ivar'),
+                'model_ab': Indexed('*_spectra', 'model_ab'), 'model_em': Indexed('*_spectra', 'model_em'),
+                'lambda': Indexed('*_spectra', 'lambda')}
 
 
 class ClassificationTable(L2TableRow):
@@ -274,8 +277,8 @@ class GalaxyTable(L2TableRow):
 
 class ClassificationSpectrum(L2Spectrum):
     plural_name = 'classification_spectra'
-    products = {'flux': Indexed('class_spectra', 'flux'), 'ivar': Indexed('class_spectra', 'ivar'), 'model': Indexed('class_spectra', 'model'),
-                'lambda': Indexed('class_spectra', 'lambda')}
+    products = {'flux': Indexed('class_spectra', 'flux'), 'ivar': Indexed('class_spectra', 'ivar'),
+                'model': Indexed('class_spectra', 'model'), 'lambda': Indexed('class_spectra', 'lambda')}
 
 
 class GalaxySpectrum(L2Spectrum):

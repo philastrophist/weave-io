@@ -174,7 +174,7 @@ class Data:
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
         self.factor_hierarchies = defaultdict(list)
         for h in self.hierarchies:
-            for f in getattr(h, 'factors', []):
+            for f in getattr(h, 'products_and_factors', []):
                 self.factor_hierarchies[f.lower()].append(h)
             if h.idname is not None:
                 self.factor_hierarchies[h.idname].append(h)

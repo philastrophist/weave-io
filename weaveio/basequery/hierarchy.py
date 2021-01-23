@@ -11,6 +11,10 @@ from ..hierarchy import Hierarchy, Multiple, One2One
 from ..writequery import CypherVariable
 
 
+GET_PRODUCT = "[({{h}})<-[p:product {{{{name: '{name}'}}}}]-(hdu: HDU) | [hdu.sourcefile, hdu.extn, p.index, p.column_name]]"
+GET_FACTOR = "{{h}}.{name}"
+
+
 class HierarchyFrozenQuery(FrozenQuery):
     def __getitem__(self, item):
         raise NotImplementedError
@@ -56,10 +60,15 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _get_factor(self, factor_name, plural):
         factor_name = self.data.singular_name(factor_name)
-        pathdict, base = self.handler.paths2factor(factor_name, plural=plural)
+        pathdict, base, is_product = self.handler.paths2factor(factor_name, plural=plural)
         begin = self.branch.handler.begin(base.__name__)
-        new = begin.operate(f'{{h}}.{factor_name}', h=begin.current_hierarchy)
-        return SingleFactorFrozenQuery(self.handler, new, factor_name, new.current_variables[0], plural, self)
+        if is_product:
+            func = GET_PRODUCT.format(name=factor_name)
+        else:
+            func = GET_FACTOR.format(name=factor_name)
+        new = begin.operate(func, h=begin.current_hierarchy)
+        return SingleFactorFrozenQuery(self.handler, new, factor_name, new.current_variables[0],
+                                       plural, is_product, self)
 
     def __getattr__(self, item):
         if item in self.data.plural_factors:
@@ -145,11 +154,16 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         new = self.branch.traverse(*pathlist)
         return DefiniteHierarchyFrozenQuery(self.handler, new, endhier, new.current_hierarchy, [], self)
 
-    def _get_factor_query(self, names: Union[List[str], str], plurals: Union[List[bool], bool]) -> Tuple[Branch, List[CypherVariable]]:
+    def _get_factor_query(self, names: Union[List[str], str], plurals: Union[List[bool], bool]) -> Tuple[Branch, List[CypherVariable], List[bool]]:
         """
         Return the query branch, variables of a list of factor/product names
         We do this by grouping into the containing hierarchies and traversing each branch before collapsing
+        returns:
+                branch: The new branch object to continue the query with
+                variables: The list of CypherVariable that contains the query result
+                is_product: The list of True if the factor is a product
         """
+        # TODO: tidy this all up
         if not isinstance(names, (list, tuple)):
             names = [names]
         if not isinstance(plurals, (list, tuple)):
@@ -159,41 +173,59 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         remote = defaultdict(list)
         remote_paths = {}
         for name, plural in zip(names, plurals):
-            pathsdict, basehier = self.handler.paths2factor(name, plural, self.hierarchy_type)
+            pathsdict, basehier, is_product = self.handler.paths2factor(name, plural, self.hierarchy_type)
             if basehier == self.hierarchy_type:
-                local.append((name, plural))
+                local.append((name, plural, is_product))
             else:
                 remote_paths[basehier] = ({path for pathset in pathsdict.values() for path in pathset}, plural)
-                remote[basehier].append(name)
+                remote[basehier].append((name, is_product))
 
         variables = {}
+        is_products = {}
         branch = self.branch
 
-        for basehier, factors in remote.items():
+        for basehier, factor_product_tuples in remote.items():
             paths = remote_paths[basehier][0]
             plural = remote_paths[basehier][1]
             travel = branch.traverse(*paths)
-            operate = travel.operate(*[f'{{h}}.{name}' for name in factors], h=travel.current_hierarchy)
+            funcs = []
+            for name, is_product in factor_product_tuples:
+                if is_product:
+                    func = GET_PRODUCT.format(name=name)
+                else:
+                    func = GET_FACTOR.format(name=name)
+                funcs.append(func)
+            operate = travel.operate(*funcs, h=travel.current_hierarchy)
             if plural:
                 branch = branch.collect([], [operate])
             else:
                 branch = branch.collect([operate], [])
-            for v, name in zip(operate.current_variables, factors):
+            for v, (name, is_product) in zip(operate.current_variables, factor_product_tuples):
                 variables[name] = branch.action.transformed_variables[v]
+                is_products[name] = is_product
 
         if len(local):
-            branch = branch.operate(*[f'{{h}}.{name}' for name, plural in local], h=self.hierarchy_variable)
-            for v, (k, _) in zip(branch.action.output_variables, local):
+            funcs = []
+            for name, plural, is_product in local:
+                if is_product:
+                    func = GET_PRODUCT.format(name=name)
+                else:
+                    func = GET_FACTOR.format(name=name)
+                funcs.append(func)
+            branch = branch.operate(*funcs, h=self.hierarchy_variable)
+            for v, (k, _, is_product) in zip(branch.action.output_variables, local):
                 variables[k] = v
+                is_products[k] = is_product
 
         # now propagate variables forward
         values = [variables[name] for name in names]
         variables = branch.get_variables(values)
-        return branch, variables
+        return branch, variables, [is_products[name] for name in names]
 
     def _get_factor(self, name, plural):
-        branch, factor_variables = self._get_factor_query([name], [plural])
-        return SingleFactorFrozenQuery(self.handler, branch, name, factor_variables[0], plural, self)
+        branch, factor_variables, is_products = self._get_factor_query([name], [plural])
+        return SingleFactorFrozenQuery(self.handler, branch, name, factor_variables[0], plural,
+                                       is_products[0], self)
 
     def _get_factor_table_query(self, item) -> TableFactorFrozenQuery:
         """
@@ -218,8 +250,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
         plurals = [not self.data.is_singular_name(i) for i in item]
-        branch, factor_variables = self._get_factor_query(keys, plurals)
-        return TableFactorFrozenQuery(self.handler, branch, keys, factor_variables, plurals, return_keys, self.parent)
+        branch, factor_variables, is_products = self._get_factor_query(keys, plurals)
+        return TableFactorFrozenQuery(self.handler, branch, keys, factor_variables, plurals, is_products, return_keys, self.parent)
 
     def _filter_by_identifiers(self, identifiers: List[Union[str, int, float]]) -> 'DefiniteHierarchyFrozenQuery':
         idname = self.hierarchy_type.idname
@@ -255,7 +287,6 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         else:
             return getattr(self, item)
 
-
     def __getattr__(self, item):
         plural = self.data.is_plural_name(item)
         factor = self.data.is_factor_name(item)
@@ -266,4 +297,3 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             return self._get_factor(item, plural=plural)
         else:
             return self._get_hierarchy(item, plural=plural)
-
