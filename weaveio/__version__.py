@@ -1,2 +1,2 @@
-__version__ = "2020.1.0"
-__changes__ = 'fixed problems ready for beta testing'
+__version__ = "2020.1.1"
+__changes__ = 'set default Herts UHHPC configuration'
