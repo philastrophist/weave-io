@@ -149,8 +149,9 @@ class Data:
         return hierarchies
 
 
-    def __init__(self, rootdir: Union[Path, str], host: str = 'host.docker.internal', port=11002, write=False,
-                 password=None, user=None):
+    def __init__(self, rootdir: Union[Path, str] = '/beegfs/weave/weaveio/',
+                 host: str = '127.0.01', port=7687, write=False,
+                 password='weavepassword', user='weaveuser'):
         self.branch_handler = BranchHandler()
         self.handler = Handler(self)
         self.host = host
