@@ -16,6 +16,12 @@ class File(Hierarchy):
     produces = []
     recommended_batchsize = None
 
+    def open(self):
+        try:
+            return fits.open(self.data.rootdir / self.fname)
+        except AttributeError:
+            return fits.open(self.fname)
+
     def __init__(self, fname, **kwargs):
         super().__init__(tables=None, fname=str(fname), **kwargs)
 

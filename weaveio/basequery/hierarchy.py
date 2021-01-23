@@ -135,6 +135,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
                     inputs[p.singular_name] = getattr(base_query, p.plural_name)  # this should not have to be done
         h = nodetype(**inputs, do_not_create=True)
         h.add_parent_query(base_query)
+        h.add_parent_data(self.handler.data)
         return h
 
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
