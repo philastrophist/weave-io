@@ -15,6 +15,8 @@ import re
 import networkx as nx
 import py2neo
 from collections import Counter
+
+from astropy.io import fits
 from tqdm import tqdm
 
 from weaveio.address import Address
@@ -362,7 +364,7 @@ class Data:
             df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
         return df.set_index(['fname', 'batch_start', 'batch_end'])
 
-    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
+    def find_files(self, *filetype_names, skip_extant_files=True):
         filelist = []
         if len(filetype_names) == 0:
             filetypes = self.filetypes
@@ -378,6 +380,10 @@ class Data:
         diff = len(filelist) - len(filtered_filelist)
         if diff:
             print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
+        return filtered_filelist
+
+    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
+        filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
         return self.read_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
 
     def _validate_one_required(self, hierarchy_name):

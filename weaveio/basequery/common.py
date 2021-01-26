@@ -58,6 +58,7 @@ class FrozenQuery:
     def _prepare_cypher(self) -> Tuple[str, Dict[str, Any]]:
         """Override to allow custom edits to the actual cypher query text"""
         query = self._prepare_query()
+        query.remove_variable_names()
         cypher, params = query.render_query()
         return cypher, params
 
