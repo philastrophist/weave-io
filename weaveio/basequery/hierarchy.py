@@ -13,7 +13,7 @@ from ..writequery import CypherVariable
 
 GET_PRODUCT = "[({{h}})<-[p:product {{{{name: '{name}'}}}}]-(hdu: HDU) | [hdu.sourcefile, hdu.extn, p.index, p.column_name]]"
 GET_FACTOR = "{{h}}.{name}"
-
+GET_FACTOR_FORCE_PLURAL = f"[{GET_FACTOR}]"
 
 class HierarchyFrozenQuery(FrozenQuery):
     def __getitem__(self, item):
@@ -178,16 +178,15 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if basehier == self.hierarchy_type:
                 local.append((name, plural, is_product))
             else:
-                remote_paths[basehier] = ({path for pathset in pathsdict.values() for path in pathset}, plural)
-                remote[basehier].append((name, is_product))
+                remote[(basehier, plural)].append((name, is_product))
+                remote_paths[(basehier, plural)] = {path for pathset in pathsdict.values() for path in pathset}
 
         variables = {}
         is_products = {}
         branch = self.branch
 
-        for basehier, factor_product_tuples in remote.items():
-            paths = remote_paths[basehier][0]
-            plural = remote_paths[basehier][1]
+        for (basehier, plural), factor_product_tuples in remote.items():
+            paths = remote_paths[(basehier, plural)]
             travel = branch.traverse(*paths)
             funcs = []
             for name, is_product in factor_product_tuples:
@@ -202,26 +201,28 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             else:
                 branch = branch.collect([operate], [])
             for v, (name, is_product) in zip(operate.current_variables, factor_product_tuples):
-                variables[name] = branch.action.transformed_variables[v]
-                is_products[name] = is_product
+                variables[(name, plural)] = branch.action.transformed_variables[v]
+                is_products[(name, plural)] = is_product
 
         if len(local):
             funcs = []
             for name, plural, is_product in local:
                 if is_product:
                     func = GET_PRODUCT.format(name=name)
+                elif plural:
+                    func = GET_FACTOR_FORCE_PLURAL.format(name=name)
                 else:
                     func = GET_FACTOR.format(name=name)
                 funcs.append(func)
             branch = branch.operate(*funcs, h=self.hierarchy_variable)
-            for v, (k, _, is_product) in zip(branch.action.output_variables, local):
-                variables[k] = v
-                is_products[k] = is_product
+            for v, (k, plural, is_product) in zip(branch.action.output_variables, local):
+                variables[(k, plural)] = v
+                is_products[(k, plural)] = is_product
 
         # now propagate variables forward
-        values = [variables[name] for name in names]
+        values = [variables[(name, plural)] for name, plural in zip(names, plurals)]
         variables = branch.get_variables(values)
-        return branch, variables, [is_products[name] for name in names]
+        return branch, variables, [is_products[(name, plural)] for name, plural in zip(names, plurals)]
 
     def _get_factor(self, name, plural):
         branch, factor_variables, is_products = self._get_factor_query([name], [plural])
