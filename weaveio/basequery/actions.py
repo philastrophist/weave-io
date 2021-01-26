@@ -199,7 +199,7 @@ class Traversal(Action):
 
     def __init__(self, source: CypherVariable, *paths: TraversalPath, name=None):
         if name is None:
-            name = ''.join(p.end.namehint for p in paths)
+            name = ''.join(getattr(p.end, 'namehint', source.namehint) for p in paths[:2])
         self.out = CypherVariable(name)
         # if there is an empty path, then we just refer to the source node
         self.ends = [p.end if p.end is not None else source for p in paths]
