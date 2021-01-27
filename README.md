@@ -129,40 +129,48 @@ It is analagous to an SQL query except that it is written in Python.
 
 
 ```python
+from weaveio.opr3 import Data
+
+from weaveio.basequery.functions import *
+
 runid = 1002813
-nsky = sum(data.runs[runid].targuse == 'S')
+nsky = sum(data.runs[runid].targuses == 'S')
 ```
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
 
 ```python
+from weaveio.basequery.functions import *
+
 yesterday = 59193
-q_singlespectra = data.singlespectra
+singlespectra = data.l1singlespectra
 
-q_is_red = singlespectra.camera == 'red'
-q_observed_yesterday = floor(singlespectra.expmjd) == yesterday
-q_is_sky_target = singlespectra.targuse == 'S'
+is_red = singlespectra.camera == 'red'
+observed_yesterday = floor(singlespectra.expmjd) == yesterday
+is_sky_target = singlespectra.targuse == 'S'
 
-q_red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
+red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
 
-spectra = q_red_singlespectra()  # execute the query and return a spectrum object
+spectra = red_singlespectra  # execute the query and return a spectrum object
 
 # matplotlib
-plt.plot(spectra.wvls, spectra.flux)
+plt.plot(spectra.wvls(), spectra.flux())
 ```
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
 
 
 ```python
-obs = data.obs[data.obs.startmjd >= 59163]
+from weaveio.basequery.functions import * 
+
+obs = data.obs[data.obs.obstartmjd >= 59163]
 fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == 'WL') | any(obs.fibretargets.surveys == 'WQSO')]
 
-l2rows = fibretargets.stacked12
-table = l2rows[['halpha', 'zbest']]()
+l2rows = fibretargets.l2stack
+table = l2rows['lineflux_ha_6562', 'z']()
 
-plt.scatter(table['halpha'], table['zbest'])
+plt.scatter(table['lineflux_ha_6562'], table['z'])
 ```
 
 # 4. I want to identify the WL spectrum with the brightest continuum at 5000AA and plot the spectrum from both red and blue arms, together with the error (variance) spectrum. 
