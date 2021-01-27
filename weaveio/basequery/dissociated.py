@@ -58,7 +58,7 @@ class Dissociated(FrozenQuery):
         return self._apply_func('{x} / {y}', other)
 
     def __pow__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
-        return self._apply_func('{x} ** {y}', other)
+        return self._apply_func('{x} ^ {y}', other)
 
     __radd__ = __add__
     __rsub__ = __sub__
@@ -67,7 +67,7 @@ class Dissociated(FrozenQuery):
     __rpow__ = __pow__
 
     def __neg__(self) -> 'Dissociated':
-        return self._apply_func('-{x}')
+        return self._apply_func('(-{x})')
 
     def __abs__(self) -> 'Dissociated':
         return self._apply_func('abs({x})')
