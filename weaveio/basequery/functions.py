@@ -26,16 +26,16 @@ def max(item, wrt=None):
     return _template_aggregator('max({x})', 'max', max, item, wrt)
 
 
-def min(item, wrt):
+def min(item, wrt=None):
     return _template_aggregator('min({x})', 'min', min, item, wrt)
 
 
 def all(item, wrt=None):
-    return _template_aggregator('all({x})', 'all', all, item, wrt)
+    return _template_aggregator('all(i in {x} where i)', 'all', all, item, wrt)
 
 
 def any(item, wrt=None):
-    return _template_aggregator('any({x})', 'any', any, item, wrt)
+    return _template_aggregator('any(i in {x} where i)', 'any', any, item, wrt)
 
 
 def count(item, wrt=None):
