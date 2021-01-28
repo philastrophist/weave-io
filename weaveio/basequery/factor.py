@@ -99,9 +99,12 @@ class FactorFrozenQuery(Dissociated):
 
 
 class SingleFactorFrozenQuery(FactorFrozenQuery):
-    def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable,
-                 plural: bool, is_product: bool, parent: FrozenQuery = None):
-        super().__init__(handler, branch, [factor], [factor_variable], [plural], [is_product], parent)
+    def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable, is_product: bool, parent: FrozenQuery = None):
+        super().__init__(handler, branch, [factor], [factor_variable], [False], [is_product], parent)
+
+    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
+        row = super()._post_process(result, squeeze)
+        return row.data
 
 
 class TableFactorFrozenQuery(FactorFrozenQuery):
@@ -129,7 +132,6 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
             except ValueError:
                 raise KeyError(f"{item} is not a factor contained within {self}. Only {self.factors} are accessible.")
             else:
-                return SingleFactorFrozenQuery(self.handler, self.branch, item, self.factor_variables[i],
-                                               self.plurals[i], self.is_products[i], self)
+                return SingleFactorFrozenQuery(self.handler, self.branch, item, self.factor_variables[i], self.is_products[i], self)
         else:
             return super(TableFactorFrozenQuery, self).__getitem__(item)

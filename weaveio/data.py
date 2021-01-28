@@ -476,7 +476,9 @@ class Data:
             except nx.NetworkXNoPath:
                 pass
         if len(pathset) == 0:
-            raise nx.NetworkXNoPath(f'There are no paths from {starting_point} to {factor_name} with the constraint of plural={plural}')
+            raise nx.NetworkXNoPath(f'There are no paths from a `{starting_point.singular_name}` to `{factor_name}`. '
+                                    f'This might be because `{factor_name}` is plural relative to `{starting_point.singular_name}`. '
+                                    f'Try using `{factor_name}s` instead')
         paths, ends = zip(*pathset)
         if not plural and len(paths) > 1:
             lengths = map(len, paths)
@@ -558,7 +560,9 @@ class Data:
                 return self._find_restricted_path(graph, a, b, plural)
             except (nx.NetworkXNoPath, nx.NodeNotFound, KeyError) as e:
                 continue
-        raise nx.NetworkXNoPath(f"The is no path between {a} and {b} with a constraint of plural={plural}")
+        raise nx.NetworkXNoPath(f"The is no path between `{a.singular_name}` and `{b.singular_name}`. "
+                                f"This might be because `{b.singular_name}` is plural relative to `{a.singular_name}`. "
+                                f"Try using `{b.plural_name}`")
 
     def find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy],
                              plural: bool) -> Tuple[List[TraversalPath], List[Type[Hierarchy]], Type[Hierarchy], Type[Hierarchy]]:
