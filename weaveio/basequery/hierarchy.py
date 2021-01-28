@@ -260,7 +260,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
         plurals = [not self.data.is_singular_name(i) for i in item]
-        branch, factor_variables, is_products = self._get_multifactor_query(keys, plurals, collect_plurals=len(plurals) == 1)
+        branch, factor_variables, is_products = self._get_multifactor_query(keys, plurals, collect_plurals=len(plurals) > 1)
         if len(factor_variables) == 1:
             return SingleFactorFrozenQuery(self.handler, branch, keys[0], factor_variables[0], is_products[0], self.parent)
         return TableFactorFrozenQuery(self.handler, branch, keys, factor_variables, plurals, is_products, return_keys, self.parent)

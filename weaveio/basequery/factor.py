@@ -104,7 +104,9 @@ class SingleFactorFrozenQuery(FactorFrozenQuery):
 
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
         row = super()._post_process(result, squeeze)
-        return row.data
+        if isinstance(row, Column):
+            return row.data
+        return row
 
 
 class TableFactorFrozenQuery(FactorFrozenQuery):
