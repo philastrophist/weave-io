@@ -5,6 +5,7 @@ import hypothesis.strategies as st
 import numpy as np
 from hypothesis.strategies import composite
 
+import weaveio.basequery.dissociated
 from weaveio.writequery import CypherQuery, merge_node, match_node, unwind, collect, groupby, CypherData, merge_relationship, set_version
 from weaveio.graph import Graph
 
@@ -361,7 +362,7 @@ class TestBigQuery:
         cypher, data, database = bigquery
         result = database.neograph.run('match (s:SingleSpectrum) optional match (raw:Raw)-->(s)<--(t:Target) return s, raw, t').to_data_frame()
         assert len(result) == 30
-        assert not result['raw'].isnull().any()
+        assert not weaveio.basequery.dissociated.any()
 
     @pytest.mark.parametrize('v,n,version', [('Run', 3, None), ('Raw', 3, 0), ('SingleSpectrum', 30, 0)])
     def test_raw_has_version0(self, v, n, version, bigquery):
@@ -371,7 +372,7 @@ class TestBigQuery:
         if version is not None:
             assert (result['v.version'] == version).all()
         else:
-            assert (result['v.version'].isnull()).all()
+            assert weaveio.basequery.dissociated.all()
 
     def test_stack_has_3_single_spectra(self, bigquery):
         cypher, data, database = bigquery
