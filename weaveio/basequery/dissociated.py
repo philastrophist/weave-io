@@ -223,7 +223,7 @@ class Dissociated(FrozenQuery):
         if method == '__call__':
             return _template_operator(f'{ufunc.__name__}({{x}})', ufunc.__name__, ufunc, self, True, True)
         if method == 'reduce':
-            translate = {'add': sum, 'logical_or': any, 'logical_and': all}[ufunc.__name__]
+            translate = {'add': sum, 'logical_or': any, 'logical_and': all, 'minimum': min, 'maximum': max}[ufunc.__name__]
             return translate(self, wrt=kwargs['axis'])
         else:
             raise NotImplementedError(f"Can only translate numpy methods that are called using __call__ or reduce. Not {method}")
