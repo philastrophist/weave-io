@@ -272,13 +272,13 @@ class Collection(Action):
 
 class Aggregation(Action):
     shape = 'rect'
-    compare = ['string_function', 'variable', 'branch', 'reference', 'remove_infs']
-    def __init__(self, string_function: str, variable: CypherVariable, branch: 'Branch', reference: 'Branch', remove_infs: bool, namehint: str):
+    compare = ['string_function', 'variable', 'branch', 'reference']
+
+    def __init__(self, string_function: str, variable: CypherVariable, branch: 'Branch', reference: 'Branch', namehint: str):
         self.string_function = string_function
         self.variable = variable
         self.branch = branch
         self.reference = reference
-        self.remove_infs = remove_infs
         ins = self.reference.find_variables() + [self.variable]
         self.output = CypherVariable(f"{namehint}_{variable.namehint}")
         transformed_variables = {i: i for i in ins[:-1]}
@@ -286,10 +286,7 @@ class Aggregation(Action):
         super().__init__(ins, [self.output], [], transformed_variables, self.output)
 
     def to_cypher(self):
-        if self.remove_infs:
-            string_function = self.string_function.format(x=f"CASE WHEN {self.variable} > apoc.math.maxLong() THEN null ELSE {self.variable} END")
-        else:
-            string_function = self.string_function.format(x=self.variable)
+        string_function = self.string_function.format(x=self.variable)
         statics = ", ".join(map(str, ['time0'] + self.input_variables[:-1]))
         return f'WITH {statics}, {string_function} as {self.output}'
 

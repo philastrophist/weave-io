@@ -1,17 +1,14 @@
-from typing import Tuple, Dict, Set
+from typing import Dict, Set
 
-import networkx as nx
-
-from .common import AmbiguousPathError
+from .actions import TraversalPath
 from .hierarchy import *
 from .tree import BranchHandler
-from .actions import TraversalPath
 
 
 class Handler:
     def __init__(self, data: 'Data'):
         self.data = data
-        self.branch_handler = data.branch_handler
+        self.branch_handler = data.branch_handler  # type: BranchHandler
 
     def begin_with_heterogeneous(self):
         return HeterogeneousHierarchyFrozenQuery(self, self.branch_handler.entry)
