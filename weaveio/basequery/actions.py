@@ -262,9 +262,9 @@ class Collection(Action):
 
     def to_cypher(self):
         base = [f'{r}' for r in self.references + ['time0']]
-        single_hierarchies = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
+        single_hierarchies = [f'{i} as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
         multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
-        single_variables = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
+        single_variables = [f'{i} as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
         return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
 

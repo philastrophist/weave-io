@@ -1,15 +1,17 @@
 from pathlib import Path
-from typing import Union
+from typing import Union, List, Tuple, Dict
 
 from astropy.io import fits
+from astropy.io.fits.hdu.base import _BaseHDU
 from astropy.table import Table as AstropyTable
+import numpy as np
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, BinaryHDU
-from weaveio.hierarchy import unwind, collect, Multiple, One2One
+from weaveio.hierarchy import unwind, collect, Multiple, One2One, Hierarchy
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
-    OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU
+    OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU, WavelengthHolder
 from weaveio.writequery import groupby, CypherData
 
 
@@ -160,17 +162,31 @@ class L1File(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'flux': SpectralRowableBlock, 'ivar': SpectralRowableBlock,
             'flux_noss': SpectralRowableBlock, 'ivar_noss': SpectralRowableBlock,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
+    parents = [One2One(WavelengthHolder)]
+
+    @classmethod
+    def wavelengths(cls, rootdir: Path, fname: str):
+        hdulist = fits.open(rootdir / fname)
+        header = hdulist[1].header
+        increment, zeropoint, size = header['cd1_1'], header['crval1'], header['naxis1']
+        return WavelengthHolder(wvls=(np.arange(0, size) * increment) + zeropoint,
+                                cd1_1=header['cd1_1'], crval1=header['crval1'], naxis1=header['naxis1'])
 
 
 class L1SingleFile(L1File):
     match_pattern = 'single_*.fit'
-    parents = [One2One(RawFile), CASU]
+    parents = L1File.parents + [One2One(RawFile), CASU]
     produces = [L1SingleSpectrum]
     version_on = ['rawfile']
 
     @classmethod
     def fname_from_runid(cls, runid):
         return f'single_{runid:07.0f}.fit'
+
+    @classmethod
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
+        return super().read_hdus(directory, fname, **hierarchies, wavelengths=cls.wavelengths(directory, fname))
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
@@ -200,7 +216,7 @@ class L1StackedBaseFile(L1File):
 class L1StackFile(L1StackedBaseFile):
     match_pattern = 'stacked_*.fit'
     produces = [L1StackSpectrum]
-    parents = [Multiple(L1SingleFile), OB, ArmConfig, CASU]
+    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OB, ArmConfig, CASU]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -256,7 +272,7 @@ class L1StackFile(L1StackedBaseFile):
 class L1SuperStackFile(L1StackedBaseFile):
     match_pattern = 'superstacked_*.fit'
     produces = [L1SuperStackSpectrum]
-    parents = [Multiple(L1SingleFile), OBSpec, ArmConfig, CASU]
+    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OBSpec, ArmConfig, CASU]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -273,7 +289,7 @@ class L1SuperStackFile(L1StackedBaseFile):
 
 class L1SuperTargetFile(L1StackedBaseFile):
     match_pattern = 'WVE_*.fit'
-    parents = [WeaveTarget, Multiple(L1SingleFile, 2), CASU]
+    parents = L1StackedBaseFile.parents + [WeaveTarget, Multiple(L1SingleFile, 2), CASU]
     produces = [L1SuperTargetSpectrum]
     recommended_batchsize = None
 
