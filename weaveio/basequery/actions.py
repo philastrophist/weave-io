@@ -208,9 +208,11 @@ class Traversal(Action):
         self.paths = paths
 
     def to_cypher(self):
-        lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
-        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN DISTINCT {end} as {self.out}' for l, end in zip(lines, self.ends)])
-        return f"""CALL {{\n{lines}\n}}"""
+        if len(self.paths) > 1:
+            lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
+            lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN {end} as {self.out}' for l, end in zip(lines, self.ends)])
+            return f"""CALL {{\n{lines}\n}}"""
+        return f'OPTIONAL MATCH ({self.source}){self.paths[0]}\nWITH *, {self.ends[0]} as {self.out}'
 
     def __str__(self):
         return f'{self.source.namehint}->{self.out.namehint}'
@@ -260,9 +262,9 @@ class Collection(Action):
 
     def to_cypher(self):
         base = [f'{r}' for r in self.references + ['time0']]
-        single_hierarchies = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
+        single_hierarchies = [f'{i} as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
         multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
-        single_variables = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
+        single_variables = [f'{i} as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
         return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
 
@@ -272,13 +274,13 @@ class Collection(Action):
 
 class Aggregation(Action):
     shape = 'rect'
-    compare = ['string_function', 'variable', 'branch', 'reference', 'remove_infs']
-    def __init__(self, string_function: str, variable: CypherVariable, branch: 'Branch', reference: 'Branch', remove_infs: bool, namehint: str):
+    compare = ['string_function', 'variable', 'branch', 'reference']
+
+    def __init__(self, string_function: str, variable: CypherVariable, branch: 'Branch', reference: 'Branch', namehint: str):
         self.string_function = string_function
         self.variable = variable
         self.branch = branch
         self.reference = reference
-        self.remove_infs = remove_infs
         ins = self.reference.find_variables() + [self.variable]
         self.output = CypherVariable(f"{namehint}_{variable.namehint}")
         transformed_variables = {i: i for i in ins[:-1]}
@@ -286,10 +288,7 @@ class Aggregation(Action):
         super().__init__(ins, [self.output], [], transformed_variables, self.output)
 
     def to_cypher(self):
-        if self.remove_infs:
-            string_function = self.string_function.format(x=f"CASE WHEN {self.variable} > apoc.math.maxLong() THEN null ELSE {self.variable} END")
-        else:
-            string_function = self.string_function.format(x=self.variable)
+        string_function = self.string_function.format(x=self.variable)
         statics = ", ".join(map(str, ['time0'] + self.input_variables[:-1]))
         return f'WITH {statics}, {string_function} as {self.output}'
 

@@ -60,7 +60,7 @@ class FrozenQuery:
         query = self._prepare_query()
         query.remove_variable_names()
         cypher, params = query.render_query()
-        return cypher, params
+        return 'CYPHER runtime=slotted\n' + cypher, params
 
     def _execute_query(self, limit=None):
         """Override to allow custom edits as to how the cypher text is run"""
