@@ -125,26 +125,28 @@ It is analagous to an SQL query except that it is written in Python.
 
 # Examples of use:
 
-# 1. I want to return the number of sky spectra in a given run (runid=1002813)
+# 1. I want to return the number of sky spectra in a given run (runid=1002850)
 
 
 ```python
-runid = 1002813
-nsky = sum(data.runs[runid].targuse == 'S')
+runid = 1002850
+nsky_query = (data.runs[runid].targuses == 'S')
+nsky=sum(nsky_query())
 ```
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
 
 ```python
+data=Data()
 yesterday = 59193
-q_singlespectra = data.singlespectra
+q_singlespectra = data.l1singlespectra
 
-q_is_red = singlespectra.camera == 'red'
-q_observed_yesterday = floor(singlespectra.expmjd) == yesterday
-q_is_sky_target = singlespectra.targuse == 'S'
+q_is_red = q_singlespectra.camera == 'red'
+q_observed_yesterday = floor(q_singlespectra.expmjd) == yesterday
+q_is_sky_target = q_singlespectra.targuse == 'S'
 
-q_red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
+q_red_singlespectra = q_singlespectra[q_is_red & q_observed_yesterday & q_is_sky_target]
 
 spectra = q_red_singlespectra()  # execute the query and return a spectrum object
 
