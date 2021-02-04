@@ -30,7 +30,7 @@ class Step:
             self.direction = direction.direction
             self.label = direction.label
             self.properties = direction.properties
-        elif direction in ['->', '<-', '-']:
+        elif direction in ['->', '<-']:
             self.direction = direction
             self.label = label
             self.properties = properties
@@ -49,9 +49,9 @@ class Step:
         else:
             mid = f'-[:{self.label} {self.properties}]-'
         if self.direction == '->':
-            return f"{mid}"
+            return f"{mid}>"
         elif self.direction == '<-':
-            return f"{mid}"
+            return f"<{mid}"
         else:
             return mid
 

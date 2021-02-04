@@ -86,11 +86,10 @@ class FactorFrozenQuery(Dissociated):
                 df[c] = df[c].apply(np.asarray)
         table = Table.from_pandas(df)
         for colname, plural, is_product in zip(df.columns, self.plurals, self.is_products):
-            if plural or is_product:
-                if df.dtypes[colname] == 'O':
-                    shapes = set(map(np.shape, df[colname]))
-                    if len(shapes) == 1:  # all the same length
-                        table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
+            if plural or is_product or df.dtypes[colname] == 'O':
+                shapes = set(map(np.shape, df[colname]))
+                if len(shapes) == 1:  # all the same length
+                    table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
         if len(table) == 1 and squeeze:
             table = table[0]
         if len(table.colnames) == 1 and squeeze:
