@@ -3,7 +3,7 @@ from typing import List
 
 import py2neo
 from astropy.io import fits
-from astropy.table import Table, Column
+from astropy.table import Table as AstropyTable, Column
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -13,6 +13,12 @@ from weaveio.basequery.dissociated import Dissociated
 from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherVariable, CypherQuery
 
+
+class Table(AstropyTable):
+    def __getattr__(self, item):
+        if item in self.colnames:
+            return self[item].data
+        raise AttributeError(f"There is not column named {item} and {self} has no attribute {item}")
 
 def replace_with_data(row, files):
     hdus = files[row['sourcefile']]
@@ -86,11 +92,10 @@ class FactorFrozenQuery(Dissociated):
                 df[c] = df[c].apply(np.asarray)
         table = Table.from_pandas(df)
         for colname, plural, is_product in zip(df.columns, self.plurals, self.is_products):
-            if plural or is_product:
-                if df.dtypes[colname] == 'O':
-                    shapes = set(map(np.shape, df[colname]))
-                    if len(shapes) == 1:  # all the same length
-                        table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
+            if plural or is_product or df.dtypes[colname] == 'O':
+                shapes = set(map(np.shape, df[colname]))
+                if len(shapes) == 1:  # all the same length
+                    table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
         if len(table) == 1 and squeeze:
             table = table[0]
         if len(table.colnames) == 1 and squeeze:
