@@ -133,7 +133,7 @@ from weaveio import *
 runid = 1002813
 nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
-
+```
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
