@@ -138,22 +138,30 @@ print("number of sky targets = {}".format(nsky()))
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
+Currently, it is only possible to filter once in a query so you have to do separate queries for each condition you want and then feed it back in. See below
 
 ```python
 from weaveio import *
-data = Data()
+import numpy as np
 yesterday = 57634
-singlespectra = data.l1singlespectra
-is_red = singlespectra.camera == 'red'
-observed_yesterday = floor(singlespectra.expmjd) == yesterday
+
+runs = Data().runs
+red_runids = runs[runs.camera == 'red'].runids()  # this executes the query (the need for this hack will be removed later)
+runs = Data().runs
+yesterday_runids = runs[floor(runs.expmjd) == yesterday].runids()  # this executes the query (the need for this hack will be removed later)
+
+runids = np.unique(np.append(red_runids, yesterday_runids)).tolist()
+
+data = Data()
+singlespectra = data.runs[runids].l1singlespectra
 is_sky_target = singlespectra.targuse == 'S'
 
-red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
+singlespectra = singlespectra[is_sky_target]
 
-table = spectra['wvls', 'flux'](limit=1)
+table = singlespectra['wvls', 'flux'](limit=10)
 
-# matplotlib
-plt.plot(table['wvls'], table['flux'])
+import matplotlib.pyplot as plt
+plt.plot(table['wvls'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
 ```
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
