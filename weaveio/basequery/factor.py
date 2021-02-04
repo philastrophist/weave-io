@@ -3,7 +3,7 @@ from typing import List
 
 import py2neo
 from astropy.io import fits
-from astropy.table import Table as AstropyTable, Column
+from astropy.table import Table, Column
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -13,12 +13,6 @@ from weaveio.basequery.dissociated import Dissociated
 from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherVariable, CypherQuery
 
-
-class Table(AstropyTable):
-    def __getattr__(self, item):
-        if item in self.colnames:
-            return self[item].data
-        raise AttributeError(f"There is not column named {item} and {self} has no attribute {item}")
 
 def replace_with_data(row, files):
     hdus = files[row['sourcefile']]
