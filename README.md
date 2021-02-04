@@ -150,7 +150,7 @@ is_sky_target = singlespectra.targuse == 'S'
 
 red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
 
-table = spectra['wvls, 'flux'](limit=1)
+table = spectra['wvls', 'flux'](limit=1)
 
 # matplotlib
 plt.plot(table['wvls'], table['flux'])
