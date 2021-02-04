@@ -129,49 +129,51 @@ It is analagous to an SQL query except that it is written in Python.
 
 
 ```python
-runid = 1002850
-nsky_query = (data.runs[runid].targuses == 'S')
-nsky=sum(nsky_query())
-```
+from weaveio import *
+runid = 1002813
+nsky = sum(data.runs[runid].targuses == 'S')
+print("number of sky targets = {}".format(nsky()))
+
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
 
 ```python
-data=Data()
-yesterday = 59193
-q_singlespectra = data.l1singlespectra
+from weaveio import *
+yesterday = 57634
+singlespectra = data.l1singlespectra
+is_red = singlespectra.camera == 'red'
+observed_yesterday = floor(singlespectra.expmjd) == yesterday
+is_sky_target = singlespectra.targuse == 'S'
 
-q_is_red = q_singlespectra.camera == 'red'
-q_observed_yesterday = floor(q_singlespectra.expmjd) == yesterday
-q_is_sky_target = q_singlespectra.targuse == 'S'
+red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
 
-q_red_singlespectra = q_singlespectra[q_is_red & q_observed_yesterday & q_is_sky_target]
-
-spectra = q_red_singlespectra()  # execute the query and return a spectrum object
+spectra = red_singlespectra()
 
 # matplotlib
-plt.plot(spectra.wvls, spectra.flux)
+plt.plot(spectra['wvls'], spectra['flux'])
 ```
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
 
 
 ```python
-obs = data.obs[data.obs.startmjd >= 59163]
+from weaveio import * 
+
+obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
 fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == 'WL') | any(obs.fibretargets.surveys == 'WQSO')]
 
-l2rows = fibretargets.stacked12
-table = l2rows[['halpha', 'zbest']]()
+l2rows = fibretargets.l2stack
+table = l2rows['lineflux_ha_6562', 'z']()
 
-plt.scatter(table['halpha'], table['zbest'])
+plt.scatter(table['lineflux_ha_6562'], table['z'])
 ```
 
 # 4. I want to identify the WL spectrum with the brightest continuum at 5000AA and plot the spectrum from both red and blue arms, together with the error (variance) spectrum. 
 
 
 ```python
-stackedspectra = data.stackedspectra  # lots of different stacked spectra from many different OBs
+stackedspectra = data.l1stackedspectra  # lots of different stacked spectra from many different OBs
 wl_stackedspectra = stackedspectra[any(stackedspectra.surveys == 'WL')]
 
 reds = wl_stackedspectra[wl_stackedspectra.camera == 'red']
@@ -181,7 +183,6 @@ continuum = []
 for red, blue in reds(), blues():  # this loop is offline
     continuum.append(my_special_module.median_flux(red, blue 4950, 5050))  # do some fancy function you have written
 index = np.argmax(continuum)
-
 
 red = reds[index]()
 blue = blues[index]()
@@ -208,15 +209,15 @@ import matplotlib.pyplot as plt
 ob = data.obs[1234]  # get the ob 
 
 # all L2 data that used stackedspectra.
-stackedl2 = ob.stackedl2
+l2stack = ob.l2stack
 
 # return rows in the L2 dataset that correspond to a lofar target
-lofar_l2 = stackedl2[any(stackedl2.surveys == 'WL')]  # each target can belong to more than one survey
+lofar_l2 = l2stack[any(l2stack.surveys == 'WL')]  # each target can belong to more than one survey
 l2row = lofar_l2[lofar_l2.mag_gs == max(lofar_l2.mag_gs)]  # get the one row that corresponds to the brightest lofar target
 
 # now we jump from L2 rows to the stack spectra
-brightest_red = l2row.stackedspectra[l2row.stackedspectra.camera == 'red']
-brightest_blue = l2row.stackedspectra[l2row.stackedspectra.camera == 'blue']
+brightest_red = l2row.l1stackspectra[l2row.l1stackspectra.camera == 'red']
+brightest_blue = l2row.l1stackspectra[l2row.l1stackspectra.camera == 'blue']
 
 # Now plot the actual data
 fig, (redax, blueax) = plt.subplots()
@@ -227,8 +228,8 @@ blueax.plot(brightest_blue.wvls(), brightest_blue.flux(), 'b-', label='brightest
 
 ####### < Part B
 # now locate the indivdual single spectra that were stacked
-red_spectra = brightest_red.singlespectra
-blue_spectra = brightest_blue.singlespectra
+red_spectra = brightest_red.l1singlespectra
+blue_spectra = brightest_blue.l1singlespectra
 
 # matplotlib allows you to plot multiple lines with 2d arrays
 redax.plot(redsingle.wvls(), redsingle.flux(), 'r-', alpha=0.4, label='single for brightest')
@@ -239,8 +240,8 @@ blueax.plot(bluesingle.wvls(), bluesingle.flux(), 'r-', alpha=0.4, label='single
 ####### < Part C
 # Now get all other stacked spectra that were observed for this target, no matter the OB
 brightest_target = l2row.weavetarget
-other_reds = brightest_target.stackedspectra[brightest_target.stackedspectra.camera == 'red']
-other_blues = brightest_target.stackedspectra[brightest_target.stackedspectra.camera == 'blue']
+other_reds = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'red']
+other_blues = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'blue']
 
 # overplot the other observations
 for wvl, flux in other.red.wvls(), other_red.flux():
@@ -275,15 +276,15 @@ I'm also interested in using emission line properties to perform source classifi
 def excitation_index(oiii, hb, nii, sii, oi, Hα):
     return log(oiii/Hβ) - (log(nii/Hα) / 3) + log(sii/Hα) + log(oi/Hα)
 
-stackedl2 = data.stackedl2
-redshift = stackedl2.z
-EI = excitation_index(stackedl2.flux_oiii_5007, stackedl2.flux_hbeta, stackedl2.flux_nii_6583, stackedl2.flux_oi_6300, 
-                      stackedl2.flux_sii_6716, stackedl2.flux_halpha)
+l2stack = data.l2stack
+redshift = l2stack.z
+EI = excitation_index(l2stack.flux_oiii_5007, l2stack.flux_hbeta, l2stack.flux_nii_6583, l2stack.flux_oi_6300, 
+                      l2stack.flux_sii_6716, l2stack.flux_halpha)
 
-in_redshift_range = (stackedl2.zbest > 0.5) & (stackedl2.zbest < 1.)
+in_redshift_range = (l2stack.zbest > 0.5) & (l2stack.zbest < 1.)
 is_lerg = EI < 0.95  
 
-spectra = stackedl2[in_redshift_range & is_lerg].stackedspectra
+spectra = stackedl2[in_redshift_range & is_lerg].l1stackspectra
 reds = spectra[spectra.camera == 'red']
 blues = spectra[spectra.camera == 'blue']
 
