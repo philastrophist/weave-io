@@ -15,6 +15,8 @@ import re
 import networkx as nx
 import py2neo
 from collections import Counter
+
+from astropy.io import fits
 from tqdm import tqdm
 
 from weaveio.address import Address
@@ -362,7 +364,7 @@ class Data:
             df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
         return df.set_index(['fname', 'batch_start', 'batch_end'])
 
-    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
+    def find_files(self, *filetype_names, skip_extant_files=True):
         filelist = []
         if len(filetype_names) == 0:
             filetypes = self.filetypes
@@ -378,6 +380,10 @@ class Data:
         diff = len(filelist) - len(filtered_filelist)
         if diff:
             print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
+        return filtered_filelist
+
+    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
+        filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
         return self.read_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
 
     def _validate_one_required(self, hierarchy_name):
@@ -450,53 +456,43 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def _find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
-                           plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
-        """
-        Find the host hierarchy of the factor_name regardless of multiplicity.
-        """
-        assert not starting_point.is_template
-        if factor_name in starting_point.products_and_factors:
-            return {starting_point: set()}, starting_point
-        reachable = list(nx.descendants(self.relation_graph, starting_point)) + list(nx.ancestors(self.relation_graph, starting_point))
-        reachable = [h for h in reachable if factor_name in h.products_and_factors]
-        if not len(reachable):
-            raise KeyError(f"No such factor, product or idname {factor_name}")
-        pathlist = defaultdict(set)
-        for r in reachable:
-            try:
-                assert not r.is_template
-                paths, _, _, _ = self.find_hierarchy_paths(starting_point, r, plural=plural)
-                pathlist[r].update(paths)
-            except nx.NetworkXNoPath:
-                continue
-        base = shared_base_class(*pathlist.keys())
-        if factor_name not in getattr(base, 'products_and_factors', []):
-            others = ', '.join([f'{f.singular_name}.{factor_name}' for f in pathlist.keys()])
-            raise AmbiguousPathError(f"{factor_name} could refer to any of '{others}'. "
-                                     f"Be specific by traversing first.")
-        return dict(pathlist), base
-
     def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
                           plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
-        if starting_point is None:
-            todo = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors}
-        elif starting_point.is_template:
-            todo = set(get_all_subclasses(starting_point))
-        else:
-            todo = {starting_point}
-        pathlists = defaultdict(set)
-        bases = set()
-        for h in todo:
-            pathdict, base = self._find_factor_paths(h, factor_name, plural)
-            bases.add(base)
-            for hier, paths in pathdict.items():
-                pathlists[hier].update(paths)
-        base = shared_base_class(*bases)
-        if factor_name not in getattr(base, 'products_and_factors', []):
-            raise AmbiguousPathError(f"{factor_name} could refer to many objects. "
-                                     f"Be specific by traversing first.")
-        return dict(pathlists), base
+        """
+        1. Identify all hierarchies that contain the factor under plural constraint
+        2. Get paths to those hierarchies with the plural constraint
+        3. Discard the hierarchies which don't have paths
+        4.
+        """
+        if factor_name in starting_point.products_and_factors:
+            return {starting_point: set()}, starting_point
+        possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
+        pathset = set()
+        for p in possible:
+            try:
+                paths, ends, _, _ = self.find_hierarchy_paths(starting_point, p, plural)
+                for path, end in zip(paths, ends):
+                    pathset.add((path, end))
+            except nx.NetworkXNoPath:
+                pass
+        if len(pathset) == 0:
+            raise nx.NetworkXNoPath(f'There are no paths from a `{starting_point.singular_name}` to `{factor_name}`. '
+                                    f'This might be because `{factor_name}` is plural relative to `{starting_point.singular_name}`. '
+                                    f'Try using `{factor_name}s` instead')
+        paths, ends = zip(*pathset)
+        if not plural and len(paths) > 1:
+            lengths = map(len, paths)
+            min_length = min(lengths)
+            paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
+            if len(paths) > 1:
+                raise AmbiguousPathError(f"There is more than one {factor_name} with the same distance away from {starting_point}")
+        shared = shared_base_class(*ends)
+        if factor_name not in shared.products_and_factors:
+            raise AmbiguousPathError(f"{starting_point}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
+        pathdict = defaultdict(set)
+        for e, p in zip(ends, paths):
+            pathdict[e].add(p)
+        return pathdict, shared
 
     @staticmethod
     def shortest_path_without_oneway_violation(graph: nx.Graph, a, b, cutoff=50):
@@ -564,7 +560,9 @@ class Data:
                 return self._find_restricted_path(graph, a, b, plural)
             except (nx.NetworkXNoPath, nx.NodeNotFound, KeyError) as e:
                 continue
-        raise nx.NetworkXNoPath(f"The is no path between {a} and {b} with a constraint of plural={plural}")
+        raise nx.NetworkXNoPath(f"The is no path between `{a.singular_name}` and `{b.singular_name}`. "
+                                f"This might be because `{b.singular_name}` is plural relative to `{a.singular_name}`. "
+                                f"Try using `{b.plural_name}`")
 
     def find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy],
                              plural: bool) -> Tuple[List[TraversalPath], List[Type[Hierarchy]], Type[Hierarchy], Type[Hierarchy]]:
@@ -577,7 +575,6 @@ class Data:
         else:
             b = [b]
         paths = set()
-        ends = set()
         for ai, bi in product(a, b):
             try:
                 path, oneways, graph = self._find_hierarchy_path(ai, bi, plural)
@@ -590,16 +587,21 @@ class Data:
                         just_before = set(nx.descendants(graph, ai)) & set(graph.predecessors(bi))
                         for before in just_before:
                             path, _, _ = self._find_restricted_path(graph, ai, before, plural)
-                            paths.add(TraversalPath(*path._path, '->', bi.__name__))
-                            ends.add(bi)
+                            paths.add((TraversalPath(*path._path, '->', bi.__name__), bi))
                 else:
-                    paths.add(path)
-                    ends.add(bi)
+                    paths.add((path, bi))
             except nx.NetworkXNoPath:
                 pass
         if len(paths) == 0:
             raise nx.NetworkXNoPath(f'There are no paths from {a} to {b} with the constraint of plural={plural}')
-        return list(paths), list(ends), shared_base_class(*a), shared_base_class(*b)
+        paths, ends = zip(*paths)
+        if not plural and len(paths) > 1:
+            lengths = map(len, paths)
+            min_length = min(lengths)
+            paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
+            if len(paths) > 1:
+                raise AmbiguousPathError(f"There is more than one {b} with the same distance away from {a}")
+        return list(paths), list(ends), shared_base_class(*a), shared_base_class(*ends)
 
     def is_factor_name(self, name):
         try:

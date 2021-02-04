@@ -48,6 +48,11 @@ class CypherQuery(metaclass=ContextMeta):
         self.statements.append(statement)
         self.current_context.extend(statement.output_variables)
 
+    def remove_variable_names(self):
+        for statement in self.statements:
+            for v in statement.input_variables + statement.output_variables + statement.hidden_variables:
+                v._name = None
+
     def make_variable_names(self):
         d = defaultdict(int)
         for data in self.data:

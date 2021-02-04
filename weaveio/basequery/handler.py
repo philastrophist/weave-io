@@ -1,17 +1,14 @@
-from typing import Tuple, Dict, Set
+from typing import Dict, Set
 
-import networkx as nx
-
-from .common import AmbiguousPathError
+from .actions import TraversalPath
 from .hierarchy import *
 from .tree import BranchHandler
-from .actions import TraversalPath
 
 
 class Handler:
     def __init__(self, data: 'Data'):
         self.data = data
-        self.branch_handler = data.branch_handler
+        self.branch_handler = data.branch_handler  # type: BranchHandler
 
     def begin_with_heterogeneous(self):
         return HeterogeneousHierarchyFrozenQuery(self, self.branch_handler.entry)
@@ -47,18 +44,3 @@ class Handler:
             end = self.data.singular_hierarchies[self.data.singular_name(hierarchy_name)]
             return [], [end], None, end
         return self.data.find_hierarchy_paths(start, self.data.singular_hierarchies[self.data.singular_name(hierarchy_name)], plural)
-
-    def path(self, start, end) -> 'Path':
-        raise NotImplementedError
-
-    def _filter_by_boolean(self, parent, boolean):
-        raise NotImplementedError
-
-    def _equality(self, parent, other, negate=False):
-        raise NotImplementedError
-
-    def _compare(self, parent, other, operation):
-        raise NotImplementedError
-
-    def _combine(self, parent, other, operation):
-        raise NotImplementedError

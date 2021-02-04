@@ -300,8 +300,8 @@ class Branch:
         return self.handler.new(action, [self], singular + multiple, None, variables + hierarchies,
                                 variables=self.variables + variables, hierarchies=self.hierarchies + hierarchies)
 
-    def aggregate(self, string_function: str, variable: CypherVariable, branch: 'Branch', remove_infs: bool, namehint: str) -> 'Branch':
-        action = Aggregation(string_function, variable, branch, self, remove_infs, namehint)
+    def aggregate(self, string_function: str, variable: CypherVariable, branch: 'Branch', namehint: str) -> 'Branch':
+        action = Aggregation(string_function, variable, branch, self, namehint)
         return self.handler.new(action, [self], [branch], None, [action.target], [action.target], [])
 
     def operate(self, *string_functions, namehint=None, **inputs: CypherVariable) -> 'Branch':
