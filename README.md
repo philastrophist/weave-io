@@ -130,6 +130,7 @@ It is analagous to an SQL query except that it is written in Python.
 
 ```python
 from weaveio import *
+data = Data()
 runid = 1002813
 nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
@@ -140,6 +141,7 @@ print("number of sky targets = {}".format(nsky()))
 
 ```python
 from weaveio import *
+data = Data()
 yesterday = 57634
 singlespectra = data.l1singlespectra
 is_red = singlespectra.camera == 'red'
@@ -159,6 +161,7 @@ plt.plot(spectra['wvls'], spectra['flux'])
 
 ```python
 from weaveio import * 
+data = Data()
 
 obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
 fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == 'WL') | any(obs.fibretargets.surveys == 'WQSO')]
@@ -173,6 +176,7 @@ plt.scatter(table['lineflux_ha_6562'], table['z'])
 
 
 ```python
+data = Data()
 stackedspectra = data.l1stackedspectra  # lots of different stacked spectra from many different OBs
 wl_stackedspectra = stackedspectra[any(stackedspectra.surveys == 'WL')]
 
@@ -203,7 +207,7 @@ d. I would like to search for any other OB that contains the same astronomical o
 
 ```python
 import matplotlib.pyplot as plt
-
+data = Data()
 
 ####### < Part A
 ob = data.obs[1234]  # get the ob 
@@ -276,6 +280,7 @@ I'm also interested in using emission line properties to perform source classifi
 def excitation_index(oiii, hb, nii, sii, oi, Hα):
     return log(oiii/Hβ) - (log(nii/Hα) / 3) + log(sii/Hα) + log(oi/Hα)
 
+data = Data()
 l2stack = data.l2stack
 redshift = l2stack.z
 EI = excitation_index(l2stack.flux_oiii_5007, l2stack.flux_hbeta, l2stack.flux_nii_6583, l2stack.flux_oi_6300, 
@@ -299,6 +304,7 @@ We can add any catalogue or file we like to the database, all that is required i
 
 
 ```python
+data = Data()
 data.ob.anniek.flux_halpha
 ```
 
@@ -306,6 +312,7 @@ data.ob.anniek.flux_halpha
 
 
 ```python
+data = Data()
 catalogue = read_my_nice_catalogue('...')   # has a cname column
 data.join(catalogue, 'cname', weavetarget.cname, name='my_catalogue')  # only exists for this session
 ```
@@ -314,6 +321,7 @@ data.join(catalogue, 'cname', weavetarget.cname, name='my_catalogue')  # only ex
 
 
 ```python
+data = Data()
 line_fluxes = read_line_fluxes('...')  # from the weave single spectra associated with run 100423 
 data.join(line_fluxes, 'index', data.runs[100423].singlespectra, name='line_fluxes')
 ```
