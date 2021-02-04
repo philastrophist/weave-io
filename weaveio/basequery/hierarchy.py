@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import List, Union, Type, Tuple
 
 import py2neo
+import numpy as np
 
 from .common import FrozenQuery, AmbiguousPathError
 from .dissociated import Dissociated
@@ -267,6 +268,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _filter_by_identifiers(self, identifiers: List[Union[str, int, float]]) -> 'DefiniteHierarchyFrozenQuery':
         idname = self.hierarchy_type.idname
+        if isinstance(identifiers, np.ndarray):
+            identifiers = identifiers.ravel()
         new = self.branch.add_data(identifiers)
         identifiers_var = new.current_variables[0]
         branch = new.filter('{h}.' + idname + ' in {identifiers}', h=self.hierarchy_variable, identifiers=identifiers_var)
@@ -287,7 +290,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         """
         if isinstance(item, Dissociated):
             return self._filter_by_boolean(item)
-        if isinstance(item, (list, tuple)):
+        if isinstance(item, (list, tuple, np.ndarray)):
             if all(map(self.data.is_valid_name, item)):
                 return self._get_factor_table_query(item)
             elif any(map(self.data.is_valid_name, item)):
