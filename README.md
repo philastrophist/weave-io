@@ -150,10 +150,10 @@ is_sky_target = singlespectra.targuse == 'S'
 
 red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
 
-spectra = red_singlespectra()
+table = spectra['wvls, 'flux'](limit=1)
 
 # matplotlib
-plt.plot(spectra['wvls'], spectra['flux'])
+plt.plot(table['wvls'], table['flux'])
 ```
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
