@@ -103,4 +103,5 @@ setup(
     cmdclass={
         'upload': UploadCommand,
     },
+    setup_requires=['wheel'],
 )
