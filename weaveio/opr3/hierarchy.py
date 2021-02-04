@@ -183,6 +183,11 @@ class RawSpectrum(Spectrum):
     # only one raw per run essentially
 
 
+class WavelengthHolder(Hierarchy):
+    factors = ['wvls', 'cd1_1', 'crval1', 'naxis1']
+    identifier_builder = ['cd1_1', 'crval1', 'naxis1']
+
+
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True

@@ -125,7 +125,7 @@ It is analagous to an SQL query except that it is written in Python.
 
 # Examples of use:
 
-# 1. I want to return the number of sky spectra in a given run (runid=1002813)
+# 1. I want to return the number of sky spectra in a given run (runid=1002850)
 
 
 ```python
@@ -133,7 +133,7 @@ from weaveio import *
 runid = 1002813
 nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
-```
+
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 

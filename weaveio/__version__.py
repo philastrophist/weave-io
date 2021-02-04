@@ -1,2 +1,2 @@
-__version__ = "2020.1.1"
-__changes__ = 'set default Herts UHHPC configuration'
+__version__ = "2021.1.4"
+__changes__ = 'added wavelengths and removed unnecessary computation'
