@@ -180,7 +180,7 @@ from weaveio import *
 data = Data()
 
 obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
-fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == 'WL') | any(obs.fibretargets.surveys == 'WQSO')]
+fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == '/WL|WQSO/')]  # / indicate regex is starting and ending
 
 l2rows = fibretargets.l2stack
 table = l2rows['lineflux_ha_6562', 'z']()

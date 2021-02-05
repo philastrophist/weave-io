@@ -1,10 +1,11 @@
 from collections import defaultdict
 from typing import List, Union, Type, Tuple
+from warnings import warn
 
 import py2neo
 import numpy as np
 
-from .common import FrozenQuery, AmbiguousPathError
+from .common import FrozenQuery, AmbiguousPathError, is_regex
 from .dissociated import Dissociated
 from .factor import SingleFactorFrozenQuery, TableFactorFrozenQuery, FactorFrozenQuery
 from .tree import Branch
@@ -15,6 +16,7 @@ from ..writequery import CypherVariable
 GET_PRODUCT = "[({{h}})<-[p:product {{{{name: '{name}'}}}}]-(hdu: HDU) | [hdu.sourcefile, hdu.extn, p.index, p.column_name]]"
 GET_FACTOR = "{{h}}.{name}"
 GET_FACTOR_FORCE_PLURAL = f"[{GET_FACTOR}]"
+
 
 class HierarchyFrozenQuery(FrozenQuery):
     def __getitem__(self, item):
@@ -40,6 +42,54 @@ class HierarchyFrozenQuery(FrozenQuery):
 
     def _filter_by_boolean(self, condition):
         raise NotImplementedError(f"Filtering by a boolean condition is not supported for {self.__class__.__name__}")
+
+    def _apply_aligning_func(self, string, other: 'HierarchyFrozenQuery'):
+        if isinstance(other, HierarchyFrozenQuery):
+            aligned = self.branch.align(other.branch)
+            parent = self
+            inputs = {
+                'x': aligned.action.transformed_variables.get(parent.branch.current_hierarchy, parent.branch.current_hierarchy),
+                'y': aligned.action.transformed_variables.get(other.branch.current_hierarchy, other.branch.current_hierarchy)
+            }
+        elif isinstance(other, Hierarchy):
+            if other.identifier is None:
+                raise ValueError(f"Cannot compare with an out-of-db object if it has no identifier")
+            parent = getattr(self, self.hierarchy_type.idname)
+            data = parent.branch.add_data(other.identifier)
+            inputs = {
+                'x': parent.branch.current_variables[0],
+                'y': data.current_variables[0]
+            }
+            aligned = data
+        elif isinstance(other, FrozenQuery):
+            raise TypeError(f"Can only compare an object with another object not with {type(other)}")
+        else:
+            warn(f"Comparing {self} with an id {other} assuming that you mean {self.hierarchy_type.singular_name}.{self.hierarchy_type.idname}={other}")
+            parent = getattr(self, self.hierarchy_type.idname)
+            data = parent.branch.add_data(other)
+            inputs = {
+                'x': parent.branch.current_variables[0],
+                'y': data.current_variables[0]
+            }
+            aligned = data
+        newbranch = aligned.operate(string, **inputs)
+        return Dissociated(self.handler, newbranch, newbranch.current_variables[-1], self)
+
+    def __eq__(self, other: Union[Hierarchy, 'HierarchyFrozenQuery', int, float, str]) -> 'Dissociated':
+        string = '{x} = {y}'
+        if isinstance(other, str):
+            if is_regex(other):
+                string = '{x} =~ {y}'
+                other = other.strip('/')
+        return self._apply_aligning_func(string, other)
+
+    def __ne__(self, other: Union[Hierarchy, 'HierarchyFrozenQuery', int, float, str]) -> 'Dissociated':
+        string = '{x} <> {y}'
+        if isinstance(other, str):
+            if is_regex(other):
+                string = 'NOT ({x} =~ {y})'
+                other = other.strip('/')
+        return self._apply_aligning_func(string, other)
 
 
 class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
