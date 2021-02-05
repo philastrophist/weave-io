@@ -170,7 +170,7 @@ table = chosen['wvls', 'flux'](limit=10)
 
 import matplotlib.pyplot as plt
 # uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# % matplotlib 
+# %matplotlib 
 plt.plot(table['wvls'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
 ```
 
@@ -189,7 +189,7 @@ table = l2rows['lineflux_ha_6562', 'z']()
 
 import matplotlib.pyplot as plt
 # uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# % matplotlib 
+# %matplotlib 
 plt.scatter(table['lineflux_ha_6562'], table['z'])
 ```
 
@@ -214,7 +214,7 @@ blue = blues[index]()
 
 import matplotlib.pyplot as plt
 # uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# % matplotlib 
+# %matplotlib 
 plt.plot(red.wvls, red.flux)
 plt.plot(blue.wvls, blue.flux)
 
