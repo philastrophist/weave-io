@@ -138,27 +138,33 @@ nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
 ```
 
+## 1b. I want to see how many sky targets each run has
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
+print(nsky())
+```
+
+
 # 2. I want to plot all single sky spectra from last night in the red arm
 
 Currently, it is only possible to filter once in a query so you have to do separate queries for each condition you want and then feed it back in. See below
 
 ```python
 from weaveio import *
-import numpy as np
 yesterday = 57634
 
-runs = Data().runs
-red_runids = runs[runs.camera == 'red'].runids()  # this executes the query (the need for this hack will be removed later)
-runs = Data().runs
-yesterday_runids = runs[floor(runs.expmjd) == yesterday].runids()  # this executes the query (the need for this hack will be removed later)
-
-runids = np.unique(np.append(red_runids, yesterday_runids))
-
 data = Data()
-singlespectra = data.runs[runids].l1singlespectra
-is_sky_target = singlespectra.targuse == 'S'
+runs = data.runs
+is_red = runs.camera == 'red'
+is_yesterday = floor(runs.expmjd) == yesterday
 
-singlespectra = singlespectra[is_sky_target]
+# we do 2 separate filters instead of 1 so to not read too much data into memory at once
+runs = runs[is_red & is_yesterday]  # filter the runs first
+singlespectra = runs.l1singlespectra
+is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
+chosen = singlespectra[is_sky_target]
 
 table = singlespectra['wvls', 'flux'](limit=10)
 
