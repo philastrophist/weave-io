@@ -1,2 +1,2 @@
-__version__ = "2021.1.9"
-__changes__ = 'box'
+__version__ = "2021.1.10"
+__changes__ = 'added string functions, comparisons, and regex'
