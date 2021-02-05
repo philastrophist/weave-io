@@ -5,11 +5,13 @@ import numpy as np
 import py2neo
 from astropy.table import Table
 
-from .common import FrozenQuery
+from .common import FrozenQuery, is_regex
 from .tree import Branch
+from ..hierarchy import Hierarchy
 from ..writequery import CypherVariable, CypherQuery
 
-__all__ = ['sum', 'min', 'max', 'std', 'all', 'any', 'count', 'abs', 'floor', 'ceil', 'round', 'random', 'sign', 'log', 'log10', 'exp', 'sqrt']
+__all__ = ['sum', 'min', 'max', 'std', 'all', 'any', 'count', 'abs', 'floor', 'ceil', 'round',
+           'random', 'sign', 'log', 'log10', 'exp', 'sqrt', 'string', 'lower', 'upper']
 
 
 def _template_aggregator(string_function, name, normal: Callable, item: 'Dissociated', wrt: FrozenQuery = None,
@@ -87,6 +89,25 @@ def log10(item, *args, **kwargs):
 
 def sqrt(item, *args, **kwargs):
     return _template_operator('sqrt({x})', 'sqrt', np.sqrt, item, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def string(item):
+    if isinstance(item, Hierarchy):
+        item = item.identifier
+    elif hasattr(item, 'hierarchy_type'):
+        item = getattr(item, item.hierarchy_type.idname)
+    return _template_operator('toString({x})', 'string', str, item, convert_to_float=False)
+
+
+def lower(item):
+    item = string(item)
+    return _template_operator('toLower({x})', 'lower', lambda x: x.lower(), item, convert_to_float=False)
+
+
+def upper(item):
+    item = string(item)
+    return _template_operator('toUpper({x})', 'upper', lambda x: x.upper(), item, convert_to_float=False)
+
 
 
 python_any = any
@@ -193,11 +214,21 @@ class Dissociated(FrozenQuery):
     def __round__(self, n=None):
         return round(self, n)
 
-    def __eq__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
-        return self._apply_aligning_func('{x} = {y}', other)
+    def __eq__(self, other: Union['Dissociated', int, float, str]) -> 'Dissociated':
+        string = '{x} = {y}'
+        if isinstance(other, str):
+            if is_regex(other):
+                string = '{x} =~ {y}'
+                other = other.strip('/')
+        return self._apply_aligning_func(string, other)
 
-    def __ne__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
-        return self._apply_aligning_func('{x} <> {y}', other)
+    def __ne__(self, other: Union['Dissociated', int, float, str]) -> 'Dissociated':
+        string = '{x} <> {y}'
+        if isinstance(other, str):
+            if is_regex(other):
+                string = 'NOT ({x} =~ {y})'
+                other = other.strip('/')
+        return self._apply_aligning_func(string, other)
 
     def __lt__(self, other: Union['Dissociated', int, float]) -> 'Dissociated':
         return self._apply_aligning_func('{x} < {y}', other)
