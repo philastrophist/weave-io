@@ -1,2 +1,2 @@
-__version__ = "2021.1.8"
-__changes__ = 'Added ability to do multiple simple conditions'
+__version__ = "2021.1.9"
+__changes__ = 'box'
