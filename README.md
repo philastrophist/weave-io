@@ -169,6 +169,8 @@ chosen = singlespectra[is_sky_target]
 table = chosen['wvls', 'flux'](limit=10)
 
 import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
 plt.plot(table['wvls'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
 ```
 
@@ -185,6 +187,9 @@ fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == 'WL') | any(obs.
 l2rows = fibretargets.l2stack
 table = l2rows['lineflux_ha_6562', 'z']()
 
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
 plt.scatter(table['lineflux_ha_6562'], table['z'])
 ```
 
@@ -206,6 +211,10 @@ index = np.argmax(continuum)
 
 red = reds[index]()
 blue = blues[index]()
+
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
 plt.plot(red.wvls, red.flux)
 plt.plot(blue.wvls, blue.flux)
 
@@ -223,6 +232,8 @@ d. I would like to search for any other OB that contains the same astronomical o
 
 ```python
 import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
 data = Data()
 
 ####### < Part A
@@ -309,6 +320,10 @@ spectra = l2stack[in_redshift_range & is_lerg].l1stackspectra
 reds = spectra[spectra.camera == 'red']
 blues = spectra[spectra.camera == 'blue']
 
+
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
 plt.plot(reds.wvls(), reds.flux())
 plt.plot(blues.wvls(), blues.flux())
 ```
