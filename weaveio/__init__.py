@@ -7,7 +7,6 @@ from .basequery.dissociated import *
 from .__version__ import __version__
 
 try:
-    from boxing import boxing
     from colored import fore, style
     from pkg_info import get_pkg_info
     from semver import compare
@@ -33,12 +32,17 @@ try:
             self.last_checked_path = Path(__file__).parent / '.last-checked'
             self.time_fmt = '%Y-%m-%dT%H:%M:%S'
             self._pkg = None
+            self.freq = 1  # hours
 
         @property
         def pkg(self):
             if self._pkg is None:
                 self._pkg = get_pkg_info(self.name)
             return self._pkg
+
+        @property
+        def latest(self):
+            return self.pkg.version
 
         def last_checked(self):
             try:
@@ -52,14 +56,13 @@ try:
             if lc is None:
                 return False
             seconds = (datetime.now() - lc).total_seconds()
-            return (seconds / 60 / 60) < 6
+            return (seconds / 60 / 60) < self.freq
 
         def update_last_checked(self):
             with open(str(self.last_checked_path), 'w') as f:
                 f.write(datetime.now().strftime(self.time_fmt))
 
         def is_latest_version(self) -> bool:
-            self.latest = self.pkg.version
             return True if compare(self.version, self.latest) >= 0 else False
 
         def render_changes(self):
@@ -72,13 +75,13 @@ try:
 
         def notify(self) -> None:
             if self.too_soon():
-                logging.info('Skipping version checking since its has not been 6 hours since the last check.')
+                logging.info(f'Skipping version checking since its has not been {self.freq} hour since the last check.')
                 return
-            self.update_last_checked()
             if self.is_latest_version():
                 return
             action, arg = print, self.default_message()
             action(arg) if arg else action()
+            self.update_last_checked()
 
         def default_message(self) -> str:
             changes, nchanges = self.render_changes()
@@ -86,14 +89,22 @@ try:
             latest = fore.LIGHT_GREEN + self.latest + style.RESET
             command = fore.LIGHT_BLUE + 'pip install -U ' + self.name + style.RESET
             nchanges = fore.LIGHT_GREEN + str(nchanges) + style.RESET
-            return boxing(f'Update available {version} → {latest} ({nchanges} new changes)\n' +
-                          f'Run {command} to update\n'
-                          f'{changes}')
+            strings = [f'Update available {version} -> {latest} ({nchanges} new changes)' ,
+                       f'Run {command} to update',
+                       f'{changes.strip()}']
+            maxlen = max(map(len, strings))
+            strings = list(map(lambda s: '|' + s, strings))
+            prefix = ' ' + '_' * (maxlen - 2)
+            suffix = ' ' + '=' * (maxlen - 2)
+            strings.insert(0, prefix)
+            strings.append(suffix)
+            return '\n'.join(strings)
+
 
     UpdateNotify('weaveio', __version__).notify()
 
 except ImportError:
     from warnings import warn
-    warn('Please run `pip install boxing colored pkg_info semver` to alert you to updated versions of the weaveio library')
+    warn('Please run `pip install colored pkg_info semver` to alert you to updated versions of the weaveio library')
 except Exception as e:
     logging.exception('There was a problem in alerting you to updated versions of the weaveio library...', exc_info=True)
