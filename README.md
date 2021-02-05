@@ -1,3 +1,5 @@
+![PyPI](https://img.shields.io/pypi/v/weaveio)
+
 # Tutorial
 
 ## Basics
@@ -136,27 +138,33 @@ nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
 ```
 
+## 1b. I want to see how many sky targets each run has
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
+print(nsky())
+```
+
+
 # 2. I want to plot all single sky spectra from last night in the red arm
 
 Currently, it is only possible to filter once in a query so you have to do separate queries for each condition you want and then feed it back in. See below
 
 ```python
 from weaveio import *
-import numpy as np
 yesterday = 57634
 
-runs = Data().runs
-red_runids = runs[runs.camera == 'red'].runids()  # this executes the query (the need for this hack will be removed later)
-runs = Data().runs
-yesterday_runids = runs[floor(runs.expmjd) == yesterday].runids()  # this executes the query (the need for this hack will be removed later)
-
-runids = np.unique(np.append(red_runids, yesterday_runids)).tolist()
-
 data = Data()
-singlespectra = data.runs[runids].l1singlespectra
-is_sky_target = singlespectra.targuse == 'S'
+runs = data.runs
+is_red = runs.camera == 'red'
+is_yesterday = floor(runs.expmjd) == yesterday
 
-singlespectra = singlespectra[is_sky_target]
+# we do 2 separate filters instead of 1 so to not read too much data into memory at once
+runs = runs[is_red & is_yesterday]  # filter the runs first
+singlespectra = runs.l1singlespectra
+is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
+chosen = singlespectra[is_sky_target]
 
 table = singlespectra['wvls', 'flux'](limit=10)
 
@@ -193,7 +201,7 @@ blues = wl_stackedspectra[wl_stackedspectra.camera == 'blue']
 
 continuum = []
 for red, blue in reds(), blues():  # this loop is offline
-    continuum.append(my_special_module.median_flux(red, blue 4950, 5050))  # do some fancy function you have written
+    continuum.append(my_special_module.median_flux(red, blue, 4950, 5050))  # do some fancy function you have written
 index = np.argmax(continuum)
 
 red = reds[index]()
@@ -244,8 +252,8 @@ red_spectra = brightest_red.l1singlespectra
 blue_spectra = brightest_blue.l1singlespectra
 
 # matplotlib allows you to plot multiple lines with 2d arrays
-redax.plot(redsingle.wvls(), redsingle.flux(), 'r-', alpha=0.4, label='single for brightest')
-blueax.plot(bluesingle.wvls(), bluesingle.flux(), 'r-', alpha=0.4, label='single for brightest')
+redax.plot(red_spectra.wvls(), red_spectra.flux(), 'r-', alpha=0.4, label='single for brightest')
+blueax.plot(blue_spectra.wvls(), blue_spectra.flux(), 'r-', alpha=0.4, label='single for brightest')
 ####### Part B />
 
 
@@ -256,7 +264,7 @@ other_reds = brightest_target.l1stackspectra[brightest_target.l1stackspectra.cam
 other_blues = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'blue']
 
 # overplot the other observations
-for wvl, flux in other.red.wvls(), other_red.flux():
+for wvl, flux in other_reds.wvls(), other_reds.flux():
     redax.plot(wvl, flux, 'k:', alpha=0.2, label='from all obs')
 ####### Part C />
 ```
@@ -285,8 +293,8 @@ I'm also interested in using emission line properties to perform source classifi
 
 
 ```python
-def excitation_index(oiii, hb, nii, sii, oi, Hα):
-    return log(oiii/Hβ) - (log(nii/Hα) / 3) + log(sii/Hα) + log(oi/Hα)
+def excitation_index(oiii, hb, nii, sii, oi, ha):
+    return log(oiii/hb) - (log(nii/ha) / 3) + log(sii/ha) + log(oi/ha)
 
 data = Data()
 l2stack = data.l2stack
@@ -297,12 +305,12 @@ EI = excitation_index(l2stack.flux_oiii_5007, l2stack.flux_hbeta, l2stack.flux_n
 in_redshift_range = (l2stack.zbest > 0.5) & (l2stack.zbest < 1.)
 is_lerg = EI < 0.95  
 
-spectra = stackedl2[in_redshift_range & is_lerg].l1stackspectra
+spectra = l2stack[in_redshift_range & is_lerg].l1stackspectra
 reds = spectra[spectra.camera == 'red']
 blues = spectra[spectra.camera == 'blue']
 
 plt.plot(reds.wvls(), reds.flux())
-plt.plot(blue.wvls(), blue.flux())
+plt.plot(blues.wvls(), blues.flux())
 ```
 
 # Anniek's fluxes and other catalogues

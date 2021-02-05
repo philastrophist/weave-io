@@ -62,11 +62,11 @@ def parse(graph) -> List:
                 for d in done:
                     if d in todo:
                         del todo[todo.index(d)]
-                if align.action.continues_on:
-                    reference_subquery = subqueries.pop(-1)
+                # if align.action.continues_on:
+                #     reference_subquery = subqueries.pop(-1)
                 query += subqueries
-                if align.action.continues_on:
-                    query += reference_subquery
+                # if align.action.continues_on:
+                #     query += reference_subquery
         else:
             query.append(node)
     return query
@@ -92,6 +92,8 @@ class CloseSubquery(Statement):
 def write_tree(parsed_tree):
     query = CypherQuery.get_context()  # type: CypherQuery
     if isinstance(parsed_tree, list):
+        if len(parsed_tree) == 0:
+            return
         inputs = [i for n in flatten(parsed_tree) for i in n.action.input_variables]
         outputs = [i for n in flatten(parsed_tree) for i in n.action.output_variables]
         subquery_inputs = list({i for i in inputs if getattr(i, 'parent', i) not in outputs and not isinstance(i, CypherData)})
@@ -116,8 +118,5 @@ def branch2query(branch) -> CypherQuery:
             if isinstance(node.action, DataReference):
                 query.data += node.action.input_variables
         for s in subqueries:
-            if isinstance(s, list):
-                if len(s) == 0:
-                    continue
             write_tree(s)
     return query

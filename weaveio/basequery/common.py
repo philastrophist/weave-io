@@ -1,6 +1,8 @@
+import time
 from copy import deepcopy
 from typing import Tuple, Dict, Any
 
+import logging
 import py2neo
 
 from weaveio.basequery.parse_tree import parse, write_tree, branch2query
@@ -64,14 +66,23 @@ class FrozenQuery:
 
     def _execute_query(self, limit=None, skip=None):
         """Override to allow custom edits as to how the cypher text is run"""
+        start = time.clock()
         if not self.executable:
             raise TypeError(f"{self.__class__} may not be executed as queries in their own right")
+        logging.info(f'Parsing query...')
         cypher, params = self._prepare_cypher()
         if skip is not None:
             cypher += f'\nSKIP {int(skip)}'
         if limit is not None:
             cypher += f'\nLIMIT {int(limit)}'
-        return self.data.graph.execute(cypher, **params)
+        end = time.clock()
+        self.parse_time = end - start
+        logging.info(f'Executing query...')
+        start = time.clock()
+        r = self.data.graph.execute(cypher, **params)
+        end = time.clock()
+        self.execute_time = end - start
+        return r
 
     def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
@@ -80,7 +91,18 @@ class FrozenQuery:
     def __call__(self, limit=None, skip=None, squeeze=True):
         """Prepare and execute the query contained by this frozen object"""
         result = self._execute_query(limit=limit, skip=skip)
-        return self._post_process(result, squeeze)
+        logging.info(f'Processing query results...')
+        start = time.clock()
+        r = self._post_process(result, squeeze)
+        end = time.clock()
+        self.process_time = end - start
+        total = self.parse_time + self.execute_time + self.process_time
+        logging.info(f"Query took {total:.1f} seconds ("
+                     f"parsing={self.parse_time / total:.0%}, "
+                     f"execution={self.execute_time / total:.0%}, "
+                     f"post-processing={self.process_time / total:.0%})")
+        return r
+
 
     def __repr__(self):
         return f'{self.parent}{self.string}'
