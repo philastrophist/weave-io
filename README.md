@@ -166,7 +166,7 @@ singlespectra = runs.l1singlespectra
 is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
 chosen = singlespectra[is_sky_target]
 
-table = singlespectra['wvls', 'flux'](limit=10)
+table = chosen['wvls', 'flux'](limit=10)
 
 import matplotlib.pyplot as plt
 plt.plot(table['wvls'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
