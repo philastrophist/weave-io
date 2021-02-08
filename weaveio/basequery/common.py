@@ -66,7 +66,7 @@ class FrozenQuery:
 
     def _execute_query(self, limit=None, skip=None):
         """Override to allow custom edits as to how the cypher text is run"""
-        start = time.clock()
+        start = time.time()
         if not self.executable:
             raise TypeError(f"{self.__class__} may not be executed as queries in their own right")
         logging.info(f'Parsing query...')
@@ -75,12 +75,12 @@ class FrozenQuery:
             cypher += f'\nSKIP {int(skip)}'
         if limit is not None:
             cypher += f'\nLIMIT {int(limit)}'
-        end = time.clock()
+        end = time.time()
         self.parse_time = end - start
         logging.info(f'Executing query...')
-        start = time.clock()
+        start = time.time()
         r = self.data.graph.execute(cypher, **params)
-        end = time.clock()
+        end = time.time()
         self.execute_time = end - start
         return r
 
@@ -92,9 +92,9 @@ class FrozenQuery:
         """Prepare and execute the query contained by this frozen object"""
         result = self._execute_query(limit=limit, skip=skip)
         logging.info(f'Processing query results...')
-        start = time.clock()
+        start = time.time()
         r = self._post_process(result, squeeze)
-        end = time.clock()
+        end = time.time()
         self.process_time = end - start
         total = self.parse_time + self.execute_time + self.process_time
         logging.info(f"Query took {total:.1f} seconds ("
