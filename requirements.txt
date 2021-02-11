@@ -7,7 +7,6 @@ pandas==1.0.3
 pytest==5.4.1
 cryptography<3.4
 tqdm
-boxing
 colored
 pkg_info
 semver

@@ -77,10 +77,11 @@ def explain_factor(factor, data = None):
             explain_factor(f, factor.data)
     else:
         factor = data.singular_name(factor)
-        hierarchies = set(data.factor_hierarchies[factor])
+        hierarchies = {h for h in data.factor_hierarchies[factor] if not h.is_template}
         if len(hierarchies) > 1:
             print(f'{factor}s are owned by multiple different objects ({[h.singular_name for h in hierarchies]}).'
-                  f' They could be entirely different things.')
+                  f'\nThey could be entirely different things.')
+            print(f'You will need to specify one of the parent objects below for {factor} when querying.')
         for h in hierarchies:
             if factor in h.products:
                 print(f'A {factor} is a product (binary data kept out-of-database) of a {h.singular_name}')
@@ -118,11 +119,11 @@ def explain(a, b=None, data=None):
         explain_object(a, data)
     except (KeyError, AttributeError):
         explain_factor(a, data)
-    try:
-        explain_object(b, data)
-    except (KeyError, AttributeError):
-        explain_factor(b, data)
     if b is not None:
+        try:
+            explain_object(b, data)
+        except (KeyError, AttributeError):
+            explain_factor(b, data)
         print('='*40)
         explain_relation(a, b, data)
         explain_relation(b, a, data)
