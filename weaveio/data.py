@@ -1,33 +1,26 @@
+import logging
+import re
 import time
 from functools import reduce
 from itertools import product
-from operator import or_, and_
+from operator import and_
+from pathlib import Path
+from typing import Union, List, Tuple, Type, Dict, Set
 from warnings import warn
 
-import networkx
-import numpy as np
-import logging
-from pathlib import Path
-from typing import Union, List, Tuple, Type, Dict, Optional, Set
-import pandas as pd
-import re
-
 import networkx as nx
+import pandas as pd
 import py2neo
-from collections import Counter
-
-from astropy.io import fits
 from tqdm import tqdm
 
-from weaveio.address import Address
+from weaveio.basequery.actions import TraversalPath
 from weaveio.basequery.common import AmbiguousPathError
 from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.basequery.tree import BranchHandler
-from weaveio.basequery.actions import TraversalPath
-from weaveio.graph import Graph
-from weaveio.writequery import Unwind
-from weaveio.hierarchy import Multiple, Hierarchy, Indexed, Graphable, One2One
 from weaveio.file import File, HDU
+from weaveio.graph import Graph
+from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
+from weaveio.writequery import Unwind
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
@@ -120,6 +113,10 @@ def shared_base_class(*classes):
         if all_classes:
             return all_classes[0]
     return Hierarchy
+
+
+def is_multiple_edge(graph, x, y):
+    return not graph.edges[(x, y)]['multiplicity']
 
 
 class Data:
@@ -515,17 +512,26 @@ class Data:
         else:
             raise nx.NetworkXNoPath(f'No viable path between {a} and {b}')
 
-    def _find_restricted_path(self, traversal_graph: nx.DiGraph, a: Type[Hierarchy], b: Type[Hierarchy],
+    def multiplicity_of_edge(self, a, b, graph=None):
+        if graph is None:
+            graph = self.relation_graph
+        try:
+            if not graph.edges[b, a]['multiplicity']:
+                return False
+        except KeyError:
+            pass
+        return True
+
+
+    def _find_restricted_path(self, graph: nx.DiGraph, a: Type[Hierarchy], b: Type[Hierarchy],
                               plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
-        if plural:
-            graph = traversal_graph
-        else:
-            graph = nx.subgraph_view(traversal_graph, filter_edge=lambda x, y: not traversal_graph.edges[(x, y)]['multiplicity'])
         try:
             travel_path = self.shortest_path_without_oneway_violation(graph, a, b)
         except nx.NetworkXNoPath:
             path = self.shortest_path_without_oneway_violation(graph, b, a)
             travel_path = path[::-1]
+        if any(self.multiplicity_of_edge(a, b, graph) for a, b in zip(travel_path[:-1], travel_path[1:])) and not plural:
+            raise nx.NetworkXNoPath
         multiplicity = []
         number = []
         _direction = []
@@ -545,9 +551,9 @@ class Data:
         # now reverse the arrow direction if that direction is not real
         for x, y in zip(travel_path[:-1], travel_path[1:]):
             try:
-                real = traversal_graph.edges[(x, y)].get('real', False)
+                real = graph.edges[(x, y)].get('real', False)
             except KeyError:
-                real = not traversal_graph.edges[(y, x)].get('real', False)
+                real = not graph.edges[(y, x)].get('real', False)
             arrow = '->' if real else '<-'
             direction.append(arrow)
         total_path = []

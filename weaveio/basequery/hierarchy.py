@@ -1,7 +1,9 @@
+from _warnings import warn
 from collections import defaultdict
 from typing import List, Union, Type, Tuple
 from warnings import warn
 
+import networkx as nx
 import py2neo
 import numpy as np
 
@@ -9,6 +11,7 @@ from .common import FrozenQuery, AmbiguousPathError, is_regex
 from .dissociated import Dissociated
 from .factor import SingleFactorFrozenQuery, TableFactorFrozenQuery, FactorFrozenQuery
 from .tree import Branch
+from ..helper import _convert_obj
 from ..hierarchy import Hierarchy, Multiple, One2One
 from ..writequery import CypherVariable
 
@@ -127,9 +130,11 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
             raise AmbiguousPathError(f"Cannot return a single factor from a heterogeneous dataset")
         elif item in self.data.singular_hierarchies:
             raise AmbiguousPathError(f"Cannot return a singular hierarchy without filtering first")
-        else:
+        elif item in self.data.plural_hierarchies:
             name = self.data.singular_name(item)
             return self._get_hierarchy(name, plural=True)
+        else:
+            autosuggest(item, self.handler.data)
 
 
 class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
@@ -357,8 +362,53 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         factor = self.data.is_factor_name(item)
         exists = self.data.is_singular_name(item) or plural
         if not exists:
-            raise AttributeError(f"{self} has no attribute {item}")
+            autosuggest(item, self.handler.data, self.hierarchy_type)
         if factor:
             return self._get_factor(item, plural=plural)
         else:
             return self._get_hierarchy(item, plural=plural)
+
+
+def _autosuggest(a, data, relative_to=None):
+    import textdistance
+    distance, distance_reverse = textdistance.jaro_winkler, True
+    suggestions = []
+    if relative_to is not None:
+        relative_to, data = _convert_obj(relative_to, data)
+
+    for h in data.hierarchies:
+        newsuggestions = []
+        if relative_to is not None:
+            try:
+                data.find_hierarchy_paths(relative_to, h, plural=False)
+            except (nx.NetworkXNoPath, AmbiguousPathError):
+                plural = True
+                hier = h.plural_name
+                factors = [data.plural_name(f) for f in h.products_and_factors]
+            else:
+                plural = False
+                hier = h.singular_name
+                factors = h.products_and_factors
+            newsuggestions.append(hier)
+            newsuggestions += factors
+        else:
+            newsuggestions += [h.singular_name, h.plural_name] + h.products_and_factors
+            newsuggestions += [data.plural_name(f) for f in h.products_and_factors]
+        try:
+            newsuggestions.index(a)
+        except ValueError:
+            suggestions += newsuggestions
+        else:
+            return [a]
+    inorder = sorted(suggestions, key=lambda x: distance(a, x), reverse=distance_reverse)
+    return inorder[:3]
+
+
+def autosuggest(a, data, relative_to=None):
+    suffix = '\nYou can learn more about an object or attribute by using `explain(obj/attribute, ...)`'
+    try:
+        l = _autosuggest(a, data, relative_to)
+        string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
+    except ImportError:
+        raise AttributeError(f"`{a}` not understood.{suffix}")
+    raise AttributeError(f"`{a}` not understood, did you mean one of:\n{string}{suffix}")
