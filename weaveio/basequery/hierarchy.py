@@ -410,5 +410,5 @@ def autosuggest(a, data, relative_to=None):
         l = _autosuggest(a, data, relative_to)
         string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
     except ImportError:
-        raise AttributeError(f"`{a}` not understood. {suffix}")
-    raise AttributeError(f"`{a}` not understood, did you mean one of:\n{string}. {suffix}")
+        raise AttributeError(f"`{a}` not understood.{suffix}")
+    raise AttributeError(f"`{a}` not understood, did you mean one of:\n{string}{suffix}")

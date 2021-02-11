@@ -118,11 +118,15 @@ def explain(a, b=None, data=None):
     try:
         explain_object(a, data)
     except (KeyError, AttributeError):
+        if data is None:
+            raise ValueError(f"You must supply `data=data` to `explain` when asking about a string name")
         explain_factor(a, data)
     if b is not None:
         try:
             explain_object(b, data)
         except (KeyError, AttributeError):
+            if data is None:
+                raise ValueError(f"You must supply `data=data` to `explain` when asking about a string name")
             explain_factor(b, data)
         print('='*40)
         explain_relation(a, b, data)
