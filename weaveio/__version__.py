@@ -1,2 +1,2 @@
-__version__ = "2021.1.14"
-__changes__ = 'Added explain()'
+__version__ = "2021.1.15"
+__changes__ = 'Better update messages'
