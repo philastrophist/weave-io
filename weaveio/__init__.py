@@ -7,6 +7,8 @@ from .basequery.dissociated import *
 
 from .__version__ import __version__
 
+__author__ = 'Shaun C Read'
+
 try:
     from colored import fore, style
     from pkg_info import get_pkg_info
@@ -70,9 +72,9 @@ try:
             releases = [(k, datetime.strptime(v[0]['upload_time'], self.time_fmt)) for k, v in self.pkg.raw_data['releases'].items()]
             releases.sort(key=lambda x: x[1])
             release_names, _ = zip(*releases)
+            release_names = release_names[release_names.index(self.version)+1:]
             changes = [parse_changes(get_other_descriptions(self.pkg.name, v)) for v in release_names]
-            newer_changes = changes[release_names.index(self.pkg.version):]
-            return '\n'.join(newer_changes), len(newer_changes)
+            return changes[::-1]
 
         def notify(self) -> None:
             if self.too_soon():
@@ -85,18 +87,17 @@ try:
             self.update_last_checked()
 
         def default_message(self) -> str:
-            changes, nchanges = self.render_changes()
+            changes = self.render_changes()
             version = fore.GREY_53 + self.version + style.RESET
             latest = fore.LIGHT_GREEN + self.latest + style.RESET
-            command = fore.LIGHT_BLUE + 'pip install -U ' + self.name + style.RESET
-            nchanges = fore.LIGHT_GREEN + str(nchanges) + style.RESET
-            strings = [f'Update available {version} -> {latest} ({nchanges} new changes)' ,
-                       f'Run {command} to update',
-                       f'{changes.strip()}']
+            command = fore.LIGHT_BLUE + 'pip3 install --user --upgrade ' + self.name + style.RESET
+            nchanges = fore.LIGHT_GREEN + str(len(changes)) + style.RESET
+            strings = [f'Update available {version} -> {latest} ({nchanges} new releases)' ,
+                       f'Run {command} to update'] + [f'--- {c.strip()}' for c in changes]
             maxlen = max(map(len, strings))
-            strings = list(map(lambda s: '|' + s, strings))
-            prefix = ' ' + '_' * (maxlen - 2)
-            suffix = ' ' + '=' * (maxlen - 2)
+            strings = list(map(lambda s: ' ' + s, strings))
+            prefix = ' ' + '*' * (maxlen - 2)
+            suffix = ' ' + '*' * (maxlen - 2)
             strings.insert(0, prefix)
             strings.append(suffix)
             return '\n'.join(strings)

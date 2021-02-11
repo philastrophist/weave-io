@@ -1,2 +1,2 @@
-__version__ = "2021.1.14"
-__changes__ = 'Added explain()'
+__version__ = "2021.1.17"
+__changes__ = 'Factors able to queries directly'
