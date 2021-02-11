@@ -7,6 +7,8 @@ from .basequery.dissociated import *
 
 from .__version__ import __version__
 
+__author__ = 'Shaun C Read'
+
 try:
     from colored import fore, style
     from pkg_info import get_pkg_info
