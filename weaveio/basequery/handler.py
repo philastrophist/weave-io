@@ -26,6 +26,11 @@ class Handler:
         returns a dictionary of hierarchy: [path,...] and a shared hierarchy
         """
         factor_name = self.data.singular_name(factor_name)
+        if start is None:
+            starts = set(self.data.factor_hierarchies[factor_name])
+            if len(starts) > 1:
+                raise AmbiguousPathError(f"{factor_name} could refer to any of {starts}. Please traverse to the parent object first.")
+            start = starts.pop()
         pathsetdict, base = self.data.find_factor_paths(start, factor_name, plural)
         is_product = factor_name in base.products.keys()
         return pathsetdict, base, is_product
