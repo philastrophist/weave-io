@@ -13,14 +13,28 @@ class Author(Hierarchy):
 
 
 class CASU(Author):
+    """
+    CASU is the pipeline that will produce the L1 and Raw data files and spectra.
+    The version of CASU that produces these files may change without warning and files may be duplicated.
+    This CASU object breaks that potential degeneracy.
+    """
     idname = 'casuid'
 
 
 class APS(Author):
+    """
+    APS is the pipeline that will produce the L2 data files and model spectra.
+    The version of APS that produces these files may change without warning and files may be duplicated.
+    This APS object breaks that potential degeneracy.
+    """
     idname = 'apsvers'
 
 
 class Simulator(Author):
+    """
+    Data which were simulated in an operation rehearsal will be be produced by a Simulator.
+    Real data will not have a Simulator.
+    """
     factors = ['simvdate', 'simver', 'simmode']
     identifier_builder = factors
 
@@ -30,6 +44,15 @@ class System(Author):
 
 
 class ArmConfig(Hierarchy):
+    """
+    An ArmConfig is the entire configuration of one arm of the WEAVE spectrograph.
+    The ArmConfig is therefore a subset of the ProgTemp code and there are multiple ways to identify
+    one:
+    - resolution can be "high" or "low"
+    - vph is the number of the grating [1=lowres, 2=highres, 3=highres(green)]
+    - camera can be 'red' or 'blue'
+    - colour can be 'red', 'blue', or 'green'
+    """
     factors = ['resolution', 'vph', 'camera', 'colour']
     identifier_builder = ['resolution', 'vph', 'camera']
 
@@ -49,6 +72,12 @@ class ArmConfig(Hierarchy):
 
 
 class ObsTemp(Hierarchy):
+    """
+    Whilst ProgTemp deals with "how" a target is observed, OBSTEMP deals with "when" a target is observed,
+    namely setting the observational constraints required to optimally extract scientific information from the observation.
+    The ProgTemp is made up of maxseeing, mintrans (transparency), minelev (elevation), minmoon, maxsky and
+    each combination is given a valid code, where each letter corresponds to one of those settings.
+    """
     factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky', 'code']
     identifier_builder = factors[:-1]
 
@@ -60,30 +89,50 @@ class ObsTemp(Hierarchy):
 
 
 class Survey(Hierarchy):
+    """
+    A Survey is one of the official Surveys of WEAVE. WL is one of them.
+    """
     idname = 'name'
 
 
 class WeaveTarget(Hierarchy):
+    """
+    A WeaveTarget is the disambiguated target to which all targets submitted by surveys belong.
+    The "cname" of a weavetarget will be formed of the ra and dec of the submitted target.
+    """
     idname = 'cname'
 
 
 class Fibre(Hierarchy):
+    """
+    A WEAVE spectrograph fibre
+    """
     idname = 'fibreid'
 
 
 class SubProgramme(Hierarchy):
+    """
+    A submitted programme of observation which was written by multiple surveys.
+    """
     parents = [Multiple(Survey)]
     factors = ['name']
     idname = 'progid'
 
 
 class SurveyCatalogue(Hierarchy):
+    """
+    A catalogue which was submitted by a subprogramme.
+    """
     parents = [SubProgramme]
     factors = ['name']
     idname = 'catid'
 
 
 class SurveyTarget(Hierarchy):
+    """
+    A target which was submitted by a subprogramme contained within a catalogue. This is likely
+    the target you want if you not linking observations between subprogrammes.
+    """
     parents = [SurveyCatalogue, WeaveTarget]
     factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch',
                'targpmra', 'targpmdec', 'targparal', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
@@ -92,12 +141,22 @@ class SurveyTarget(Hierarchy):
 
 
 class InstrumentConfiguration(Hierarchy):
+    """
+    The WEAVE instrument can be configured into MOS/LIFU/mIFU modes and the spectral binning in pixels.
+    InstrumentConfiguration holds the mode, binning, and is linked to an ArmConfig.
+    """
     factors = ['mode', 'binning']
     parents = [Multiple(ArmConfig, 2, 2, idname='camera')]
     identifier_builder = ['armconfigs', 'mode', 'binning']
 
 
 class ProgTemp(Hierarchy):
+    """
+    The ProgTemp code is an integral part of describing a WEAVE target.
+    This parameter encodes the requested instrument configuration, OB length, exposure time,
+    spectral binning, cloning requirements and probabilistic connection between these clones.
+    The ProgTemp is therefore formed from instrumentconfiguration, length, and an exposure_code.
+    """
     parents = [InstrumentConfiguration]
     factors = ['length', 'exposure_code', 'code']
     identifier_builder = ['instrumentconfiguration'] + factors
@@ -117,12 +176,22 @@ class ProgTemp(Hierarchy):
 
 
 class OBSpec(Hierarchy):
+    """
+    When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
+    the information about when and how to observe.
+    When actually observing them, an "OB" is create with its own unique obid.
+    """
     factors = ['obtitle']
     parents = [ObsTemp, ProgTemp, Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
 class FibreTarget(Hierarchy):
+    """
+    A fibretarget is the combination of fibre and surveytarget which is created after submission when
+    the fibres are assigned.
+    This object describes where the fibre is placed and what its status is.
+    """
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
     parents = [OBSpec, Fibre, SurveyTarget]
@@ -131,22 +200,38 @@ class FibreTarget(Hierarchy):
 
 
 class OB(Hierarchy):
+    """
+    An OB is an "observing block" which is essentially a realisation of an OBSpec.
+    Many OBs can share the same xml OBSpec which describes how to do the observations.
+    """
     idname = 'obid'  # This is globally unique by obid
     factors = ['obstartmjd']
     parents = [OBSpec]
 
 
 class Exposure(Hierarchy):
+    """
+    An exposure is one observation of one set of targets for a given configuration.
+    WEAVE is structured such that an exposure is actually two sets of data, one from each arm.
+    These are called runs.
+    """
     idname = 'expmjd'  # globally unique
     parents = [OB]
 
 
 class Run(Hierarchy):
+    """
+    A run is one observation of a set of targets for a given configuration in a specific arm (red or blue).
+    A run belongs to an exposure, which always consists of one or two runs (per arm).
+    """
     idname = 'runid'
     parents = [ArmConfig, Exposure]
 
 
 class Observation(Hierarchy):
+    """
+    A container for actual observing conditions around a run
+    """
     parents = [One2One(Run), CASU, Simulator, System]
     factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
     products = {'primary': 'primary', 'guidinfo': 'guidinfo', 'metinfo': 'metinfo'}
@@ -175,6 +260,9 @@ class Spectrum(SourcedData):
 
 
 class RawSpectrum(Spectrum):
+    """
+    A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
+    """
     plural_name = 'rawspectra'
     parents = [One2One(Observation), CASU]
     products = {'counts1': 'counts1', 'counts2': 'counts2'}
@@ -197,6 +285,9 @@ class L1SpectrumRow(Spectrum):
 
 
 class L1SingleSpectrum(L1SpectrumRow):
+    """
+    A single spectrum row processed from a raw spectrum, belonging to one fibretarget and one run.
+    """
     plural_name = 'l1singlespectra'
     parents = L1SpectrumRow.parents + [RawSpectrum, FibreTarget, CASU]
     version_on = ['rawspectrum', 'fibretarget']
@@ -208,18 +299,27 @@ class L1SingleSpectrum(L1SpectrumRow):
 
 
 class L1StackSpectrum(L1SpectrumRow):
+    """
+    A stacked spectrum row processed from > 1 single spectrum, belonging to one fibretarget but many runs within the same OB.
+    """
     plural_name = 'l1stackspectra'
     parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
     version_on = ['l1singlespectra', 'fibretarget']
 
 
 class L1SuperStackSpectrum(L1SpectrumRow):
+    """
+    A stacked spectrum row processed from > 1 single spectrum, belonging to one fibretarget but many runs within the same OBSpec.
+    """
     plural_name = 'l1superstackspectra'
     parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
     version_on = ['l1singlespectra', 'fibretarget']
 
 
 class L1SuperTargetSpectrum(L1SpectrumRow):
+    """
+    A stacked spectrum row processed from > 1 single spectrum, belonging to one weavetarget over many different OBSpecs.
+    """
     plural_name = 'l1supertargetspectra'
     parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
     version_on = ['l1singlespectra', 'weavetarget']
@@ -230,18 +330,34 @@ class L2(SourcedData):
 
 
 class L2Single(L2):
+    """
+    An L2 data product resulting from two or sometimes three single L1 spectra.
+    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
+    """
     parents = [Multiple(L1SingleSpectrum, 2, 3), FibreTarget, APS, Exposure]
 
 
 class L2Stack(L2):
+    """
+    An L2 data product resulting from two or sometimes three stacked/single L1 spectra.
+    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
+    """
     parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), FibreTarget, APS, OB]
 
 
 class L2SuperStack(L2):
+    """
+    An L2 data product resulting from two or sometimes three super-stacked/stacked/single L1 spectra.
+    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
+    """
     parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), Multiple(L1SuperStackSpectrum, 0, 3), FibreTarget, APS, OBSpec]
 
 
 class L2SuperTarget(L2):
+    """
+    An L2 data product resulting from two or sometimes three supertarget L1 spectra.
+    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
+    """
     parents = [Multiple(L1SuperTargetSpectrum, 2, 3), APS, WeaveTarget]
 
 
@@ -266,6 +382,9 @@ class L2Spectrum(L2SourcedData):
 
 
 class ClassificationTable(L2TableRow):
+    """
+    The APS-generated table of propagated model fluxes, redshifts, and galaxy/star/qso classifications
+    """
     factors = L2TableRow.factors + ['class', 'subclass', 'z', 'z_err', 'auto_class_alls',
                                     'auto_subclass_alls', 'z_alls', 'z_err_alls', 'rchi2diff',
                                     'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
@@ -276,17 +395,26 @@ class ClassificationTable(L2TableRow):
 
 
 class GalaxyTable(L2TableRow):
+    """
+    The APS-generated table of galaxy spectrum properties generated by GANDALF.
+    """
     with open(HERE / 'galaxy_table_columns.txt', 'r') as _f:
         factors = L2TableRow.factors + [x.lower().strip() for x in _f.readlines() if len(x)]
 
 
 class ClassificationSpectrum(L2Spectrum):
+    """
+    The joint-arm model spectrum used in the classification of this spectrum
+    """
     plural_name = 'classification_spectra'
     products = {'flux': Indexed('class_spectra', 'flux'), 'ivar': Indexed('class_spectra', 'ivar'),
                 'model': Indexed('class_spectra', 'model'), 'lambda': Indexed('class_spectra', 'lambda')}
 
 
 class GalaxySpectrum(L2Spectrum):
+    """
+    The joint-arm model spectrum used in the GANDALF fitting.
+    """
     plural_name = 'galaxy_spectra'
     products = {'flux': Indexed('galaxy_spectra', 'flux'), 'ivar': Indexed('galaxy_spectra', 'ivar'),
                 'model_ab': Indexed('galaxy_spectra', 'model_ab'), 'model_em': Indexed('galaxy_spectra', 'model_em'),

@@ -94,15 +94,85 @@ Because of this chain of parentage/relation, every object has access to all attr
 
 ### Exploration
 
-You can use the `attributes()` function to see what information is available for a given object:
+You can use the `explain(obj)` function to see what information is available for a given object:
 
-    >>> attributes(ob)
-    ['obid', 'runids', 'expmjds', 'maxseeing', 'targprogs', 'ras', 'decs', ... (a lot lot more)]
+    >>> explain(data.obs)
+    ===================ob===================
+     An OB is an "observing block" which is essentially a realisation of
+    an OBSpec. Many OBs can share the same xml OBSpec which describes how
+    to do the observations.
     
-Likewise, use the `objects()` function for related objects:
+    A ob has a unique id called 'obid'
+    one ob is linked to:
+        - many exposures
+        - many l1stackfiles
+        - many l1stackspectra
+        - many l2stackfiles
+        - many l2stacks
+        - 1 obspec
+    a ob directly owns these attributes:
+        - obid
+        - obstartmjd
+    ========================================
+Likewise, use the `explain(attr)` function to see what information is available for an attribute:
     
-    >>> objects(ob)
-    ['exposures', 'runs', 'obspec', 'progtemp', ...]
+    >>> explain(data.runs.runid)
+    runid is the unique id name of a run
+
+    >>> explain('snr', data=data)
+    snrs are owned by multiple different objects (['l1singlespectrum', 'l1stackspectrum', 'l1supertargetspectrum', 'l1superstackspectrum']). 
+    They could be entirely different things.
+    You will need to specify the parent object for snr when querying.
+    snr is an attribute belonging to l1singlespectrum
+    snr is an attribute belonging to l1stackspectrum
+    snr is an attribute belonging to l1supertargetspectrum
+    snr is an attribute belonging to l1superstackspectrum
+    ========================================
+    
+Also, you can use the `explain(obj1, obj2)`function to see how two objects are related:
+    
+    >>> explain(data.obs, data.runs')
+    ===================ob===================
+     An OB is an "observing block" which is essentially a realisation of
+    an OBSpec. Many OBs can share the same xml OBSpec which describes how
+    to do the observations.
+    
+    A ob has a unique id called 'obid'
+    one ob is linked to:
+        - many exposures
+        - many l1stackfiles
+        - many l1stackspectra
+        - many l2stackfiles
+        - many l2stacks
+        - 1 obspec
+    a ob directly owns these attributes:
+        - obid
+        - obstartmjd
+    ==================run===================
+     A run is one observation of a set of targets for a given
+    configuration in a specific arm (red or blue). A run belongs to an
+    exposure, which always consists of one or two runs (per arm).
+    
+    A run has a unique id called 'runid'
+    one run is linked to:
+        - 1 armconfig
+        - 1 exposure
+        - 1 observation
+    a run directly owns these attributes:
+        - runid
+    ========================================
+    - A ob has many runs
+    - A run has only one ob
+    ========================================
+
+When you make a mistake in plurality or a typo, weave-io will offer suggestions:
+    
+    >>> data.singlespectra
+    AttributeError: `single_spectra` not understood, did you mean one of:
+    1. l1singlespectra
+    2. l1singlespectrum
+    3. galaxy_spectra. 
+    You can learn more about an object or attribute by using `explain(obj/attribute, ...)`
 
 ### Running a query
 A query finds the locations of all the L1/L2/Raw products that you want. 
