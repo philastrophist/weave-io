@@ -11,3 +11,4 @@ boxing
 colored
 pkg_info
 semver
+textdistance

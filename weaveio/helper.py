@@ -2,8 +2,8 @@ import textwrap
 
 import networkx as nx
 
-from weaveio.basequery.hierarchy import HierarchyFrozenQuery
-from weaveio.hierarchy import Graphable, GraphableMeta, Hierarchy
+from weaveio.basequery.factor import FactorFrozenQuery
+from weaveio.hierarchy import Hierarchy, Graphable, GraphableMeta
 
 
 def _convert_obj(obj, data=None):
@@ -13,10 +13,12 @@ def _convert_obj(obj, data=None):
             obj = data.singular_hierarchies[obj]
         except KeyError:
             obj = data.plural_hierarchies[obj]
-    elif isinstance(obj, HierarchyFrozenQuery):
+    elif isinstance(obj, (Graphable, GraphableMeta)):
+        obj = obj
+    elif hasattr(obj, 'handler'):
         data = obj.handler.data
         obj = obj.hierarchy_type
-    elif not isinstance(obj, (Graphable, GraphableMeta)):
+    else:
         raise TypeError(f"{obj} is not a recognised type of object. Use a name (string), a query, or the type directly")
     return obj, data
 
@@ -28,7 +30,7 @@ def attributes(obj, data=None):
 
 def objects(obj, data=None):
     obj, data = _convert_obj(obj, data)
-    neighbors = list(data.relation_graph.predecessors(obj)) + list(data.relation_graph.successors(obj))
+    neighbors = set(data.relation_graph.predecessors(obj)) | set(data.relation_graph.successors(obj))
     relations = []
     for b in neighbors:
         try:
@@ -41,11 +43,11 @@ def objects(obj, data=None):
     return relations
 
 
-def explain(obj, data=None):
+def explain_object(obj, data=None):
     obj, data = _convert_obj(obj, data)
     objs = objects(obj, data)
     attrs = attributes(obj, data)
-    print('===========', obj.singular_name, '===========')
+    print(f"{obj.singular_name:=^40s}")
     if obj.__doc__:
         print('\n'.join(textwrap.wrap(textwrap.dedent('\n'.join(obj.__doc__.split('\n'))))))
         print()
@@ -66,4 +68,62 @@ def explain(obj, data=None):
     print(f'a {obj.singular_name} directly owns these attributes:')
     for a in attrs:
         print('\t-', a)
-    print('======================' + '='*len(obj.singular_name))
+
+
+
+def explain_factor(factor, data = None):
+    if isinstance(factor, FactorFrozenQuery):
+        for f in factor.factors:
+            explain_factor(f, factor.data)
+    else:
+        factor = data.singular_name(factor)
+        hierarchies = set(data.factor_hierarchies[factor])
+        if len(hierarchies) > 1:
+            print(f'{factor}s are owned by multiple different objects ({[h.singular_name for h in hierarchies]}).'
+                  f' They could be entirely different things.')
+        for h in hierarchies:
+            if factor in h.products:
+                print(f'A {factor} is a product (binary data kept out-of-database) of a {h.singular_name}')
+            elif factor == h.idname:
+                print(f'{factor} is the unique id name of a {h.singular_name}')
+            else:
+                print(f"{factor} is an attribute belonging to {h.singular_name}")
+
+
+def explain_relation(a, b, data = None):
+    a, data = _convert_obj(a, data)
+    try:
+        b, data = _convert_obj(b, data)
+        try:
+            data.find_hierarchy_paths(a, b, plural=False)
+        except nx.NetworkXNoPath:
+            print(f"- A {a.singular_name} has many {b.plural_name}")
+        else:
+            print(f"- A {a.singular_name} has only one {b.singular_name}")
+    except (KeyError, TypeError):
+        if isinstance(b, FactorFrozenQuery):
+            data = b.data
+            b = b.factors[0]
+        hierarchies = ', '.join({i.singular_name for i in data.factor_hierarchies[b]})
+        try:
+            data.find_factor_paths(a, b, plural=False)
+        except nx.NetworkXNoPath:
+            print(f"- A {a.singular_name} has many {b}s (belonging to {hierarchies})")
+        else:
+            print(f"- A {a.singular_name} has 1 {b} (belonging to {hierarchies})")
+
+
+def explain(a, b=None, data=None):
+    try:
+        explain_object(a, data)
+    except (KeyError, AttributeError):
+        explain_factor(a, data)
+    try:
+        explain_object(b, data)
+    except (KeyError, AttributeError):
+        explain_factor(b, data)
+    if b is not None:
+        print('='*40)
+        explain_relation(a, b, data)
+        explain_relation(b, a, data)
+    print('='*40)
