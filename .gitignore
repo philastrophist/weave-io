@@ -246,3 +246,4 @@ dmypy.json
 data/
 local_scripts/
 .last-checked
+lofar-data/

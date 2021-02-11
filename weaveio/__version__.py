@@ -1,2 +1,2 @@
-__version__ = "2021.1.13"
-__changes__ = 'stop github compiling cryptography'
+__version__ = "2021.1.14"
+__changes__ = 'Added explain()'
