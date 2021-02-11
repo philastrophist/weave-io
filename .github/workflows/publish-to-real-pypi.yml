@@ -1,18 +1,18 @@
-name: Publish to TestPyPi
+name: Publish to PyPi
 
 on:
   # Trigger the workflow on push or pull request,
   # but only for the main branch
   push:
     branches:
-      - develop
+      - master
   pull_request:
     branches:
-      - develop
+      - master
 
 jobs:
-  build-n-test:
-    name: Build and push distributions to TestPyPI
+  build-n-publish:
+    name: Build and publish distributions to PyPI
     runs-on: ubuntu-18.04
     steps:
       - uses: actions/checkout@master
@@ -24,8 +24,8 @@ jobs:
         run: export CRYPTOGRAPHY_DONT_BUILD_RUST=1
       - name: Build
         run: python setup.py sdist bdist_wheel --universal
-      - name: Publish distribution 📦 to Test PyPI
+      - name: Publish distribution 📦 to PyPI
         uses: pypa/gh-action-pypi-publish@master
         with:
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
-          repository_url: https://test.pypi.org/legacy/
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip_existing: true
