@@ -89,8 +89,6 @@ Because of this chain of parentage/relation, every object has access to all attr
         * `data.obs[obid].weavetargets` returns all weavetargets for this particular ob
         * `data.weavetargets.obs[obid]` returns the ob with obid for each weavetarget (sometimes will be None)
 
-1. Relative identifiers
-    * `exposure.runs['red']` is functionally the same as `exposure.runs[runid]` (where runid is the red one)
 
 ### Exploration
 
@@ -181,7 +179,7 @@ It is analagous to an SQL query except that it is written in Python.
 * A query is constructed using python like so:
 
     ```
-    from weaveio import Data
+    from weaveio import *
     data = Data(username, password)
     
     runs = data.obs[obid].runs
