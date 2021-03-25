@@ -75,17 +75,35 @@ class ObsTemp(Hierarchy):
     """
     Whilst ProgTemp deals with "how" a target is observed, OBSTEMP deals with "when" a target is observed,
     namely setting the observational constraints required to optimally extract scientific information from the observation.
-    The ProgTemp is made up of maxseeing, mintrans (transparency), minelev (elevation), minmoon, maxsky and
+    The ProgTemp is made up of maxseeing, mintrans (transparency), minelev (elevation), minmoon, minsky and
     each combination is given a valid code, where each letter corresponds to one of those settings.
     """
-    factors = ['maxseeing', 'mintrans', 'minelev', 'minmoon', 'maxsky', 'code']
-    identifier_builder = factors[:-1]
+    factors = [
+        'maxseeing', 'mintrans', 'minelev', 'minmoon', 'minsky', 'maxairmass',
+        'maxseeing_grade', 'mintrans_grade', 'minelev_grade', 'minmoon_grade', 'minsky_grade',
+    ]
+    idname = 'code'
+    seeings = {'A': 0.7, 'B': 0.8, 'C': 0.9, 'D': 1.0, 'E': 1.1, 'F': 1.2, 'G': 1.3, 'H': 1.4, 'I': 1.5,
+               'J': 1.6, 'K': 1.7, 'L': 1.8, 'M': 1.9, 'N': 2.0, 'O': 2.1, 'P': 2.2, 'Q': 2.3, 'R': 2.4,
+               'S': 2.5, 'T': 2.6, 'U': 2.7, 'V': 2.8, 'W': 2.9, 'X': 3.0}
+    transparencies = {'A': 0.8, 'B': 0.7, 'C': 0.6, 'D': 0.5, 'E': 0.4}
+    elevs = {'A': 50.28, 'B': 45.58, 'C': 41.81, 'D': 35.68, 'E': 33.75, 'F': 25.00}
+    airmasses = {'A': 1.3, 'B': 1.4, 'C': 1.5, 'D': 1.6, 'E': 1.8, 'F': 2.4}
+    moons = {'A': 90, 'B': 70, 'C': 50, 'D': 30, 'E': 0}
+    brightnesses = {'A': 21.7, 'B': 21.5, 'C': 21.0, 'D': 20.5, 'E': 19.6, 'F': 18.5, 'G': 17.7}
 
     @classmethod
     def from_header(cls, header):
         names = [f.lower() for f in cls.factors[:-1]]
         obstemp_code = list(header['OBSTEMP'])
-        return cls(**{n: v for v, n in zip(obstemp_code, names)}, code=header['OBSTEMP'])
+        data = {n+'_grade': v for v, n in zip(obstemp_code, names)}
+        data['maxseeing'] = cls.seeings[data['maxseeing_grade']]
+        data['mintrans'] = cls.transparencies[data['mintrans_grade']]
+        data['minelev'] = cls.elevs[data['minelev_grade']]
+        data['maxairmass'] = cls.airmasses[data['minelev_grade']]
+        data['minmoon'] = cls.moons[data['minmoon_grade']]
+        data['minsky'] = cls.brightnesses[data['minsky_grade']]
+        return cls(code=header['OBSTEMP'], **data)
 
 
 class Survey(Hierarchy):
