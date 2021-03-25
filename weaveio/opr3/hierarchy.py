@@ -280,7 +280,7 @@ class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
     products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
-                'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': 'sensfunc'}
+                'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': Indexed('sensfunc')}
     factors = Spectrum.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i', 'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
 
 

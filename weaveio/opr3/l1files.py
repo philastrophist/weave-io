@@ -161,7 +161,7 @@ class L1File(HeaderFibinfoFile):
     is_template = True
     hdus = {'primary': PrimaryHDU, 'flux': SpectralRowableBlock, 'ivar': SpectralRowableBlock,
             'flux_noss': SpectralRowableBlock, 'ivar_noss': SpectralRowableBlock,
-            'sensfunc': BinaryHDU, 'fibtable': TableHDU}
+            'sensfunc': SpectralRowableBlock, 'fibtable': TableHDU}
     parents = [One2One(WavelengthHolder)]
 
     @classmethod
