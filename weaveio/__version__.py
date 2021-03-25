@@ -1,2 +1,2 @@
-__version__ = "2021.1.17"
-__changes__ = 'Factors able to queries directly'
+__version__ = "2021.1.18"
+__changes__ = 'bugfix: Sensitivities are per spectrum not per plate'
