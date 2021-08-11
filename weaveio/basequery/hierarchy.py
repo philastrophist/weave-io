@@ -193,7 +193,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         h.add_parent_data(self.handler.data)
         return h
 
-    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True):
         result = result.to_table()
         if len(result) == 1 and result[0] is None:
             return []
