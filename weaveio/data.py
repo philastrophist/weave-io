@@ -20,6 +20,7 @@ from weaveio.basequery.tree import BranchHandler
 from weaveio.file import File, HDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
+from weaveio.utilities import make_plural
 from weaveio.writequery import Unwind
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
@@ -182,10 +183,10 @@ class Data:
                 self.factor_hierarchies[h.idname].append(h)
         self.factor_hierarchies = dict(self.factor_hierarchies)  # make sure we always get keyerrors when necessary!
         self.factors = set(self.factor_hierarchies.keys())
-        self.plural_factors =  {f.lower() + 's': f.lower() for f in self.factors}
+        self.plural_factors =  {make_plural(f.lower()): f.lower() for f in self.factors}
         self.singular_factors = {f.lower() : f.lower() for f in self.factors}
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
-        self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
+        self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
 
 
     def write(self, collision_manager='track&flag'):
@@ -477,7 +478,7 @@ class Data:
         if len(pathset) == 0:
             raise nx.NetworkXNoPath(f'There are no paths from a `{starting_point.singular_name}` to `{factor_name}`. '
                                     f'This might be because `{factor_name}` is plural relative to `{starting_point.singular_name}`. '
-                                    f'Try using `{factor_name}s` instead')
+                                    f'Try using `{make_plural(factor_name)}` instead')
         paths, ends = zip(*pathset)
         if not plural and len(paths) > 1:
             lengths = map(len, paths)
@@ -636,10 +637,10 @@ class Data:
         if self.is_plural_name(name):
             return name
         if name in self.singular_idnames:
-            return name + 's'
+            return make_plural(name)
         else:
             try:
-                return before + self.singular_factors[name] + 's'
+                return before + make_plural(self.singular_factors[name])
             except KeyError:
                 return before + self.singular_hierarchies[name].plural_name
 

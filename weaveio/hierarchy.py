@@ -6,7 +6,8 @@ from warnings import warn
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
-from .utilities import Varname
+from .utilities import Varname, make_plural
+
 
 def _convert_types_to_node(x):
     if isinstance(x, dict):
@@ -97,12 +98,14 @@ class GraphableMeta(type):
         dct['aliases'] = dct.get('aliases', [])
         dct['aliases'] += [a for base in bases for a in base.aliases]
         if dct.get('plural_name', None) is None:
-            dct['plural_name'] = name.lower() + 's'
+            dct['plural_name'] = make_plural(name.lower())
         dct['singular_name'] = name.lower()
         if dct['plural_name'] != dct['plural_name'].lower():
             raise RuleBreakingException(f"plural_name must be lowercase")
         if dct['singular_name'] != dct['singular_name'].lower():
             raise RuleBreakingException(f"singular_name must be lowercase")
+        if dct['plural_name'] == dct['singular_name']:
+            raise RuleBreakingException(f"plural_name must not be the same as singular_name")
         idname = dct.get('idname', None)
         if idname in FORBIDDEN_IDNAMES:
             raise RuleBreakingException(f"You may not name an id as one of {FORBIDDEN_IDNAMES}")

@@ -400,7 +400,7 @@ def _autosuggest(a, data, relative_to=None):
             suggestions += newsuggestions
         else:
             return [a]
-    inorder = sorted(suggestions, key=lambda x: distance(a, x), reverse=distance_reverse)
+    inorder = sorted(list(set(suggestions)), key=lambda x: distance(a, x), reverse=distance_reverse)
     return inorder[:3]
 
 
