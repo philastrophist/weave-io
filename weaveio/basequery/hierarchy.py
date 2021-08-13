@@ -114,7 +114,7 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
 
     def _get_factor(self, factor_name, plural):
         factor_name = self.data.singular_name(factor_name)
-        pathdict, base, is_product = self.handler.paths2factor(factor_name, plural=plural)
+        pathdict, base, is_product, factor_name = self.handler.paths2factor(factor_name, plural=plural)
         begin = self.branch.handler.begin(base.__name__)
         if is_product:
             func = GET_PRODUCT.format(name=factor_name)
@@ -219,8 +219,9 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         local = []
         remote = defaultdict(list)
         remote_paths = {}
-        for name, plural in zip(names, plurals):
-            pathsdict, basehier, is_product = self.handler.paths2factor(name, plural, self.hierarchy_type)
+        for i, (name, plural) in enumerate(zip(names, plurals)):
+            pathsdict, basehier, is_product, name = self.handler.paths2factor(name, plural, self.hierarchy_type)
+            names[i] = name
             if basehier == self.hierarchy_type:
                 local.append((name, plural, is_product))
             else:
@@ -349,7 +350,8 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if all(map(self.data.is_valid_name, item)):
                 return self._get_factor_table_query(item)
             elif any(map(self.data.is_valid_name, item)):
-                raise KeyError(f"You cannot mix IDs and names in a __getitem__ call")
+                raise KeyError(f"Something is not right in [...]. "
+                               f"Either you have mixed IDs and names, or one of keys is not recognised")
             else:
                 return self._filter_by_identifiers(item)
         if not self.data.is_valid_name(item):

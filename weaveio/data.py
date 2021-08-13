@@ -149,7 +149,7 @@ class Data:
         return hierarchies
 
 
-    def __init__(self, rootdir: Union[Path, str] = '/beegfs/weave/weaveio/',
+    def __init__(self, rootdir: Union[Path, str] = '/beegfs/car/weave/weaveio/',
                  host: str = '127.0.0.1', port=7687, write=False,
                  password='weavepassword', user='weaveuser', verbose=False):
         if verbose:
@@ -457,7 +457,7 @@ class Data:
         return duplicates, schema_violations
 
     def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
-                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
+                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], str]:
         """
         1. Identify all hierarchies that contain the factor under plural constraint
         2. Get paths to those hierarchies with the plural constraint
@@ -465,8 +465,19 @@ class Data:
         4.
         """
         if factor_name in starting_point.products_and_factors:
-            return {starting_point: set()}, starting_point
-        possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
+            return {starting_point: set()}, starting_point, factor_name
+        if factor_name in self.singular_hierarchies:  # if its really a hierarchy name treat it as an idname
+            hier = self.singular_hierarchies[factor_name]
+            logging.info(f"Turned '{factor_name}' into '{hier.__name__.lower()}.{hier.idname}'")
+            factor_name = hier.idname
+            possible = {hier}
+        else:
+            parts = factor_name.split('.')
+            if len(parts) > 1:
+                hier, factor_name = parts[-2:]
+                possible = {self.singular_hierarchies[hier]}
+            else:
+                possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
         pathset = set()
         for p in possible:
             try:
@@ -485,14 +496,14 @@ class Data:
             min_length = min(lengths)
             paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
             if len(paths) > 1:
-                raise AmbiguousPathError(f"There is more than one {factor_name} with the same distance away from {starting_point}")
+                raise AmbiguousPathError(f"There is more than one '{factor_name}' with the same distance away from '{starting_point.__name__.lower()}'")
         shared = shared_base_class(*ends)
         if factor_name not in shared.products_and_factors:
-            raise AmbiguousPathError(f"{starting_point}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
+            raise AmbiguousPathError(f"{starting_point.__name__.lower()}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
         pathdict = defaultdict(set)
         for e, p in zip(ends, paths):
             pathdict[e].add(p)
-        return pathdict, shared
+        return pathdict, shared, factor_name
 
     @staticmethod
     def shortest_path_without_oneway_violation(graph: nx.Graph, a, b, cutoff=50):
