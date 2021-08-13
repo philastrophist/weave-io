@@ -18,6 +18,16 @@ def make_plural(name):
         return plural_form
     return name + '_group'
 
+def make_singular(name):
+    if name.endswith('_group'):
+        return name[:-len('_group')]
+    for v, k in PLURAL_DICT.items():
+        if name.endswith(k):
+            return name[:-len(k)] + v
+    single_form = INFLECTOR.singular_noun(name)  # returns False when name is already singular
+    if not single_form:
+        return name
+    return single_form
 
 class Varname:
     def __init__(self, name):
