@@ -118,10 +118,12 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
         super().__init__(handler, branch, factors, factor_variables, plurals, is_products, parent)
         self.return_keys = return_keys
 
-    def _prepare_query(self) -> CypherQuery:
-        with super()._prepare_query() as query:
-            variables = {k: v for k, v in zip(self.return_keys, self.factor_variables)}
-            return query.returns(**variables)
+
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
+        t = super()._post_process(result, squeeze)
+        t.rename_columns(t.colnames, self.return_keys)
+        return t
+
 
     def __getattr__(self, item):
         return self.__getitem__(item)

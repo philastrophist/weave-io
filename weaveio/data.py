@@ -20,7 +20,7 @@ from weaveio.basequery.tree import BranchHandler
 from weaveio.file import File, HDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
-from weaveio.utilities import make_plural
+from weaveio.utilities import make_plural, make_singular
 from weaveio.writequery import Unwind
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
@@ -149,7 +149,7 @@ class Data:
         return hierarchies
 
 
-    def __init__(self, rootdir: Union[Path, str] = '/beegfs/weave/weaveio/',
+    def __init__(self, rootdir: Union[Path, str] = '/beegfs/car/weave/weaveio/',
                  host: str = '127.0.0.1', port=7687, write=False,
                  password='weavepassword', user='weaveuser', verbose=False):
         if verbose:
@@ -457,7 +457,7 @@ class Data:
         return duplicates, schema_violations
 
     def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
-                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
+                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], str]:
         """
         1. Identify all hierarchies that contain the factor under plural constraint
         2. Get paths to those hierarchies with the plural constraint
@@ -465,8 +465,19 @@ class Data:
         4.
         """
         if factor_name in starting_point.products_and_factors:
-            return {starting_point: set()}, starting_point
-        possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
+            return {starting_point: set()}, starting_point, factor_name
+        if factor_name in self.singular_hierarchies:  # if its really a hierarchy name treat it as an idname
+            hier = self.singular_hierarchies[factor_name]
+            logging.info(f"Turned '{factor_name}' into '{hier.__name__.lower()}.{hier.idname}'")
+            factor_name = hier.idname
+            possible = {hier}
+        else:
+            parts = factor_name.split('.')
+            if len(parts) > 1:
+                hier, factor_name = parts[-2:]
+                possible = {self.singular_hierarchies[hier]}
+            else:
+                possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
         pathset = set()
         for p in possible:
             try:
@@ -485,14 +496,14 @@ class Data:
             min_length = min(lengths)
             paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
             if len(paths) > 1:
-                raise AmbiguousPathError(f"There is more than one {factor_name} with the same distance away from {starting_point}")
+                raise AmbiguousPathError(f"There is more than one '{factor_name}' with the same distance away from '{starting_point.__name__.lower()}'")
         shared = shared_base_class(*ends)
         if factor_name not in shared.products_and_factors:
-            raise AmbiguousPathError(f"{starting_point}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
+            raise AmbiguousPathError(f"{starting_point.__name__.lower()}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
         pathdict = defaultdict(set)
         for e, p in zip(ends, paths):
             pathdict[e].add(p)
-        return pathdict, shared
+        return pathdict, shared, factor_name
 
     @staticmethod
     def shortest_path_without_oneway_violation(graph: nx.Graph, a, b, cutoff=50):
@@ -620,46 +631,33 @@ class Data:
             return False
 
     def is_singular_idname(self, value):
-        return value.split('.')[-1] in self.singular_idnames
+        return self.is_singular_name(value) and value.split('.')[-1] in self.singular_idnames
 
     def is_plural_idname(self, value):
-        return value.split('.')[-1] in self.plural_idnames
+        return self.is_plural_name(value) and value.split('.')[-1] in self.plural_idnames
 
     def is_plural_factor(self, value):
-        return value.split('.')[-1] in self.plural_factors
+        return self.is_plural_name(value) and value.split('.')[-1] in self.plural_factors
 
     def is_singular_factor(self, value):
-        return value.split('.')[-1] in self.singular_factors
+        return self.is_singular_name(value) and value.split('.')[-1] in self.singular_factors
 
     def plural_name(self, name):
-        split = name.split('.')
-        before, name = '.'.join(split[:-1]), split[-1]
-        if self.is_plural_name(name):
+        pattern = name.split('.')
+        if any(map(self.is_plural_name, pattern)):
             return name
-        if name in self.singular_idnames:
-            return make_plural(name)
-        else:
-            try:
-                return before + make_plural(self.singular_factors[name])
-            except KeyError:
-                return before + self.singular_hierarchies[name].plural_name
+        return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
 
     def singular_name(self, name):
-        split = name.split('.')
-        before, name = '.'.join(split[:-1]), split[-1]
-        if self.is_singular_name(name):
-            return name
-        if name in self.plural_idnames:
-            return name[:-1]
-        else:
-            try:
-                return before + self.plural_factors[name]
-            except KeyError:
-                return before + self.plural_hierarchies[name].singular_name
+        pattern = name.split('.')
+        return '.'.join([make_singular(p) for p in pattern])
 
     def is_valid_name(self, name):
         if isinstance(name, str):
-            return self.is_plural_name(name) or self.is_singular_name(name)
+            pattern = name.split('.')
+            if len(pattern) == 1:
+                return self.is_plural_name(name) or self.is_singular_name(name)
+            return all(self.is_valid_name(p) for p in pattern)
         return False
 
     def is_plural_name(self, name):
@@ -667,12 +665,18 @@ class Data:
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
-        name = name.split('.')[-1]
-        return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
+        pattern = name.split('.')
+        if len(pattern) == 1:
+            return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
+        return all(self.is_plural_name(n) for n in pattern)
 
     def is_singular_name(self, name):
-        name = name.split('.')[-1]
-        return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
+        pattern = name.split('.')
+        if len(pattern) == 1:
+            return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
+        return all(self.is_singular_name(n) for n in pattern)
+
+
 
     def __getitem__(self, address):
         return self.handler.begin_with_heterogeneous().__getitem__(address)

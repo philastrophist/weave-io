@@ -21,7 +21,7 @@ class Handler:
         return DefiniteHierarchyFrozenQuery(self, branch, htype, branch.current_hierarchy, [], None)
 
     def paths2factor(self, factor_name: str,  plural: bool,
-                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], bool]:
+                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], bool, str]:
         """
         returns a dictionary of hierarchy: [path,...] and a shared hierarchy
         """
@@ -31,9 +31,9 @@ class Handler:
             if len(starts) > 1:
                 raise AmbiguousPathError(f"{factor_name} could refer to any of {starts}. Please traverse to the parent object first.")
             start = starts.pop()
-        pathsetdict, base = self.data.find_factor_paths(start, factor_name, plural)
+        pathsetdict, base, factor_name = self.data.find_factor_paths(start, factor_name, plural)
         is_product = factor_name in base.products.keys()
-        return pathsetdict, base, is_product
+        return pathsetdict, base, is_product, factor_name
 
 
     def paths2hierarchy(self, hierarchy_name, plural,
