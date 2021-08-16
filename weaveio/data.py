@@ -11,6 +11,7 @@ from warnings import warn
 import networkx as nx
 import pandas as pd
 import py2neo
+from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from weaveio.basequery.actions import TraversalPath
@@ -20,6 +21,7 @@ from weaveio.basequery.tree import BranchHandler
 from weaveio.file import File, HDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
+from weaveio.utilities import make_plural, make_singular
 from weaveio.writequery import Unwind
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
@@ -148,8 +150,8 @@ class Data:
         return hierarchies
 
 
-    def __init__(self, rootdir: Union[Path, str] = '/beegfs/weave/weaveio/',
-                 host: str = '127.0.0.1', port=7687, write=False,
+    def __init__(self, rootdir: Union[Path, str] = '/beegfs/car/weave/weaveio/',
+                 host: str = '127.0.0.1', port=7687, write=False, dbname='neo4j',
                  password='weavepassword', user='weaveuser', verbose=False):
         if verbose:
             logging.basicConfig(level=logging.INFO)
@@ -158,6 +160,7 @@ class Data:
         self.host = host
         self.port = port
         self.write_allowed = write
+        self.dbname = dbname
         self._graph = None
         self.password = password
         self.user = user
@@ -182,10 +185,10 @@ class Data:
                 self.factor_hierarchies[h.idname].append(h)
         self.factor_hierarchies = dict(self.factor_hierarchies)  # make sure we always get keyerrors when necessary!
         self.factors = set(self.factor_hierarchies.keys())
-        self.plural_factors =  {f.lower() + 's': f.lower() for f in self.factors}
+        self.plural_factors =  {make_plural(f.lower()): f.lower() for f in self.factors}
         self.singular_factors = {f.lower() : f.lower() for f in self.factors}
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
-        self.plural_idnames = {k+'s': v for k,v in self.singular_idnames.items()}
+        self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
 
 
     def write(self, collision_manager='track&flag'):
@@ -204,7 +207,7 @@ class Data:
                 d['password'] = self.password
             if self.user is not None:
                 d['user'] = self.user
-            self._graph = Graph(host=self.host, port=self.port, write=self.write, **d)
+            self._graph = Graph(host=self.host, port=self.port, name=self.dbname, write=self.write, **d)
         return self._graph
 
     def make_traversal_graph(self):
@@ -310,7 +313,8 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
-    def read_files(self, *paths: Union[Path, str], collision_manager='ignore', batch_size=None, halt_on_error=False) -> pd.DataFrame:
+    def read_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
+                   collision_manager='ignore', batch_size=None, halt_on_error=True) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -335,11 +339,14 @@ class Data:
         bar = tqdm(batches)
         for filetype, fname, slc in bar:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
-            with self.write(collision_manager) as query:
-                filetype.read(self.rootdir, fname, slc)
-            cypher, params = query.render_query()
-            start = time.time()
             try:
+                if raise_on_duplicate_file:
+                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
+                        raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
+                with self.write(collision_manager) as query:
+                    filetype.read(self.rootdir, fname, slc)
+                cypher, params = query.render_query()
+                start = time.time()
                 results = self.graph.execute(cypher, **params)
                 stats.append(results.stats())
                 timestamp = results.evaluate()
@@ -348,7 +355,7 @@ class Data:
                          f"Adjust your `.read` method to allow for empty tables/data")
                 timestamps.append(timestamp)
                 elapsed_times.append(time.time() - start)
-            except py2neo.database.work.ClientError as e:
+            except (ClientError, DatabaseError, FileExistsError) as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:
                     raise e
@@ -456,7 +463,7 @@ class Data:
         return duplicates, schema_violations
 
     def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
-                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy]]:
+                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], str]:
         """
         1. Identify all hierarchies that contain the factor under plural constraint
         2. Get paths to those hierarchies with the plural constraint
@@ -464,8 +471,19 @@ class Data:
         4.
         """
         if factor_name in starting_point.products_and_factors:
-            return {starting_point: set()}, starting_point
-        possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
+            return {starting_point: set()}, starting_point, factor_name
+        if factor_name in self.singular_hierarchies:  # if its really a hierarchy name treat it as an idname
+            hier = self.singular_hierarchies[factor_name]
+            logging.info(f"Turned '{factor_name}' into '{hier.__name__.lower()}.{hier.idname}'")
+            factor_name = hier.idname
+            possible = {hier}
+        else:
+            parts = factor_name.split('.')
+            if len(parts) > 1:
+                hier, factor_name = parts[-2:]
+                possible = {self.singular_hierarchies[hier]}
+            else:
+                possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
         pathset = set()
         for p in possible:
             try:
@@ -477,21 +495,21 @@ class Data:
         if len(pathset) == 0:
             raise nx.NetworkXNoPath(f'There are no paths from a `{starting_point.singular_name}` to `{factor_name}`. '
                                     f'This might be because `{factor_name}` is plural relative to `{starting_point.singular_name}`. '
-                                    f'Try using `{factor_name}s` instead')
+                                    f'Try using `{make_plural(factor_name)}` instead')
         paths, ends = zip(*pathset)
         if not plural and len(paths) > 1:
             lengths = map(len, paths)
             min_length = min(lengths)
             paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
             if len(paths) > 1:
-                raise AmbiguousPathError(f"There is more than one {factor_name} with the same distance away from {starting_point}")
+                raise AmbiguousPathError(f"There is more than one '{factor_name}' with the same distance away from '{starting_point.__name__.lower()}'")
         shared = shared_base_class(*ends)
         if factor_name not in shared.products_and_factors:
-            raise AmbiguousPathError(f"{starting_point}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
+            raise AmbiguousPathError(f"{starting_point.__name__.lower()}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
         pathdict = defaultdict(set)
         for e, p in zip(ends, paths):
             pathdict[e].add(p)
-        return pathdict, shared
+        return pathdict, shared, factor_name
 
     @staticmethod
     def shortest_path_without_oneway_violation(graph: nx.Graph, a, b, cutoff=50):
@@ -619,46 +637,33 @@ class Data:
             return False
 
     def is_singular_idname(self, value):
-        return value.split('.')[-1] in self.singular_idnames
+        return self.is_singular_name(value) and value.split('.')[-1] in self.singular_idnames
 
     def is_plural_idname(self, value):
-        return value.split('.')[-1] in self.plural_idnames
+        return self.is_plural_name(value) and value.split('.')[-1] in self.plural_idnames
 
     def is_plural_factor(self, value):
-        return value.split('.')[-1] in self.plural_factors
+        return self.is_plural_name(value) and value.split('.')[-1] in self.plural_factors
 
     def is_singular_factor(self, value):
-        return value.split('.')[-1] in self.singular_factors
+        return self.is_singular_name(value) and value.split('.')[-1] in self.singular_factors
 
     def plural_name(self, name):
-        split = name.split('.')
-        before, name = '.'.join(split[:-1]), split[-1]
-        if self.is_plural_name(name):
+        pattern = name.split('.')
+        if any(map(self.is_plural_name, pattern)):
             return name
-        if name in self.singular_idnames:
-            return name + 's'
-        else:
-            try:
-                return before + self.singular_factors[name] + 's'
-            except KeyError:
-                return before + self.singular_hierarchies[name].plural_name
+        return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
 
     def singular_name(self, name):
-        split = name.split('.')
-        before, name = '.'.join(split[:-1]), split[-1]
-        if self.is_singular_name(name):
-            return name
-        if name in self.plural_idnames:
-            return name[:-1]
-        else:
-            try:
-                return before + self.plural_factors[name]
-            except KeyError:
-                return before + self.plural_hierarchies[name].singular_name
+        pattern = name.split('.')
+        return '.'.join([make_singular(p) for p in pattern])
 
     def is_valid_name(self, name):
         if isinstance(name, str):
-            return self.is_plural_name(name) or self.is_singular_name(name)
+            pattern = name.split('.')
+            if len(pattern) == 1:
+                return self.is_plural_name(name) or self.is_singular_name(name)
+            return all(self.is_valid_name(p) for p in pattern)
         return False
 
     def is_plural_name(self, name):
@@ -666,12 +671,18 @@ class Data:
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
-        name = name.split('.')[-1]
-        return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
+        pattern = name.split('.')
+        if len(pattern) == 1:
+            return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
+        return all(self.is_plural_name(n) for n in pattern)
 
     def is_singular_name(self, name):
-        name = name.split('.')[-1]
-        return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
+        pattern = name.split('.')
+        if len(pattern) == 1:
+            return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
+        return all(self.is_singular_name(n) for n in pattern)
+
+
 
     def __getitem__(self, address):
         return self.handler.begin_with_heterogeneous().__getitem__(address)
