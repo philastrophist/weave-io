@@ -1,2 +1,2 @@
-__version__ = "2021.1.19"
-__changes__ = 'added obstemp values to db'
+__version__ = "2021.1.20"
+__changes__ = 'add db name as argument'
