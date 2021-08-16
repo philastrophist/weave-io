@@ -1,2 +1,2 @@
-__version__ = "2021.1.20"
-__changes__ = 'add db name as argument'
+__version__ = "2021.1.21"
+__changes__ = 'add exception to naming for flux_noss'

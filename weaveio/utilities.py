@@ -2,7 +2,7 @@ import xxhash
 import inflect
 
 INFLECTOR = inflect.engine()
-PLURAL_DICT = {'spectrum': 'spectra'}
+PLURAL_DICT = {'spectrum': 'spectra', 'noss': 'nosses'}
 
 def make_plural(name):
     if name.endswith('_group'):
@@ -24,6 +24,8 @@ def make_singular(name):
     for v, k in PLURAL_DICT.items():
         if name.endswith(k):
             return name[:-len(k)] + v
+        if name.endswith(v):
+            return name
     single_form = INFLECTOR.singular_noun(name)  # returns False when name is already singular
     if not single_form:
         return name
