@@ -123,8 +123,8 @@ class HeaderFibinfoFile(File):
         return hiers, header, fibinfo, fibretarget_collection, fibrows
 
     @classmethod
-    def read_header(cls, path: Path):
-        return fits.open(path)[0].header
+    def read_header(cls, path: Path, i=0):
+        return fits.open(path)[i].header
 
     @classmethod
     def read_fibtable(cls, path: Path):
@@ -172,6 +172,11 @@ class L1File(HeaderFibinfoFile):
         return WavelengthHolder(wvls=(np.arange(0, size) * increment) + zeropoint,
                                 cd1_1=header['cd1_1'], crval1=header['crval1'], naxis1=header['naxis1'])
 
+    @classmethod
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
+        return super().read_hdus(directory, fname, **hierarchies, wavelengthholder=cls.wavelengths(directory, fname))
+
 
 class L1SingleFile(L1File):
     match_pattern = 'single_*.fit'
@@ -182,11 +187,6 @@ class L1SingleFile(L1File):
     @classmethod
     def fname_from_runid(cls, runid):
         return f'single_{runid:07.0f}.fit'
-
-    @classmethod
-    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
-                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
-        return super().read_hdus(directory, fname, **hierarchies, wavelengths=cls.wavelengths(directory, fname))
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
@@ -212,20 +212,24 @@ class L1SingleFile(L1File):
 class L1StackedBaseFile(L1File):
     is_template = True
 
+    @classmethod
+    def parent_runids(cls, path):
+        header = cls.read_header(path, 0)
+        runids = [int(v) for k, v in header.items() if k.startswith('RUNS0')]
+        if len(runids) == 0:
+            header = cls.read_header(path, 1)
+            runids = [int(v.split('.')[0].split('_')[1]) for k, v in header.items() if k.startswith('PROV0') and 'formed' not in v]
+        return runids
+
 
 class L1StackFile(L1StackedBaseFile):
-    match_pattern = 'stacked_*.fit'
+    match_pattern = 'stack_*.fit'
     produces = [L1StackSpectrum]
     parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OB, ArmConfig, CASU]
 
     @classmethod
     def fname_from_runid(cls, runid):
-        return f'stacked_{runid:07.0f}.fit'
-
-    @classmethod
-    def parent_runids(cls, path):
-        header = cls.read_header(path)
-        return [int(v) for k, v in header.items() if k.startswith('RUNS0')]
+        return f'stack_{runid:07.0f}.fit'
 
     @classmethod
     def get_single_files(cls, directory: Path, fname: Path):
@@ -270,13 +274,13 @@ class L1StackFile(L1StackedBaseFile):
 
 
 class L1SuperStackFile(L1StackedBaseFile):
-    match_pattern = 'superstacked_*.fit'
+    match_pattern = 'superstack_*.fit'
     produces = [L1SuperStackSpectrum]
     parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OBSpec, ArmConfig, CASU]
 
     @classmethod
     def fname_from_runid(cls, runid):
-        return f'superstacked_{runid:07.0f}.fit'
+        return f'superstack_{runid:07.0f}.fit'
 
     @classmethod
     def match(cls, directory):

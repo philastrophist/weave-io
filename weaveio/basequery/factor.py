@@ -78,7 +78,7 @@ class FactorFrozenQuery(Dissociated):
                 df[name] = group.values
         return df
 
-    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
         df = self._parse_products(result.to_data_frame())
         # replace lists with arrays
         for c in df.columns:
@@ -101,7 +101,7 @@ class SingleFactorFrozenQuery(FactorFrozenQuery):
     def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable, is_product: bool, parent: FrozenQuery = None):
         super().__init__(handler, branch, [factor], [factor_variable], [False], [is_product], parent)
 
-    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
         row = super()._post_process(result, squeeze)
         if isinstance(row, Column):
             return row.data
@@ -118,10 +118,15 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
         super().__init__(handler, branch, factors, factor_variables, plurals, is_products, parent)
         self.return_keys = return_keys
 
-    def _prepare_query(self) -> CypherQuery:
-        with super()._prepare_query() as query:
-            variables = {k: v for k, v in zip(self.return_keys, self.factor_variables)}
-            return query.returns(**variables)
+
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
+        t = super()._post_process(result, squeeze)
+        if len(t):
+            t.rename_columns(t.colnames, self.return_keys)
+        else:
+            t = Table(names=self.return_keys)
+        return t
+
 
     def __getattr__(self, item):
         return self.__getitem__(item)

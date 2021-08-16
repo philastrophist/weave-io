@@ -84,7 +84,7 @@ class FrozenQuery:
         self.execute_time = end - start
         return r
 
-    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True):
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
         raise NotImplementedError
 

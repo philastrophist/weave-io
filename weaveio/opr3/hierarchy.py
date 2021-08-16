@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import os
@@ -261,7 +262,10 @@ class Observation(Hierarchy):
         factors = {f: header.get(f) for f in cls.factors}
         factors['mjdobs'] = float(header['MJD-OBS'])
         casu = CASU(casuid=header.get('casuvers', header.get('casuid')))
-        sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
+        try:
+            sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
+        except KeyError:
+            sim = None
         sys = System(sysver=header['sysver'])
         return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
 

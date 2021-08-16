@@ -1,5 +1,33 @@
 import xxhash
+import inflect
 
+INFLECTOR = inflect.engine()
+PLURAL_DICT = {'spectrum': 'spectra'}
+
+def make_plural(name):
+    if name.endswith('_group'):
+        raise ValueError(f"Cannot pluralise {name} since it ends with '_group'")
+    for k, v in PLURAL_DICT.items():
+        if name.endswith(k):
+            return name[:-len(k)] + v
+        if name.endswith(v):
+            return name + '_group'
+    plural_form = INFLECTOR.plural_noun(name)
+    single_form = INFLECTOR.singular_noun(name)  # returns False when name is already singular
+    if not single_form:
+        return plural_form
+    return name + '_group'
+
+def make_singular(name):
+    if name.endswith('_group'):
+        return name[:-len('_group')]
+    for v, k in PLURAL_DICT.items():
+        if name.endswith(k):
+            return name[:-len(k)] + v
+    single_form = INFLECTOR.singular_noun(name)  # returns False when name is already singular
+    if not single_form:
+        return name
+    return single_form
 
 class Varname:
     def __init__(self, name):
