@@ -1,4 +1,5 @@
 import inspect
+import logging
 from functools import wraps, partial
 from typing import Tuple, Dict, Type, Union, List, Optional
 from warnings import warn
@@ -337,7 +338,8 @@ class Graphable(metaclass=GraphableMeta):
             child = self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            parents=relparents, collision_manager=collision_manager)
             for i, other in others:
-                merge_relationship(other, child, reltype, {'order': i}, {}, collision_manager=collision_manager)
+                if other is not None:
+                    merge_relationship(other, child, reltype, {'order': i}, {}, collision_manager=collision_manager)
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):

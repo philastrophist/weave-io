@@ -11,6 +11,7 @@ from warnings import warn
 import networkx as nx
 import pandas as pd
 import py2neo
+from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from weaveio.basequery.actions import TraversalPath
@@ -150,7 +151,7 @@ class Data:
 
 
     def __init__(self, rootdir: Union[Path, str] = '/beegfs/car/weave/weaveio/',
-                 host: str = '127.0.0.1', port=7687, write=False,
+                 host: str = '127.0.0.1', port=7687, write=False, dbname='neo4j',
                  password='weavepassword', user='weaveuser', verbose=False):
         if verbose:
             logging.basicConfig(level=logging.INFO)
@@ -159,6 +160,7 @@ class Data:
         self.host = host
         self.port = port
         self.write_allowed = write
+        self.dbname = dbname
         self._graph = None
         self.password = password
         self.user = user
@@ -205,7 +207,7 @@ class Data:
                 d['password'] = self.password
             if self.user is not None:
                 d['user'] = self.user
-            self._graph = Graph(host=self.host, port=self.port, write=self.write, **d)
+            self._graph = Graph(host=self.host, port=self.port, name=self.dbname, write=self.write, **d)
         return self._graph
 
     def make_traversal_graph(self):
@@ -311,7 +313,8 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
-    def read_files(self, *paths: Union[Path, str], collision_manager='ignore', batch_size=None, halt_on_error=False) -> pd.DataFrame:
+    def read_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
+                   collision_manager='ignore', batch_size=None, halt_on_error=True) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -336,11 +339,14 @@ class Data:
         bar = tqdm(batches)
         for filetype, fname, slc in bar:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
-            with self.write(collision_manager) as query:
-                filetype.read(self.rootdir, fname, slc)
-            cypher, params = query.render_query()
-            start = time.time()
             try:
+                if raise_on_duplicate_file:
+                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
+                        raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
+                with self.write(collision_manager) as query:
+                    filetype.read(self.rootdir, fname, slc)
+                cypher, params = query.render_query()
+                start = time.time()
                 results = self.graph.execute(cypher, **params)
                 stats.append(results.stats())
                 timestamp = results.evaluate()
@@ -349,7 +355,7 @@ class Data:
                          f"Adjust your `.read` method to allow for empty tables/data")
                 timestamps.append(timestamp)
                 elapsed_times.append(time.time() - start)
-            except py2neo.database.work.ClientError as e:
+            except (ClientError, DatabaseError, FileExistsError) as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:
                     raise e

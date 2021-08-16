@@ -121,7 +121,10 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
 
     def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
         t = super()._post_process(result, squeeze)
-        t.rename_columns(t.colnames, self.return_keys)
+        if len(t):
+            t.rename_columns(t.colnames, self.return_keys)
+        else:
+            t = Table(names=self.return_keys)
         return t
 
 
