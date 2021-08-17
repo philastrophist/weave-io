@@ -83,6 +83,8 @@ class FactorFrozenQuery(Dissociated):
         # replace lists with arrays
         for c in df.columns:
             if df.dtypes[c] == 'O' and not isinstance(df[c].iloc[0], str):
+                if np.all(df[c].apply(len) == 0):
+                    df[c] = np.nan
                 df[c] = df[c].apply(np.asarray)
         table = Table.from_pandas(df)
         for colname, plural, is_product in zip(df.columns, self.plurals, self.is_products):
