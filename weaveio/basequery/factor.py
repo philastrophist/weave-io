@@ -83,6 +83,8 @@ class FactorFrozenQuery(Dissociated):
         # replace lists with arrays
         for c in df.columns:
             if df.dtypes[c] == 'O' and not isinstance(df[c].iloc[0], str):
+                if np.all(df[c].apply(len) == 0):
+                    df[c] = np.nan
                 df[c] = df[c].apply(np.asarray)
         table = Table.from_pandas(df)
         for colname, plural, is_product in zip(df.columns, self.plurals, self.is_products):
@@ -122,7 +124,10 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
     def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
         t = super()._post_process(result, squeeze)
         if len(t):
-            t.rename_columns(t.colnames, self.return_keys)
+            try:
+                t.rename_columns(t.colnames, self.return_keys)
+            except AttributeError:
+                pass
         else:
             t = Table(names=self.return_keys)
         return t
