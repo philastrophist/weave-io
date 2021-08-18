@@ -1,2 +1,2 @@
-__version__ = "2021.1.22"
-__changes__ = 'Missing data = nan'
+__version__ = "2021.1.25"
+__changes__ = 'fixed colnames disappearing, fixed inconsistent xml reading in weave files'

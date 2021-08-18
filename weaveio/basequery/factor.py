@@ -16,14 +16,14 @@ from weaveio.writequery import CypherVariable, CypherQuery
 
 def replace_with_data(row, files):
     hdus = files[row['sourcefile']]
-    hdu = hdus[row['extn']]
+    hdu = hdus[int(row['extn'])]
     if not pd.isnull(row['column_name']):
         table = Table(hdu.data)
         table = table[row['column_name']]
     else:
         table = hdu.data
     if not pd.isnull(row['index']):
-        return table[row['index']]
+        return table[int(row['index'])]
     return table
 
 
@@ -70,12 +70,15 @@ class FactorFrozenQuery(Dissociated):
         if len(product_columns):
             sourcefiles = {}
             concat = pd.concat(product_columns)
+            concat = concat.applymap(lambda x: np.nan if x is None else x).dropna(how='all')
             for fname in tqdm(concat.sourcefile.drop_duplicates(), desc='reading fits files'):
-                path = Path(self.handler.data.rootdir) / fname
-                sourcefiles[fname] = fits.open(path)
+                if fname is not None:
+                    path = Path(self.handler.data.rootdir) / fname
+                    sourcefiles[fname] = fits.open(path)
             data = concat.apply(replace_with_data, files=sourcefiles, axis='columns').sort_index(level=0)  # type: pd.Series
+            df.index.name = 'rown'
             for name, group in data.groupby('colname'):
-                df[name] = group.values
+                df[name] = group.droplevel(1)
         return df
 
     def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
@@ -83,8 +86,11 @@ class FactorFrozenQuery(Dissociated):
         # replace lists with arrays
         for c in df.columns:
             if df.dtypes[c] == 'O' and not isinstance(df[c].iloc[0], str):
-                if np.all(df[c].apply(len) == 0):
-                    df[c] = np.nan
+                try:
+                    if np.all(df[c].apply(len) == 0):
+                        df[c] = np.nan
+                except TypeError:  # smelly but skips missing data rows
+                    pass
                 df[c] = df[c].apply(np.asarray)
         table = Table.from_pandas(df)
         for colname, plural, is_product in zip(df.columns, self.plurals, self.is_products):
@@ -124,10 +130,8 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
     def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
         t = super()._post_process(result, squeeze)
         if len(t):
-            try:
-                t.rename_columns(t.colnames, self.return_keys)
-            except AttributeError:
-                pass
+            t = Table(t)
+            t.rename_columns(t.colnames, self.return_keys)
         else:
             t = Table(names=self.return_keys)
         return t

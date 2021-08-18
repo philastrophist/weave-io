@@ -130,11 +130,11 @@ def min(item, wrt=None, *args, **kwargs):
 
 
 def all(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('all(i in {x} where i)', 'all', python_all, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('all(i in collect({x}) where i)', 'all', python_all, item, wrt, args=args, kwargs=kwargs)
 
 
 def any(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('any(i in {x} where i)', 'any', python_any, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('any(i in collect({x}) where i)', 'any', python_any, item, wrt, args=args, kwargs=kwargs)
 
 
 def count(item, wrt=None, *args, **kwargs):
