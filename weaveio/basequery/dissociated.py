@@ -15,7 +15,8 @@ __all__ = ['sum', 'min', 'max', 'std', 'all', 'any', 'count', 'abs', 'floor', 'c
 
 
 def _template_aggregator(string_function, name, normal: Callable, item: 'Dissociated', wrt: FrozenQuery = None,
-                         remove_infs: bool = True, convert_to_float: bool = False, args=None, kwargs=None):
+                         remove_infs: bool = True, convert_to_float: bool = False, allow_hiers=False,
+                         args=None, kwargs=None):
     if not isinstance(item, FrozenQuery):
         if wrt is not None:
             args = (wrt, ) + args
@@ -24,8 +25,13 @@ def _template_aggregator(string_function, name, normal: Callable, item: 'Dissoci
         branch = item.branch.handler.entry
     else:
         branch = wrt.branch
-    itembranch, itemvariable = _convert(item.branch, item.variable, remove_infs, convert_to_float)
-    new = branch.aggregate(string_function, itemvariable, itembranch, namehint=name)
+    if isinstance(item, Dissociated):
+        itembranch, itemvariable = _convert(item.branch, item.variable, remove_infs, convert_to_float)
+        new = branch.aggregate(string_function, itemvariable, itembranch, namehint=name)
+    elif allow_hiers:
+        new = branch.aggregate(string_function, item.hierarchy_variable, item.branch, namehint=name)
+    else:
+        raise TypeError(f"Calling {name} with {item} of type {type(item)} is not supported")
     return Dissociated(item.handler, new, new.action.target)
 
 
@@ -138,7 +144,7 @@ def any(item, wrt=None, *args, **kwargs):
 
 
 def count(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('count({x})', 'count', len, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('count({x})', 'count', len, item, wrt, allow_hiers=True, args=args, kwargs=kwargs)
 
 
 def std(item, wrt=None, *args, **kwargs):
