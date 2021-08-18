@@ -97,7 +97,7 @@ class HeaderFibinfoFile(File):
         obstart = np.round(float(header['OBSTART']), 6)
         res = str(header['VPH']).rstrip('123')
         obtitle = str(header['OBTITLE'])
-        xml = str(header['CAT-NAME'])
+        xml = str(header['CAT-NAME']).replace('./', '') if 'xml' in header['CAT-NAME'] else str(header['INFILE'])  # stack files do this
         obid = float(header['OBID'])
 
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
