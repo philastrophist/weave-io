@@ -169,7 +169,7 @@ class L1File(HeaderFibinfoFile):
         hdulist = fits.open(rootdir / fname)
         header = hdulist[1].header
         increment, zeropoint, size = header['cd1_1'], header['crval1'], header['naxis1']
-        return WavelengthHolder(wvls=(np.arange(0, size) * increment) + zeropoint,
+        return WavelengthHolder(wvl=(np.arange(0, size) * increment) + zeropoint,
                                 cd1_1=header['cd1_1'], crval1=header['crval1'], naxis1=header['naxis1'])
 
     @classmethod
