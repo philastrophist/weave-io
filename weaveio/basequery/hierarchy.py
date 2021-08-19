@@ -347,11 +347,12 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         if isinstance(item, Dissociated):
             return self._filter_by_boolean(item)
         if isinstance(item, (list, tuple, np.ndarray)):
-            if all(map(self.data.is_valid_name, item)):
+            valids = list(map(self.data.is_valid_name, item))
+            if all(valids):
                 return self._get_factor_table_query(item)
-            elif any(map(self.data.is_valid_name, item)):
-                raise KeyError(f"Something is not right in [...]. "
-                               f"Either you have mixed IDs and names, or one of keys is not recognised")
+            elif any(valids):
+                bad = [i for i, v in zip(item, valids) if v]
+                raise KeyError(f"{bad} are not recognised")
             else:
                 return self._filter_by_identifiers(item)
         if not self.data.is_valid_name(item):

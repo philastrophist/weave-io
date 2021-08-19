@@ -294,7 +294,7 @@ class RawSpectrum(Spectrum):
 
 
 class WavelengthHolder(Hierarchy):
-    factors = ['wvls', 'cd1_1', 'crval1', 'naxis1']
+    factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
 
 
