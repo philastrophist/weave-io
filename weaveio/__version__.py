@@ -1,2 +1,2 @@
-__version__ = "2021.1.26"
-__changes__ = 'Can now use `count` with objects like OB/Run not just numbers'
+__version__ = "2021.1.28"
+__changes__ = 'monkey patch WITH $params in WITH statements'
