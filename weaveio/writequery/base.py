@@ -72,7 +72,14 @@ class CypherQuery(metaclass=ContextMeta):
         if not isinstance(self.statements[-1], Returns):
             self.returns(self.timestamp)
         self.make_variable_names()
-        q = '\n'.join([s.to_cypher() for s in self.statements])
+        qs = [s.to_cypher() for s in self.statements]
+        for i, q in enumerate(qs):
+            if q.lower().startswith('with'):
+                q = re.sub('\$[\w\d]+,', '', q)
+                q = re.sub(',\$[\w\d]+', '', q)
+                qs[i] = q
+        # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
+        q = '\n'.join(qs)
         datadict = {d.name: d.data for d in self.data}
         return dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')), datadict
 
