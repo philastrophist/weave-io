@@ -95,7 +95,7 @@ class HeaderFibinfoFile(File):
         camera = str(header['CAMERA'].lower()[len('WEAVE'):])
         expmjd = np.round(float(header['MJD-OBS']), 6)
         obstart = np.round(float(header['OBSTART']), 6)
-        res = str(header['VPH']).rstrip('123')
+        res = str(header['VPH']).rstrip('123').lower().replace('res', '')
         obtitle = str(header['OBTITLE'])
         xml = str(header['CAT-NAME']).replace('./', '') if 'xml' in header['CAT-NAME'] else str(header['INFILE'])  # stack files do this
         obid = float(header['OBID'])
