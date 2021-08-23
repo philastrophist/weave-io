@@ -4,6 +4,7 @@ from typing import Tuple, Dict, Any
 
 import logging
 import py2neo
+from py2neo.cypher import Cursor
 
 from weaveio.basequery.parse_tree import parse, write_tree, branch2query
 from weaveio.basequery.tree import Branch
@@ -64,7 +65,7 @@ class FrozenQuery:
         cypher, params = query.render_query()
         return 'CYPHER runtime=slotted\n' + cypher, params
 
-    def _execute_query(self, limit=None, skip=None):
+    def _execute_query(self, limit=None, skip=None) -> Cursor:
         """Override to allow custom edits as to how the cypher text is run"""
         start = time.time()
         if not self.executable:
@@ -84,7 +85,7 @@ class FrozenQuery:
         self.execute_time = end - start
         return r
 
-    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True):
+    def _post_process(self, result: Cursor, squeeze: bool = True):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
         raise NotImplementedError
 
@@ -103,6 +104,10 @@ class FrozenQuery:
                      f"post-processing={self.process_time / total:.0%})")
         return r
 
+    def __iter__(self):
+        result = self._execute_query()
+        logging.info(f"Query parsing took = {self.parse_time:.1f}s")
+        return (self._post_process(row, squeeze=True) for row in result)
 
     def __repr__(self):
         return f'{self.parent}{self.string}'

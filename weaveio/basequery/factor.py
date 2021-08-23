@@ -1,11 +1,11 @@
 from pathlib import Path
-from typing import List
+from typing import List, Union
 
-import py2neo
 from astropy.io import fits
 from astropy.table import Table, Column
 import pandas as pd
 import numpy as np
+from py2neo.cypher import Cursor, Record
 from tqdm import tqdm
 
 from weaveio.basequery.common import FrozenQuery
@@ -81,8 +81,12 @@ class FactorFrozenQuery(Dissociated):
                 df[name] = group.droplevel(1)
         return df
 
-    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
-        df = self._parse_products(result.to_data_frame())
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
+        if isinstance(result, Record):
+            df = pd.DataFrame([dict(result)])
+        else:
+            df = pd.DataFrame(list(map(dict, result)))
+        df = self._parse_products(df)
         # replace lists with arrays
         for c in df.columns:
             if df.dtypes[c] == 'O' and not isinstance(df[c].iloc[0], str):
@@ -98,10 +102,8 @@ class FactorFrozenQuery(Dissociated):
                 shapes = set(map(np.shape, df[colname]))
                 if len(shapes) == 1:  # all the same length
                     table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
-        if len(table) == 1 and squeeze:
+        if squeeze and len(table) == 1:
             table = table[0]
-        if len(table.colnames) == 1 and squeeze:
-            table = table[table.colnames[0]]
         return table
 
 
@@ -109,11 +111,12 @@ class SingleFactorFrozenQuery(FactorFrozenQuery):
     def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable, is_product: bool, parent: FrozenQuery = None):
         super().__init__(handler, branch, [factor], [factor_variable], [False], [is_product], parent)
 
-    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
-        row = super()._post_process(result, squeeze)
-        if isinstance(row, Column):
-            return row.data
-        return row
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True):
+        table = super()._post_process(result, squeeze=False)
+        column = table[table.colnames[0]].data
+        if (len(column) == 1 and squeeze) or isinstance(result, Record):
+            return column[0]
+        return column
 
 
 class TableFactorFrozenQuery(FactorFrozenQuery):
@@ -127,15 +130,16 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
         self.return_keys = return_keys
 
 
-    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
-        t = super()._post_process(result, squeeze)
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
+        t = super()._post_process(result, squeeze=False)
         if len(t):
             t = Table(t)
             t.rename_columns(t.colnames, self.return_keys)
         else:
             t = Table(names=self.return_keys)
+        if isinstance(result, Record):
+            return t[0]
         return t
-
 
     def __getattr__(self, item):
         return self.__getitem__(item)
