@@ -291,7 +291,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         return branch, variables, [is_products[(name, plural)] for name, plural in zip(names, plurals)]
 
     def _get_factor(self, name, plural):
-        branch, factor_variables, is_products = self._get_multifactor_query([name], [plural], collect_plurals=True)
+        branch, factor_variables, is_products = self._get_multifactor_query([name], [plural], collect_plurals=False)
         return SingleFactorFrozenQuery(self.handler, branch, name, factor_variables[0], is_products[0], self)
 
     def _get_factor_table_query(self, item) -> FactorFrozenQuery:
@@ -351,7 +351,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if all(valids):
                 return self._get_factor_table_query(item)
             elif any(valids):
-                bad = [i for i, v in zip(item, valids) if not v]
+                bad = [i for i, v in zip(item, valids) if v]
                 raise KeyError(f"{bad} are not recognised")
             else:
                 return self._filter_by_identifiers(item)
