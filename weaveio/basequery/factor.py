@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List, Union
 
 from astropy.io import fits
-from astropy.table import Table, Column
+from astropy.table import Table as AstropyTable, Column, Row as AstropyRow
 import pandas as pd
 import numpy as np
 from py2neo.cypher import Cursor, Record
@@ -12,6 +12,22 @@ from weaveio.basequery.common import FrozenQuery
 from weaveio.basequery.dissociated import Dissociated
 from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherVariable, CypherQuery
+
+
+class Row(AstropyRow):
+    def __getattr__(self, attr):
+        if attr in self.colnames:
+            return self[attr]
+        return super(Row, self).__getattr__(attr)
+
+
+class Table(AstropyTable):  # allow using `.` to access columns
+    Row = Row
+
+    def __getattr__(self, attr):
+        if attr in self.colnames:
+            return self[attr]
+        return super(Table, self).__getattr__(attr)
 
 
 def replace_with_data(row, files):
