@@ -126,10 +126,8 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
     def __getattr__(self, item):
         if item in self.data.plural_factors:
             return self._get_factor(item, plural=True)
-        elif item in self.data.singular_factors:
-            raise AmbiguousPathError(f"Cannot return a single factor from a heterogeneous dataset")
-        elif item in self.data.singular_hierarchies:
-            raise AmbiguousPathError(f"Cannot return a singular hierarchy without filtering first")
+        elif self.data.is_singular_name(item):
+            raise AmbiguousPathError(f"Cannot return only one {item} since the DB contains more than one. Either filter your query first or try {self.data.plural_name(item)}")
         elif item in self.data.plural_hierarchies:
             name = self.data.singular_name(item)
             return self._get_hierarchy(name, plural=True)
