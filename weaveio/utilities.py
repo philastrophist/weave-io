@@ -2,7 +2,7 @@ import xxhash
 import inflect
 
 INFLECTOR = inflect.engine()
-PLURAL_DICT = {'spectrum': 'spectra', 'noss': 'nosses'}
+PLURAL_DICT = {'spectrum': 'spectra', 'noss': 'nosses', 'use': 'uses'}
 
 def make_plural(name):
     if name.endswith('_group'):
