@@ -348,7 +348,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if all(valids):
                 return self._get_factor_table_query(item)
             elif any(valids):
-                bad = [i for i, v in zip(item, valids) if v]
+                bad = [i for i, v in zip(item, valids) if not v]
                 raise KeyError(f"{bad} are not recognised")
             else:
                 return self._filter_by_identifiers(item)
