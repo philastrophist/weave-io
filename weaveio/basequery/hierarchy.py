@@ -67,7 +67,6 @@ class HierarchyFrozenQuery(FrozenQuery):
         elif isinstance(other, FrozenQuery):
             raise TypeError(f"Can only compare an object with another object not with {type(other)}")
         else:
-            warn(f"Comparing {self} with an id {other} assuming that you mean {self.hierarchy_type.singular_name}.{self.hierarchy_type.idname}={other}")
             parent = getattr(self, self.hierarchy_type.idname)
             data = parent.branch.add_data(other)
             inputs = {
