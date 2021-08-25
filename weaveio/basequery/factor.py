@@ -43,6 +43,10 @@ def replace_with_data(row, files):
     return table
 
 
+def safe_name(name):
+    return '__dot__'.join(name.split('.'))
+
+
 class FactorFrozenQuery(Dissociated):
     def __init__(self, handler, branch: Branch, factors: List[str], factor_variables: List[CypherVariable],
                  plurals: List[bool], is_products: List[bool], parent: FrozenQuery = None):
@@ -59,7 +63,8 @@ class FactorFrozenQuery(Dissociated):
 
     def _prepare_query(self) -> CypherQuery:
         with super()._prepare_query() as query:
-            return query.returns(*self.factor_variables)
+            variables = {safe_name(k): v for k, v in zip(self.factors, self.factor_variables)}
+            return query.returns(**variables)
 
     def __repr__(self):
         if isinstance(self.factors, tuple):
@@ -145,6 +150,10 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
         super().__init__(handler, branch, factors, factor_variables, plurals, is_products, parent)
         self.return_keys = return_keys
 
+    def _prepare_query(self) -> CypherQuery:
+        with super()._prepare_query() as query:
+            variables = {safe_name(k): v for k, v in zip(self.return_keys, self.factor_variables)}
+            return query.returns(**variables)
 
     def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
         t = super()._post_process(result, squeeze=False)
