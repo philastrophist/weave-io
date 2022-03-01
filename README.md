@@ -234,12 +234,12 @@ singlespectra = runs.l1singlespectra
 is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
 chosen = singlespectra[is_sky_target]
 
-table = chosen['wvls', 'flux'](limit=10)
+table = chosen['wvl', 'flux'](limit=10)
 
 import matplotlib.pyplot as plt
 # uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
 # %matplotlib 
-plt.plot(table['wvls'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
+plt.plot(table['wvl'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
 ```
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
