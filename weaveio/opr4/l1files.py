@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Union, List, Tuple, Dict
 
@@ -9,7 +10,7 @@ import numpy as np
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock, BinaryHDU
 from weaveio.hierarchy import unwind, collect, Multiple, One2One, Hierarchy
-from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
+from weaveio.opr4.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
     OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, L1SuperStackSpectrum, L1SuperTargetSpectrum, CASU, WavelengthHolder
 from weaveio.writequery import groupby, CypherData
@@ -25,12 +26,11 @@ class HeaderFibinfoFile(File):
     @classmethod
     def read_fibinfo_dataframe(cls, path, slc=None):
         hdus = fits.open(path)
-        fibinfo_hdu = [i for i in hdus if i.name == 'FIBTABLE'][0]
+        fibinfo_hdu = hdus['FIBTABLE']
         fibinfo = AstropyTable(fibinfo_hdu.data).to_pandas()
         fibinfo.columns = [i.lower() for i in fibinfo.columns]
         if 'nspec' in fibinfo.columns:
             fibinfo['spec_index'] = fibinfo['nspec'] - 1
-        fibinfo = fibinfo[fibinfo.cname != '']  # exclude parked or disabled fibres
         slc = slice(None) if slc is None else slc
         return fibinfo.iloc[slc]
 
@@ -66,7 +66,7 @@ class HeaderFibinfoFile(File):
         rows = CypherData(df_svryinfo['targsrvy'].drop_duplicates().values, 'surveynames')
         with unwind(rows) as survey_name:
             survey = Survey(name=survey_name)
-        survey_list= collect(survey)
+        survey_list = collect(survey)
         survey_dict = groupby(survey_list, 'name')
 
         # each row is (subprogramme, [survey_name, ...])
@@ -102,7 +102,7 @@ class HeaderFibinfoFile(File):
 
         progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
         vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrumentconfiguration.mode)
-                                  & (progtemp_config['resolution'] == res)][f'{camera}_vph'].iloc[0])
+                                  & (progtemp_config['resolution'] == res.lower().replace('res', ''))][f'{camera}_vph'].iloc[0])
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = ObsTemp.from_header(header)
         obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp,
@@ -136,7 +136,7 @@ class HeaderFibinfoFile(File):
 
 
 class RawFile(HeaderFibinfoFile):
-    match_pattern = 'r*.fit'
+    match_pattern = 'r[0-9]*.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': SpectralBlockHDU, 'counts2': SpectralBlockHDU, 'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
     produces = [One2One(Observation), One2One(RawSpectrum)]
@@ -179,7 +179,7 @@ class L1File(HeaderFibinfoFile):
 
 
 class L1SingleFile(L1File):
-    match_pattern = 'single_*.fit'
+    match_pattern = 'single_[0-9]*.fit'
     parents = L1File.parents + [One2One(RawFile), CASU]
     produces = [L1SingleSpectrum]
     version_on = ['rawfile']
@@ -197,6 +197,15 @@ class L1SingleFile(L1File):
         observation = hiers['observation']
         casu = observation.casu
         inferred_raw_fname = str(fname.with_name(fname.name.replace('single_', 'r')))
+        matched_files = list(directory.rglob(inferred_raw_fname))
+        if not matched_files:
+            logging.warning(f"{fname} does not have a matching raw file. "
+                            f"The database will create the link but the rawspectra will not be available until the missing file is.")
+        elif len(matched_files) > 1:
+            raise FileExistsError(f"Whilst searching for {inferred_raw_fname}, we found more than one match:"
+                                  f"\n{matched_files}")
+        else:
+            inferred_raw_fname = str(matched_files[0])
         raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, observation=observation, nrow=-1)
         rawfile = RawFile(inferred_raw_fname, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
         hdus, file, _ = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)

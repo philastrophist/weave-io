@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One, Optional
 
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 
@@ -252,7 +252,8 @@ class Observation(Hierarchy):
     A container for actual observing conditions around a run
     """
     parents = [One2One(Run), CASU, Simulator, System]
-    factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
+    factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
+               'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
     products = {'primary': 'primary', 'guidinfo': 'guidinfo', 'metinfo': 'metinfo'}
     identifier_builder = ['run', 'mjdobs']
     version_on = ['run']
@@ -261,6 +262,7 @@ class Observation(Hierarchy):
     def from_header(cls, run, header):
         factors = {f: header.get(f) for f in cls.factors}
         factors['mjdobs'] = float(header['MJD-OBS'])
+        factors['obstype'] = header['obstype'].lower()
         casu = CASU(casuid=header.get('casuvers', header.get('casuid')))
         try:
             sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])

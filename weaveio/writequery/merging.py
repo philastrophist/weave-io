@@ -320,7 +320,7 @@ class MergeDependentNode(CollisionManager):
                 child = f'({self.dummy})'
             relations.append(rel + child)
         optional_match = 'OPTIONAL MATCH ' + ',\n'.join(relations)
-        create = 'CREATE ' + ',\n'.join(relations)
+        create = '\n'.join(['MERGE ' + r for r in relations])
         for dummy, real in zip(self.dummyrelvars, self.relvars):
             create = create.replace(f'[{dummy}:', f'[{real}:')
         create = create.replace(f'{self.dummy}', f'{self.out}')

@@ -1,7 +1,7 @@
 import inspect
 import logging
 from functools import wraps, partial
-from typing import Tuple, Dict, Type, Union, List, Optional
+from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
 from warnings import warn
 
 from . import writequery
@@ -84,6 +84,14 @@ class One2One(Multiple):
 
     def __repr__(self):
         return f"<One2One({self.node})>"
+
+
+class Optional(Multiple):
+    def __init__(self, node, constrain=None, idname=None):
+        super(Multiple, self).__init__(node, 0, 1, constrain, idname)
+
+    def __repr__(self):
+        return f"<Optional({self.node})>"
 
 
 class Indexed:
@@ -381,7 +389,7 @@ class Graphable(metaclass=GraphableMeta):
         return False
 
     @classmethod
-    def make_schema(cls) -> Optional[str]:
+    def make_schema(cls) -> _Optional[str]:
         name = cls.__name__
         if cls.idname is not None:
             prop = cls.idname

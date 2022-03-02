@@ -9,8 +9,8 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
-from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget, L2, ClassificationSpectrum, GalaxySpectrum
-from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
+from weaveio.opr4.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget, L2, ClassificationSpectrum, GalaxySpectrum
+from weaveio.opr4.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
 
 
@@ -31,7 +31,8 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
 
 class L2File(File):
     is_template = True
-    match_pattern = '*aps.fits'
+    match_pattern = '*APS.fits'
+    antimatch_pattern = '*cube*'
     produces = [L2]
     corresponding_hdus = {'class_table': ClassificationTable, 'galaxy_table': GalaxyTable,
                           'class_spectra': ClassificationSpectrum, 'galaxy_spectra': GalaxySpectrum}
@@ -89,18 +90,23 @@ class L2File(File):
             'stacked': L1StackFile, 'stack': L1StackFile,
             'superstack': L1SuperStackFile, 'superstacked': L1SuperStackFile
         }
-        split = fname.name.replace('.aps.fits', '').replace('.aps.fit', '').split('_')
+        split = fname.name.lower().replace('aps.fits', '').replace('aps.fit', '').strip('_.').split('__')
         runids = []
         ftypes = []
         for i in split:
-            try:
-                runids.append(int(i))
-            except ValueError:
-                ftypes.append(str(i))
+            ftype, runid = i.split('_')
+            runids.append(int(runid))
+            ftypes.append(str(ftype))
         if len(ftypes) == 1:
             ftypes = [ftypes[0]] * len(runids)  # they all have the same type if there is only one mentioned
         assert len(ftypes) == len(runids), "error parsing runids/types from fname"
-        assert all(int(i) in runids for i in header['RUN'].split('+')), "fname runids and header runids do not match"
+        header_info = [header.get(f'L1_REF_{i}', '.').split('.')[0].split('_') for i in range(4)]
+        ftypes_header, runids_header = zip(*[i for i in header_info if len(i) > 1])
+        runids_header = list(map(int, runids_header))
+        if not all(map(lambda x: x[0] == x[1], zip(runids, runids_header))):
+            raise ValueError(f"There is a mismatch between runids in the filename and in in the header")
+        if not all(map(lambda x: x[0] == x[1], zip(ftypes, ftypes_header))):
+            raise ValueError(f"There is a mismatch between stack/single filetype in the filename and in in the header")
         files = []
         for ftype, runid in zip(ftypes, runids):
             ftype_cls = ftype_dict[ftype]

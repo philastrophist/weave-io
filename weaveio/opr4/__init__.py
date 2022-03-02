@@ -1,6 +1,6 @@
 from weaveio.data import Data as BaseData
-from weaveio.opr3.l1files import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile
-from weaveio.opr3.l2files import L2StackFile, L2SuperStackFile, L2SingleFile, L2SuperTargetFile
+from weaveio.opr4.l1files import RawFile, L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile
+from weaveio.opr4.l2files import L2StackFile, L2SuperStackFile, L2SingleFile, L2SuperTargetFile
 
 
 class Data(BaseData):

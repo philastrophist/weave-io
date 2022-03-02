@@ -112,7 +112,11 @@ class Graph(metaclass=ContextMeta):
         if not self.write_allowed:
             raise IOError(f"Write is not allowed, set `write=True` to permit writing.")
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
-        return self._execute(cypher, d)
+        try:
+            return self._execute(cypher, d)
+        except IndexError:
+            raise ConnectionResetError(f"Py2neo dropped the connection because it was taking too long. "
+                                       f"Split up your query using batch_size=??")
 
     def output_for_debug(self, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
