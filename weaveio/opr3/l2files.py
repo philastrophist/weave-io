@@ -9,8 +9,8 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
-from weaveio.opr4.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget, L2, ClassificationSpectrum, GalaxySpectrum
-from weaveio.opr4.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
+from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget, L2, ClassificationSpectrum, GalaxySpectrum
+from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
 
 
@@ -31,19 +31,17 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
 
 class L2File(File):
     is_template = True
-    match_pattern = '*APS.fits'
-    antimatch_pattern = '*cube*'
+    match_pattern = '.*APS.fits'
+    antimatch_pattern = '.*cube.*'
     produces = [L2]
     corresponding_hdus = {'class_table': ClassificationTable, 'galaxy_table': GalaxyTable,
                           'class_spectra': ClassificationSpectrum, 'galaxy_spectra': GalaxySpectrum}
     parents = [Multiple(L1File, 2, 3), APS]
-    hdus = {'primary': PrimaryHDU, 'fibtable': TableHDU,
+    hdus = {'primary': PrimaryHDU,
             'class_spectra': TableHDU,
-            'stellar_spectra_ferre': TableHDU, 'stellar_spectra_rvs': TableHDU,
             'galaxy_spectra': TableHDU,
             'class_table': TableHDU,
             'stellar_table': TableHDU,
-            'stellar_table_rvs': TableHDU,
             'galaxy_table': TableHDU}
 
     @classmethod
