@@ -9,7 +9,8 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
-from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, L2SuperTarget, L2Single, ClassificationTable, GalaxyTable, Exposure, WeaveTarget, L2, ClassificationSpectrum, GalaxySpectrum
+from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, \
+    L2SuperTarget, L2Single, Exposure, WeaveTarget, L2, Fibre
 from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
 
@@ -34,12 +35,11 @@ class L2File(File):
     match_pattern = '.*APS.fits'
     antimatch_pattern = '.*cube.*'
     produces = [L2]
-    corresponding_hdus = {'class_table': ClassificationTable, 'galaxy_table': GalaxyTable,
-                          'class_spectra': ClassificationSpectrum, 'galaxy_spectra': GalaxySpectrum}
     parents = [Multiple(L1File, 2, 3), APS]
     hdus = {'primary': PrimaryHDU,
             'class_spectra': TableHDU,
             'galaxy_spectra': TableHDU,
+            'stellar_spectra': TableHDU,
             'class_table': TableHDU,
             'stellar_table': TableHDU,
             'galaxy_table': TableHDU}
@@ -124,16 +124,6 @@ class L2File(File):
         return fits.open(path)[0].header
 
     @classmethod
-    def get_all_nspecs(cls, astropy_hdus, slc) -> List[int]:
-        nspecs = set()
-        for hdu in astropy_hdus:
-            try:
-                nspecs.update(hdu.data['nspec'].tolist())
-            except (TypeError, ):  # dont do the primary header
-                pass
-        return list(nspecs)[slc]
-
-    @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], l1files: List[L1File],
                   **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
         fdict = {p.plural_name: [] for p in cls.parents if isinstance(p, Multiple) and issubclass(p.node, L1File)} # parse the 1lfile types separately
@@ -159,15 +149,18 @@ class L2File(File):
         directory = Path(directory)
         path = directory / fname
         header = cls.read_header(path)
+        # find L1 files in database and use them to instantiate a new L2 file
         l1files = cls.parse_fname(header, fname)
         aps = APS(apsvers=header['APSVERS'])
         hierarchies = cls.find_shared_hierarchy(path)
         hdu_nodes, file, astropy_hdus = cls.read_hdus(directory, fname, l1files=l1files, aps=aps, **hierarchies)
-        nspecs = cls.get_all_nspecs(astropy_hdus, slc)
-        with unwind(CypherData(nspecs, 'nspecs')) as nspec:
+        # find aligned L1 spectra in the database and use them to instantiate new L2 rows
+        aps_ids = fits.open(path)['CLASS_TABLE']['APS_ID']
+        with unwind(CypherData(aps_ids, 'aps_ids')) as aps_id:  # for each row/spectrum
+            fibre = Fibre.find(id=aps_id)
             l1spectra = []
             for l1file in l1files:
-                spectrum = l1file.produces[0].find(sourcefile=l1file.fname, nrow=nspec)
+                spectrum = l1file.produces[0].find(sourcefile=l1file.fname, anonymous_parents=[fibre])  # fix so apsid works
                 l1spectra.append(spectrum)
             if not issubclass(cls, L2SuperTargetFile):
                 fibretarget = FibreTarget.find(anonymous_children=[l1spectra[0]])
