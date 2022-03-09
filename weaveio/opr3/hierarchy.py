@@ -307,6 +307,7 @@ class WavelengthHolder(Hierarchy):
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
+    children = [Optional('L1SpectrumRow', idname='adjunct')]
     products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
                 'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': Indexed('sensfunc')}
     factors = Spectrum.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i', 'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
@@ -424,6 +425,7 @@ class Fit(Hierarchy):
 class Measurement(Hierarchy):
     is_template = True
     factors = ['value', 'error']
+    indexes = ['value']
 
 
 class MCMCMeasurement(Measurement):
@@ -433,7 +435,8 @@ class MCMCMeasurement(Measurement):
 
 class Line(Measurement):
     idname = 'name'
-    factors = ['wvl', 'aon', Measurement.as_factor(['flux', 'redshift', 'sigma', 'ebmv', 'amp'])]
+    factors = ['wvl', 'aon']
+    children = Measurement.as_children('flux', 'redshift', 'sigma', 'ebmv', 'amp')
 
 
 class SpectralIndex(Measurement):
@@ -443,7 +446,8 @@ class SpectralIndex(Measurement):
 class Redrock(Fit):
     plural_name = 'redrocks'
     factors = ['flag', 'class', 'subclass', 'snr', 'chi2', 'deltachi2', 'ncoeff', 'coeff',
-               'npixels', 'srvy_class', Measurement.as_factor('best_redshift')]
+               'npixels', 'srvy_class']
+    children = Measurement.as_children('best_redshift')
 
 
 class RedshiftChi2Grid(Hierarchy):
@@ -454,13 +458,14 @@ class RedshiftChi2Grid(Hierarchy):
 
 class RVSpecfit(Fit):
     plural_name = 'rvspecfits'
-    factors = ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot',
-               Measurement.as_factor(['vrad', 'logg', 'teff', 'feh', 'alpha'])]
+    factors = ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
+    children = Measurement.as_children('vrad', 'logg', 'teff', 'feh', 'alpha')
 
 
 class Ferre(Fit):
     plural_name = 'ferres'
-    factors = ['snr', 'chi2_tot', 'flag', Measurement.as_factor(['micro', 'logg', 'teff', 'feh', 'alpha', 'elem'])]
+    factors = ['snr', 'chi2_tot', 'flag']
+    children = Measurement.as_children('micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
 
 
 class Gandalf(Fit):
@@ -471,4 +476,4 @@ class Gandalf(Fit):
 
 class PPXF(Fit):
     plural_name = 'ppxfs'
-    factors = [MCMCMeasurement.as_factor(['v', 'sigma', 'h3', 'h4', 'h5', 'h6'])]
+    children = MCMCMeasurement.as_children('v', 'sigma', 'h3', 'h4', 'h5', 'h6')
