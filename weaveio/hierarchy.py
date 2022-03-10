@@ -71,8 +71,8 @@ class Multiple:
                 self.instantate_node()
 
     def instantate_node(self):
-        if inspect.isclass(self.node):
-            if issubclass(self.node, str):
+        if not inspect.isclass(self.node):
+            if isinstance(self.node, str):
                 hierarchies = {i.__name__: i for i in all_subclasses(Hierarchy)}
                 self.node = hierarchies[self.node]
         self.name = self.node.plural_name
@@ -91,6 +91,11 @@ class Multiple:
     def __repr__(self):
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
 
+    @classmethod
+    def from_names(cls, hierarchy: Type['Hierarchy'], *singles: str, **multiples: Union[int, Tuple[_Optional[int], _Optional[int]]]) -> List['Multiple']:
+        single_list = [One2One(hierarchy, idname=name) for name in singles]
+        multiple_list = [Multiple(hierarchy, i, i) if isinstance(i, int) else Multiple(cls, *i) for k, i in multiples.items()]
+        return single_list + multiple_list
 
 class One2One(Multiple):
     def __init__(self, node, constrain=None, idname=None):
@@ -153,6 +158,11 @@ class GraphableMeta(type):
             raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
         nparents_in_id = 0
         parentnames = {}
+        for c in cls.children:
+            if isinstance(c, Multiple):
+                if c.node == 'self':
+                    c.node = name
+                    c.instantate_node()
         for i in cls.parents:
             if isinstance(i, One2One):
                 parentnames[i.singular_name] = (1, 1)
@@ -514,10 +524,6 @@ class Hierarchy(Graphable):
     parents = []
     factors = []
     is_template = True
-
-    @classmethod
-    def as_children(cls, *names):
-        return [One2One(cls, idname=name) for name in names]
 
     def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str], Dict[str, Type[Graphable]]]:
         """

@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from collections import deque
 from functools import reduce
 from itertools import product
 from operator import and_
@@ -11,7 +12,7 @@ from warnings import warn
 import networkx as nx
 import pandas as pd
 import py2neo
-from py2neo import ClientError, DatabaseError
+from py2neo import ClientError, DatabaseError, Relationship, Node, Subgraph
 from tqdm import tqdm
 
 from weaveio.basequery.actions import TraversalPath
@@ -20,9 +21,9 @@ from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.basequery.tree import BranchHandler
 from weaveio.file import File, HDU
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
+from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One, collect
 from weaveio.utilities import make_plural, make_singular
-from weaveio.writequery import Unwind
+from weaveio.writequery import Unwind, merge_node, match_node, match_pattern_node, match_relationship
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
@@ -89,6 +90,17 @@ def get_all_class_bases(cls: Type[Graphable]) -> List[Type[Graphable]]:
     return new
 
 
+def get_labels_of_schema_hierarchy(hierarchy: Union[Type[Hierarchy], Multiple], as_set=False):
+    if isinstance(hierarchy, Multiple):
+        hierarchy = hierarchy.node
+    bases = get_all_class_bases(hierarchy)
+    labels = [i.__name__ for i in bases]
+    labels.append(hierarchy.__name__)
+    labels.append('SchemaNode')
+    if as_set:
+        return frozenset(labels)
+    return labels
+
 
 def find_children_of(parent):
     hierarchies = get_all_subclasses(Hierarchy)
@@ -119,6 +131,10 @@ def shared_base_class(*classes):
 
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
+
+
+class AttemptedSchemaViolation(Exception):
+    pass
 
 
 class Data:
@@ -189,6 +205,116 @@ class Data:
         self.singular_factors = {f.lower() : f.lower() for f in self.factors}
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
+
+    def diff_hierarchy_schema_node(self, hierarchy: Type[Hierarchy]):
+        """
+        Given a hierarchy, return py2neo subgraph that can be pushed to update the schema.
+        If the new hierarchy is not backwards compatible, an exception will be raised
+
+        A hierarchy can only be merged into the schema if existing data will still match the schema.
+        i.e. if all below are true:
+            has the same factors or more
+            has the same parents and children
+                (additional parents and children can only be specified if they are optional)
+
+        In the schema:
+            (a)-[:parent]->(b) indicates that (b) requires a parent (a) at instantiation time
+            (a)<-[:child]-(b) indicates that (b) requires a child (a) at instantiation time
+            (a)-[:child]->(b) indicates that (a) requires a child (b) at instantiation time
+            (a)<-[:parent]-(b) indicates that (a) requires a parent (b) at instantiation time
+        """
+        cypher = f"""
+        MATCH (n:{hierarchy.__name__}:SchemaNode)
+        OPTIONAL MATCH (n)-[child_rel:CHILD]->(child:SchemaNode)
+        with n, child, collect(child_rel) as child_rels
+        OPTIONAL MATCH (parent:SchemaNode)-[parent_rel:PARENT]->(n)
+        with n, child, child_rels, parent, collect(parent_rel) as parent_rels
+        RETURN n, parent, child, parent_rels, child_rels
+        """
+        results = self.graph.execute(cypher).to_table()
+        found_node = results[0][0]
+        found_factors = set(found_node.get('factors', []))
+        # do the checks
+        # structure is [{labels}, is optional, is single, rel idname]
+        actual_parents = {(get_labels_of_schema_hierarchy(p, True), False, True, None) if not isinstance(p, Multiple)
+                          else (get_labels_of_schema_hierarchy(p.node, True), p.minnumber == 0, (p.minnumber, p.maxnumber), p.relation_idname) for p in hierarchy.parents}
+        actual_children = {(get_labels_of_schema_hierarchy(p, True), False, True, None) if not isinstance(p, Multiple)
+                          else (get_labels_of_schema_hierarchy(p.node, True), p.minnumber == 0, (p.minnumber, p.maxnumber), p.relation_idname) for p in hierarchy.children}
+        found_parents = {(frozenset(r[1].labels), rel['optional'], (rel['minnumber'], rel['maxnumber']), rel['idname']) for r in results if r[1] is not None for rel in r[3]}
+        found_children = {(frozenset(r[2].labels), rel['optional'], (rel['minnumber'], rel['maxnumber']), rel['idname']) for r in results if r[2] is not None for rel in r[4]}
+
+        different_idname = found_node.get('idname') != hierarchy.idname
+        missing_factors = set(hierarchy.factors) - found_factors
+        labels = get_labels_of_schema_hierarchy(hierarchy)
+        different_labels = set(labels).symmetric_difference(found_node.labels)
+
+        missing_parents = set(actual_parents - found_parents)
+        new_parents = {p for p in found_parents - actual_parents if not p[1]}  # allowed if the new ones are optional
+
+        missing_children = actual_children - found_children
+        new_children = {p for p in found_children - actual_children if not p[1]}  # allowed if the new ones are optional
+
+        if different_idname or missing_factors or different_labels or missing_parents or new_parents or missing_children or new_children:
+            msg = f'Cannot add new hierarchy {hierarchy} because the {hierarchy.__name__} already exists'\
+                f' and the proposed definition of {hierarchy} is not backwards compatible. '\
+                f'The differences are listed below:\n'
+            if different_idname:
+                msg += f'- proposed idname {hierarchy.idname} is different from the original {found_node.get("idname")}\n'
+            if different_labels:
+                msg += f'- proposed inherited types {different_labels} are different from {labels}\n'
+            if missing_factors:
+                msg += f'- factors {missing_factors} are missing from proposed definition\n'
+            if new_parents:
+                msg += f'- new parents {[set(p[0]) for p in new_parents]} are not optional (and therefore arent backwards compatible)\n'
+            if new_children:
+                msg += f'- new children {[set(p[0]) for p in new_children]} are not optional (and therefore arent backwards compatible)\n'
+            if missing_parents:
+                msg += f'- parents {[set(p[0]) for p in missing_parents]} are missing from the new definition\n'
+            if missing_children:
+                msg += f'- children {[set(p[0]) for p in missing_children]} are missing from the new definition'
+            msg += f'any flagged children or parents may have inconsistent min/max number'
+            raise AttemptedSchemaViolation(msg)
+
+        nodes, rels = [], []
+        if set(hierarchy.factors) != found_factors:
+            found_node['factors'] = hierarchy.factors
+            nodes.append(found_node)
+        if found_children.symmetric_difference(actual_children):
+            children = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn, idname=idname))
+                        for labels, optional, (minn, maxn), idname in actual_children]
+            nodes += children
+        else:
+            children = []
+        if found_parents.symmetric_difference(actual_parents):
+            parents = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn, idname=idname))
+                        for labels, optional, (minn, maxn), idname in actual_parents]
+            nodes += parents
+        else:
+            parents = []
+        # repeat the relationship if it is multiple
+        rels = [Relationship(found_node, 'CHILD', c, **props) for c, props in children for i in range((props['maxn'] > 1 or props['maxn'] is None)+1)] \
+             + [Relationship(p, 'PARENT', found_node, **props) for p, props in parents for i in range((props['maxn'] > 1 or props['maxn'] is None)+1)]
+        return Subgraph(parents+children+[found_node], rels)
+
+
+    def write_schema(self, dryrun=False):
+        """
+        writes to the neo4j schema graph for use in optimising queries
+        this should always be done before writing data
+        """
+        # sort available hierarchies meaning non-dependents first
+        hierarchies = deque(sorted(self.class_hierarchies.values(),
+                                   key=lambda x: len(x.children)+len(x.parents)+len(x.products)))
+        while hierarchies:
+            hier = hierarchies.popleft()  # type: Type[Hierarchy]
+            if hier.is_template:
+                continue  # don't need to add templates, they just provide labels
+            graph_update = self.diff_hierarchy_schema_node(hier)
+            if not dryrun:
+                self.graph.neograph.push(graph_update)
+
+
+
 
 
     def write(self, collision_manager='track&flag'):

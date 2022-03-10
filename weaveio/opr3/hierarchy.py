@@ -307,7 +307,7 @@ class WavelengthHolder(Hierarchy):
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
-    children = [Optional('L1SpectrumRow', idname='adjunct')]
+    children = [Optional('self', idname='adjunct')]
     products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
                 'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': Indexed('sensfunc')}
     factors = Spectrum.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i', 'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
@@ -419,13 +419,14 @@ class GandalfL2Spectrum(L2SpectrumLogLam):
 
 class Fit(Hierarchy):
     is_template = True
-    parents = [L2Spectrum]
+    parents = [L2Spectrum, APS]
+    factors = ['version']
+    identifier_builder = ['version', 'l2spectrum']
 
 
 class Measurement(Hierarchy):
     is_template = True
     factors = ['value', 'error']
-    indexes = ['value']
 
 
 class MCMCMeasurement(Measurement):
@@ -435,8 +436,8 @@ class MCMCMeasurement(Measurement):
 
 class Line(Measurement):
     idname = 'name'
-    factors = ['wvl', 'aon']
-    children = Measurement.as_children('flux', 'redshift', 'sigma', 'ebmv', 'amp')
+    factors = ['wvl', 'aon', 'vaccum']
+    children = Multiple.from_names(Measurement, 'flux', 'redshift', 'sigma', 'ebmv', 'amp')
 
 
 class SpectralIndex(Measurement):
@@ -445,35 +446,35 @@ class SpectralIndex(Measurement):
 
 class Redrock(Fit):
     plural_name = 'redrocks'
-    factors = ['flag', 'class', 'subclass', 'snr', 'chi2', 'deltachi2', 'ncoeff', 'coeff',
+    factors = Fit.factors + ['flag', 'class', 'subclass', 'snr', 'chi2', 'deltachi2', 'ncoeff', 'coeff',
                'npixels', 'srvy_class']
-    children = Measurement.as_children('best_redshift')
+    children = Multiple.from_names(Measurement, 'best_redshift')
 
 
 class RedshiftChi2Grid(Hierarchy):
-    idname = 'template'
-    factors = ['redshifts', 'chi2']
+    factors = ['template', 'redshifts', 'chi2']
     parents = [Redrock]
+    identifier_builder = ['redrock', 'template']
 
 
 class RVSpecfit(Fit):
     plural_name = 'rvspecfits'
-    factors = ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
-    children = Measurement.as_children('vrad', 'logg', 'teff', 'feh', 'alpha')
+    factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
+    children = Multiple.from_names(Measurement, 'vrad', 'logg', 'teff', 'feh', 'alpha')
 
 
 class Ferre(Fit):
     plural_name = 'ferres'
-    factors = ['snr', 'chi2_tot', 'flag']
-    children = Measurement.as_children('micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
+    factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
+    children = Multiple.from_names(Measurement, 'micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
 
 
 class Gandalf(Fit):
     plural_name = 'gandalfs'
     children = [Multiple(Line), Multiple(SpectralIndex)]
-    factors = ['fwhm_flag']
+    factors = Fit.factors + ['fwhm_flag']
 
 
 class PPXF(Fit):
     plural_name = 'ppxfs'
-    children = MCMCMeasurement.as_children('v', 'sigma', 'h3', 'h4', 'h5', 'h6')
+    children = Multiple.from_names(MCMCMeasurement, 'v', 'sigma', 'h3', 'h4', 'h5', 'h6')
