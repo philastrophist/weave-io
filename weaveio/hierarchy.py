@@ -537,8 +537,9 @@ class Hierarchy(Graphable):
         specification.update(children)
         return specification, factors, children
 
-    def instantate_nodes(self):
-        for i in self.parents + self.factors + self.mutuals:
+    @classmethod
+    def instantate_nodes(cls):
+        for i in cls.parents + cls.factors + cls.children:
             if isinstance(i, Multiple):
                 if isinstance(i.node, str):
                     i.instantate_node()
