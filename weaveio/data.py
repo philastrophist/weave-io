@@ -145,7 +145,7 @@ def push_py2neo_schema_subgraph_cypher(subgraph: Subgraph) -> Tuple[str, Dict]:
     cypher = []
     params = {}
     for i, node in enumerate(subgraph.nodes):
-        cypher.append(f"MERGE (n{i}{node.labels})")
+        cypher.append(f"MERGE (n{i}{node.labels}) WITH * WHERE size(labels(n{i})) = {len(node.labels)}")
         for k, v in node.items():
             params[f'n{i}{k}'] = v
             cypher.append(f"SET n{i}.{k} = $n{i}{k}")
@@ -236,28 +236,27 @@ class Data:
 
         A hierarchy can only be merged into the schema if existing data will still match the schema.
         i.e. if all below are true:
+            has the same idname
             has the same factors or more
             has the same parents and children
                 (additional parents and children can only be specified if they are optional)
 
         In the schema:
-            (a)-[:parent]->(b) indicates that (b) requires a parent (a) at instantiation time
-            (a)<-[:child]-(b) indicates that (b) requires a child (a) at instantiation time
-            (a)-[:child]->(b) indicates that (a) requires a child (b) at instantiation time
-            (a)<-[:parent]-(b) indicates that (a) requires a parent (b) at instantiation time
+            (a)-[:is_parent_of]->(b) indicates that (b) requires a parent (a) at instantiation time
+            (a)-[:has_child]->(b) indicates that (a) requires a child (b) at instantiation time
         """
-        # structure is [{labels}, is_optional, (minn, maxn), rel_idname, object]
-        actual_parents = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None) if not isinstance(p, Multiple)
+        # structure is [{labels}, is_optional, (minn, maxn), rel_idname, is_one2one]
+        actual_parents = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None, False) if not isinstance(p, Multiple)
                           else (get_labels_of_schema_hierarchy(p.node, True), p.minnumber == 0,
-                                (p.minnumber, p.maxnumber), p.relation_idname) for p in hierarchy.parents]
-        actual_children = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None) if not isinstance(p, Multiple)
+                                (p.minnumber, p.maxnumber), p.relation_idname, isinstance(p, One2One)) for p in hierarchy.parents]
+        actual_children = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None, False) if not isinstance(p, Multiple)
                            else (get_labels_of_schema_hierarchy(p.node, True), p.minnumber == 0,
-                                 (p.minnumber, p.maxnumber), p.relation_idname) for p in hierarchy.children]
+                                 (p.minnumber, p.maxnumber), p.relation_idname, isinstance(p, One2One)) for p in hierarchy.children]
         cypher = f"""
         MATCH (n:{hierarchy.__name__}:SchemaNode)
-        OPTIONAL MATCH (n)-[child_rel:CHILD]->(child:SchemaNode)
+        OPTIONAL MATCH (n)-[child_rel:HAS_CHILD]->(child:SchemaNode)
         with n, child, collect(child_rel) as child_rels
-        OPTIONAL MATCH (parent:SchemaNode)-[parent_rel:PARENT]->(n)
+        OPTIONAL MATCH (parent:SchemaNode)-[parent_rel:IS_PARENT_OF]->(n)
         with n, child, child_rels, parent, collect(parent_rel) as parent_rels
         RETURN n, parent, child, parent_rels, child_rels
         """
@@ -274,16 +273,18 @@ class Data:
                 props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
                              idname=struct[3])
                 parent = Node(*struct[0])  # extant parent, specify labels so it matches not creates
-                rel = Relationship(parent, 'PARENT', found_node, **props)  # new rel, should not exists, create
+                rels.append(Relationship(parent, 'IS_PARENT_OF', found_node, **props))  # new rel, should not exists, create
+                if struct[4]: # is_one2one, so add a reflected relation as well
+                    rels.append(Relationship(found_node, 'IS_PARENT_OF', parent, **props))
                 parents.append(parent)
-                rels.append(rel)
             for struct in actual_children:
                 props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
                              idname=struct[3])
                 child = Node(*struct[0])  # extant child, specify labels so it matches not creates
-                rel = Relationship(found_node, 'CHILD', child, **props)  # new rel, should not exists, create
+                rels.append(Relationship(found_node, 'HAS_CHILD', child, **props))  # new rel, should not exists, create
+                if struct[4]: # is_one2one, so add a reflected relation as well
+                    rels.append(Relationship(child, 'HAS_CHILD', found_node, **props))
                 children.append(child)
-                rels.append(rel)
         else:
             found_node = results[0][0]
             actual_parents = set(actual_parents)
@@ -306,8 +307,8 @@ class Data:
             new_parents = {p for p in found_parents - actual_parents if not p[1]}  # allowed if the new ones are optional
 
             # children are different?
-            missing_children = actual_children - found_children
-            new_children = {p for p in found_children - actual_children if not p[1]}  # allowed if the new ones are optional
+            missing_children = found_children - actual_children  # missing from new definition
+            new_children = {p for p in actual_children - found_children if not p[1]}  # allowed if the new ones are optional
 
             if different_idname or missing_factors or different_labels or missing_parents or \
                     new_parents or missing_children or new_children or different_singular_name or different_plural_name:
@@ -325,13 +326,13 @@ class Data:
                 if missing_factors:
                     msg += f'- factors {missing_factors} are missing from proposed definition\n'
                 if new_parents:
-                    msg += f'- new parents {[set(p[0]) for p in new_parents]} are not optional (and therefore arent backwards compatible)\n'
+                    msg += f'- new parents with labels {[set(p[0]) - {"SchemaNode"} for p in new_parents]} are not optional (and therefore arent backwards compatible)\n'
                 if new_children:
-                    msg += f'- new children {[set(p[0]) for p in new_children]} are not optional (and therefore arent backwards compatible)\n'
+                    msg += f'- new children with labels {[set(p[0]) - {"SchemaNode"} for p in new_children]} are not optional (and therefore arent backwards compatible)\n'
                 if missing_parents:
-                    msg += f'- parents {[set(p[0]) for p in missing_parents]} are missing from the new definition\n'
+                    msg += f'- parents with labels {[set(p[0]) - {"SchemaNode"} for p in missing_parents]} are missing from the new definition\n'
                 if missing_children:
-                    msg += f'- children {[set(p[0]) for p in missing_children]} are missing from the new definition\n'
+                    msg += f'- children with labels {[set(p[0]) - {"SchemaNode"} for p in missing_children]} are missing from the new definition\n'
                 msg += f'any flagged children or parents may have inconsistent min/max number'
                 raise AttemptedSchemaViolation(msg)
 
@@ -352,8 +353,8 @@ class Data:
             else:
                 parents = []
             # repeat the relationship if it is multiple
-            rels = [Relationship(found_node, 'CHILD', c, **props) for c, props in children for i in range((props['maxnumber'] > 1 or props['maxnumber'] is None)+1)] \
-                   + [Relationship(p, 'PARENT', found_node, **props) for p, props in parents for i in range((props['maxnumber'] > 1 or props['maxnumber'] is None)+1)]
+            rels = [Relationship(found_node, 'HAS_CHILD', c, **props) for c, props in children for i in range((props['maxnumber'] > 1 or props['maxnumber'] is None)+1)] \
+                   + [Relationship(p, 'IS_PARENT_OF', found_node, **props) for p, props in parents for i in range((props['maxnumber'] > 1 or props['maxnumber'] is None)+1)]
         return Subgraph(parents+children+[found_node], rels)
 
 
@@ -370,11 +371,15 @@ class Data:
         nmisses = 0
         while hierarchies:
             if nmisses == len(hierarchies):
-                raise AttemptedSchemaViolation(f"Dependency resolution impossible: proposed schema elements may have cyclic dependencies")
+                raise AttemptedSchemaViolation(f"Dependency resolution impossible, proposed schema elements may have cyclic dependencies:"
+                                               f"{list(hierarchies)}")
             hier = hierarchies.popleft()  # type: Type[Hierarchy]
+            hier.instantate_nodes()
             if hier.is_template:
                 continue  # don't need to add templates, they just provide labels
-            if not all(d.node in done if isinstance(d, Multiple) else d in done for d in hier.parents+hier.children):
+            dependencies = [d.node if isinstance(d, Multiple) else d for d in hier.parents + hier.children]
+            dependencies = filter(lambda d: d != hier, dependencies)  # allow self-references
+            if not all(d in done for d in dependencies):
                 logging.info(f"{hier} put at the back because it requires dependencies which have not been written yet")
                 hierarchies.append(hier)  # do it after the dependencies are done
                 nmisses += 1
@@ -384,6 +389,7 @@ class Data:
             done.append(hier)
         if not dryrun:
             for cypher, params in tqdm(executions, desc='schema updates'):
+                print(cypher)
                 self.graph.execute(cypher, **params)
         return True
 
