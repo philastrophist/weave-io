@@ -265,7 +265,7 @@ class Dissociated(FrozenQuery):
         else:
             raise NotImplementedError(f"Can only translate numpy methods that are called using __call__ or reduce. Not {method}")
 
-    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True) -> Table:
+    def _post_process(self, result: py2neo.database.Cursor, squeeze: bool = True, verbose=False) -> Table:
         df = result.to_data_frame()
         assert len(df.columns) == 1
         vs = df.iloc[:, 0].values

@@ -73,7 +73,7 @@ class FactorFrozenQuery(Dissociated):
             factors = f'[{self.factors}]'
         return f'{self.parent}{factors}'
 
-    def _parse_products(self, df: pd.DataFrame):
+    def _parse_products(self, df: pd.DataFrame, verbose=False):
         """
         Take a pandas dataframe and replace the structure of ['sourcefile', 'extn', 'index', 'column_name']
         with the actual data
@@ -92,7 +92,7 @@ class FactorFrozenQuery(Dissociated):
             sourcefiles = {}
             concat = pd.concat(product_columns)
             concat = concat.applymap(lambda x: np.nan if x is None else x).dropna(how='all')
-            for fname in tqdm(concat.sourcefile.drop_duplicates(), desc='reading fits files'):
+            for fname in tqdm(concat.sourcefile.drop_duplicates(), desc='reading fits files', disable=not verbose):
                 if fname is not None:
                     path = Path(self.handler.data.rootdir) / fname
                     sourcefiles[fname] = fits.open(path)
@@ -102,12 +102,12 @@ class FactorFrozenQuery(Dissociated):
                 df[name] = group.droplevel(1)
         return df
 
-    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True, verbose=False) -> Table:
         if isinstance(result, Record):
             df = pd.DataFrame([dict(result)])
         else:
             df = pd.DataFrame(list(map(dict, result)))
-        df = self._parse_products(df)
+        df = self._parse_products(df, verbose=verbose)
         # replace lists with arrays
         for c in df.columns:
             if df.dtypes[c] == 'O' and not isinstance(df[c].iloc[0], str):
@@ -132,9 +132,12 @@ class SingleFactorFrozenQuery(FactorFrozenQuery):
     def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable, is_product: bool, parent: FrozenQuery = None):
         super().__init__(handler, branch, [factor], [factor_variable], [False], [is_product], parent)
 
-    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True):
-        table = super()._post_process(result, squeeze=False)
-        column = table[table.colnames[0]].data
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True, verbose=False):
+        table = super()._post_process(result, squeeze=False, verbose=verbose)
+        try:
+            column = table[table.colnames[0]].data
+        except IndexError:
+            return []
         if (len(column) == 1 and squeeze) or isinstance(result, Record):
             return column[0]
         return column
@@ -155,8 +158,8 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
             variables = {safe_name(k): v for k, v in zip(self.return_keys, self.factor_variables)}
             return query.returns(**variables)
 
-    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
-        t = super()._post_process(result, squeeze=False)
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True, verbose=False) -> Table:
+        t = super()._post_process(result, squeeze=False, verbose=verbose)
         if len(t):
             t = Table(t)
             t.rename_columns(t.colnames, self.return_keys)

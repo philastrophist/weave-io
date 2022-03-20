@@ -12,6 +12,7 @@ from weaveio.hierarchy import Hierarchy
 class File(Hierarchy):
     is_template = True
     idname = 'fname'
+    factors = ['path']
     match_pattern = '*.file'
     antimatch_pattern = '^$'
     hdus = {}
@@ -24,8 +25,27 @@ class File(Hierarchy):
         except AttributeError:
             return fits.open(self.fname)
 
-    def __init__(self, fname, **kwargs):
-        super().__init__(tables=None, fname=str(fname), **kwargs)
+    def __init__(self, fname, path, **kwargs):
+        # fname should only be the name of a file, not a relative/absolute path
+        # path should be the path to the file relative to the rootdir (which is not stored)
+        # if fname is a path containing the filename
+        fname = Path(fname)
+        path = Path(path)
+        if len(fname.parents) == 1 and fname.parents[0] == Path('.'):  # if fname is just a filename
+            fname = fname.name
+            path = path
+        else:
+            try:
+                fname = fname.relative_to(path)  # throws error if fname is not under path, which indicates they are separated already
+            except ValueError:
+                path = fname.parents[0]
+                fname = fname.name
+            else:
+                path = fname.parents[0]  # get the path again
+                fname = fname.name
+
+
+        super().__init__(tables=None, fname=str(fname), path=str(path), **kwargs)
 
     @classmethod
     def get_batches(cls, path, batch_size):
@@ -52,12 +72,12 @@ class File(Hierarchy):
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
                   **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str,'HDU'], 'File', List[_BaseHDU]]:
-        path = Path(directory) / Path(fname)
-        file = cls(fname, **hierarchies)
-        hdus = [i for i in fits.open(path)]
+        abspath = Path(directory) / Path(fname)
+        file = cls(fname, directory, **hierarchies)
+        hdus = [i for i in fits.open(abspath)]
         if len(hdus) != len(cls.hdus):
             raise TypeError(f"Class {cls} asserts there are {len(cls.hdus)} HDUs ({list(cls.hdus.keys())})"
-                            f" whereas {path} has {len(hdus)} ({[i.name for i in hdus]})")
+                            f" whereas {abspath} has {len(hdus)} ({[i.name for i in hdus]})")
         hduinstances = {}
         for i, ((hduname, hduclass), hdu) in enumerate(zip(cls.hdus.items(), hdus)):
             hduinstances[hduname] = hduclass.from_hdu(hduname, hdu, i, file)
@@ -66,6 +86,12 @@ class File(Hierarchy):
     def read_product(self, product_name):
         self.build_index()
         return getattr(self, f'read_{product_name}')()
+
+    @classmethod  # fudgy
+    def without_creation(cls, **kwargs):
+        if 'path' not in kwargs:
+            kwargs['path'] = '.'
+        return super().without_creation(**kwargs)
 
 
 class HDU(Hierarchy):
@@ -85,7 +111,7 @@ class HDU(Hierarchy):
         input_dict = cls._from_hdu(hdu)
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
-        input_dict['sourcefile'] = file.fname
+        input_dict['sourcefile'] = file.path
         input_dict['name'] = name
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):

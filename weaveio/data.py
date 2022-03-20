@@ -348,7 +348,7 @@ class Data:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
             try:
                 if raise_on_duplicate_file:
-                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
+                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname.name)) != 0:
                         raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
                 with self.write(collision_manager) as query:
                     filetype.read(self.rootdir, fname, slc)
@@ -394,7 +394,7 @@ class Data:
             filelist += [i for i in filetype.match_files(self.rootdir, self.graph)]
         if skip_extant_files:
             extant_fnames = self.get_extant_files() if skip_extant_files else []
-            filtered_filelist = [i for i in filelist if str(i.relative_to(self.rootdir)) not in extant_fnames]
+            filtered_filelist = [i for i in filelist if str(i.name) not in extant_fnames]
         else:
             filtered_filelist = filelist
         diff = len(filelist) - len(filtered_filelist)

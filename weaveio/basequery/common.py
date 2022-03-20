@@ -85,16 +85,16 @@ class FrozenQuery:
         self.execute_time = end - start
         return r
 
-    def _post_process(self, result: Cursor, squeeze: bool = True):
+    def _post_process(self, result: Cursor, squeeze: bool = True, verbose=False):
         """Override to turn a py2neo neo4j result object into something that the user wants"""
         raise NotImplementedError
 
-    def __call__(self, limit=None, skip=None, squeeze=True):
+    def __call__(self, limit=None, skip=None, squeeze=True, verbose=False):
         """Prepare and execute the query contained by this frozen object"""
         result = self._execute_query(limit=limit, skip=skip)
         logging.info(f'Processing query results...')
         start = time.time()
-        r = self._post_process(result, squeeze)
+        r = self._post_process(result, squeeze, verbose=verbose)
         end = time.time()
         self.process_time = end - start
         total = self.parse_time + self.execute_time + self.process_time

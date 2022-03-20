@@ -147,11 +147,12 @@ class RawFile(HeaderFibinfoFile):
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
-        path = Path(directory) / Path(fname)
-        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
+        abspath = Path(directory) / Path(fname)
+        relpath = str(abspath.relative_to(directory))
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(abspath, slc)
         observation = hiers['observation']
         hdus, file, _ = cls.read_hdus(directory, fname, casu=observation.casu)
-        raw = RawSpectrum(sourcefile=str(fname), casu=observation.casu, observation=observation, nrow=-1)
+        raw = RawSpectrum(sourcefile=relpath, casu=observation.casu, observation=observation, nrow=-1)
         raw.attach_products(file, **hdus)
         observation.attach_products(file, **hdus)
         return file
@@ -196,22 +197,23 @@ class L1SingleFile(L1File):
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         observation = hiers['observation']
         casu = observation.casu
-        inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
-        matched_files = list(directory.rglob(inferred_raw_fname.name))
+        inferred_raw_path = fname.with_name(fname.name.replace('single_', 'r'))
+        matched_files = list(directory.rglob(inferred_raw_path.name))
         if not matched_files:
             logging.warning(f"{fname} does not have a matching raw file. "
                             f"The database will create the link but the rawspectra will not be available until the missing file is.")
-            inferred_raw_fname = inferred_raw_fname.name
         elif len(matched_files) > 1:
-            raise FileExistsError(f"Whilst searching for {inferred_raw_fname}, we found more than one match:"
+            raise FileExistsError(f"Whilst searching for {inferred_raw_path.name}, we found more than one match:"
                                   f"\n{matched_files}")
         else:
-            inferred_raw_fname = str(matched_files[0])
-        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, observation=observation, nrow=-1)
-        rawfile = RawFile(inferred_raw_fname, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
+            inferred_raw_path = matched_files[0]
+        inferred_raw_path = inferred_raw_path.relative_to(directory)
+        raw = RawSpectrum(sourcefile=str(inferred_raw_path), casu=casu, observation=observation, nrow=-1)
+        rawfile = RawFile(fname=str(inferred_raw_path.name), path=inferred_raw_path, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
         hdus, file, _ = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
-            single_spectrum = L1SingleSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
+            single_spectrum = L1SingleSpectrum(sourcefile=str(inferred_raw_path.name),
+                                               nrow=fibrow['nspec'],
                                                rawspectrum=raw, fibretarget=fibretarget,
                                                casu=casu, tables=fibrow)
             single_spectrum.attach_products(file, index=fibrow['spec_index'], **hdus)
@@ -231,6 +233,13 @@ class L1StackedBaseFile(L1File):
             runids = [int(v.split('.')[0].split('_')[1]) for k, v in header.items() if k.startswith('PROV0') and 'formed' not in v]
         return runids
 
+    @classmethod
+    def get_provenance(cls, path):
+        header = fits.open(path)[0].header
+        vals = {k: header[k] for k in header.keys() if k.startswith('PROV')}
+        return [v.split('[')[0] for k, v in vals.items() if int(k[len('PROV'):]) > 0 ]
+
+
 
 class L1StackFile(L1StackedBaseFile):
     match_pattern = 'stack_[0-9]+\.fit'
@@ -242,14 +251,15 @@ class L1StackFile(L1StackedBaseFile):
         return f'stack_{runid:07.0f}.fit'
 
     @classmethod
-    def get_single_files(cls, directory: Path, fname: Path):
+    def get_single_files(cls, absdirectory: Path, fname: Path):
         l1singlefiles = []
-        runids = cls.parent_runids(directory / fname)
-        for runid in runids:
-            single_fname = L1SingleFile.fname_from_runid(runid)
-            subdir = fname.parents[0]
-            l1singlefiles.append(L1SingleFile.find(fname=str(subdir / single_fname)))
-        return l1singlefiles
+        paths = []
+        single_fnames = cls.get_provenance(absdirectory / fname)
+        for single_fname in single_fnames:
+            file = L1SingleFile.find(fname=single_fname)
+            l1singlefiles.append(file)
+            paths.append(file.node.get('path'))
+        return l1singlefiles, paths
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
@@ -266,15 +276,15 @@ class L1StackFile(L1StackedBaseFile):
         ob = hiers['ob']
         armconfig = hiers['armconfig']
         casu = observation.casu
-        singlefiles = cls.get_single_files(directory, fname)
+        singlefiles, sourcefiles = cls.get_single_files(directory, fname)
         hdus, file, _ = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
                                    armconfig=armconfig, casu=casu)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             single_spectra = []
-            for singlefile in singlefiles:
-                single_spectrum = L1SingleSpectrum.find(sourcefile=str(singlefile.fname), nrow=fibrow['nspec'])
+            for singlefile, sourcefile in zip(singlefiles, sourcefiles):
+                single_spectrum = L1SingleSpectrum.find(sourcefile=sourcefile, nrow=fibrow['nspec'])
                 single_spectra.append(single_spectrum)
-            stack_spectrum = L1StackSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
+            stack_spectrum = L1StackSpectrum(sourcefile=str(path.relative_to(directory)), nrow=fibrow['nspec'],
                                              l1singlespectra=single_spectra, ob=ob,
                                              armconfig=armconfig, fibretarget=fibretarget,
                                              casu=casu, tables=fibrow)
