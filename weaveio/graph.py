@@ -109,7 +109,9 @@ class Graph(metaclass=ContextMeta):
             return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
-        if not self.write_allowed:
+        lower = cypher.lower()
+        if not self.write_allowed and ('create' in lower or 'merge' in lower or
+                                       'set' in lower or 'delete' in lower or 'detach' in lower):
             raise IOError(f"Write is not allowed, set `write=True` to permit writing.")
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
         try:
