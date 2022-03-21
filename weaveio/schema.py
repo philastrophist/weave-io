@@ -1,11 +1,15 @@
 import logging
 from collections import deque
 from typing import Type, List, Union, Tuple, Dict, Set
+
+import py2neo
 from py2neo import Relationship, Node, Subgraph
+from py2neo.cypher import Cursor
+from py2neo.export import Table
 from tqdm import tqdm
 
 from weaveio.graph import Graph
-from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One
+from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional
 
 
 class AttemptedSchemaViolation(Exception):
@@ -49,12 +53,35 @@ def push_py2neo_schema_subgraph_cypher(subgraph: Subgraph) -> Tuple[str, Dict]:
     for i, rel in enumerate(subgraph.relationships):
         a = list(subgraph.nodes).index(rel.start_node)
         b = list(subgraph.nodes).index(rel.end_node)
-        cypher.append(f"MERGE (n{a})-[r{i}:{list(rel.types())[0]}]->(n{b})")
+        rel_params = []
         for k, v in rel.items():
             params[f'r{i}{k}'] = v
-            cypher.append(f"SET r{i}.{k} = $r{i}{k}")
+            rel_params.append(f"{k}: $r{i}{k}")
+        rel_params = ','.join(rel_params)
+        cypher.append(f"MERGE (n{a})-[r{i}:{list(rel.types())[0]} {{{rel_params}}}]->(n{b})")
     return "\n".join(cypher), params
 
+def int_or_none(x):
+    if x is None:
+        return None
+    return int(x)
+
+def get_all_schema_nodes(graph):
+    return graph.execute("MATCH (n:SchemaNode) return n.name, labels(n), properties(n)").to_table()
+
+def get_all_schema_rows(graph, hierarchy_name) -> Table:
+    cypher = f"""
+    MATCH (n:{hierarchy_name}:SchemaNode {{name: '{hierarchy_name}'}})
+    OPTIONAL MATCH (n)-[child_rel:HAS_CHILD]->(child:SchemaNode) WHERE child_rel.originated = n.name
+    with n, child, collect(child_rel) as child_rels
+    OPTIONAL MATCH (parent:SchemaNode)-[parent_rel:IS_PARENT_OF]->(n) WHERE parent_rel.originated = n.name
+    with n, child, child_rels, parent, collect(parent_rel) as parent_rels
+    RETURN n, parent, child, parent_rels, child_rels
+    """
+    return graph.execute(cypher).to_table()
+
+def get_type_hierarchy_subgraph(graph, hierarchy):
+    get_all_class_bases()
 
 def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
     """
@@ -72,46 +99,33 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
         (a)-[:is_parent_of]->(b) indicates that (b) requires a parent (a) at instantiation time
         (a)-[:has_child]->(b) indicates that (a) requires a child (b) at instantiation time
     """
-    # structure is [{labels}, is_optional, (minn, maxn), rel_idname, is_one2one]
-    actual_parents = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None, False) if not isinstance(p, Multiple)
+    # structure is [{labels}, is_optional, (minn, maxn), rel_idname, is_one2one, class_name]
+    actual_parents = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None, False, p.__name__) if not isinstance(p, Multiple)
                       else (get_labels_of_schema_hierarchy(p.node, True), p.minnumber == 0,
-                            (p.minnumber, p.maxnumber), p.relation_idname, isinstance(p, One2One)) for p in hierarchy.parents]
-    actual_children = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None, False) if not isinstance(p, Multiple)
+                            (p.minnumber, p.maxnumber), p.relation_idname, isinstance(p, One2One), p.node.__name__) for p in hierarchy.parents]
+    actual_children = [(get_labels_of_schema_hierarchy(p, True), False, (1, 1), None, False, p.__name__) if not isinstance(p, Multiple)
                        else (get_labels_of_schema_hierarchy(p.node, True), p.minnumber == 0,
-                             (p.minnumber, p.maxnumber), p.relation_idname, isinstance(p, One2One)) for p in hierarchy.children]
-    cypher = f"""
-    MATCH (n:{hierarchy.__name__}:SchemaNode)
-    OPTIONAL MATCH (n)-[child_rel:HAS_CHILD]->(child:SchemaNode)
-    with n, child, collect(child_rel) as child_rels
-    OPTIONAL MATCH (parent:SchemaNode)-[parent_rel:IS_PARENT_OF]->(n)
-    with n, child, child_rels, parent, collect(parent_rel) as parent_rels
-    RETURN n, parent, child, parent_rels, child_rels
-    """
+                             (p.minnumber, p.maxnumber), p.relation_idname, isinstance(p, One2One), p.node.__name__) for p in hierarchy.children]
+    results = get_all_schema_rows(graph, hierarchy.__name__)
     labels = get_labels_of_schema_hierarchy(hierarchy)
-    results = graph.execute(cypher).to_table()
     if len(results) == 0:  # node is completely new
         parents = []
         children = []
-        rels = []
         found_node = Node(*labels,
                           factors=hierarchy.factors, idname=hierarchy.idname,
-                          singular_name=hierarchy.singular_name, plural_name=hierarchy.plural_name)
+                          name=hierarchy.__name__,
+                          singular_name=hierarchy.singular_name,
+                          plural_name=hierarchy.plural_name)
         for struct in actual_parents:
             props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
-                         idname=struct[3])
+                         idname=struct[3], one2one=struct[4], name=struct[5])
             parent = Node(*struct[0])  # extant parent, specify labels so it matches not creates
-            rels.append(Relationship(parent, 'IS_PARENT_OF', found_node, **props))  # new rel, should not exists, create
-            if struct[4]:  # is_one2one, so add a reflected relation as well
-                rels.append(Relationship(found_node, 'IS_PARENT_OF', parent, **props))
-            parents.append(parent)
+            parents.append([parent, props])
         for struct in actual_children:
             props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
-                         idname=struct[3])
+                         idname=struct[3], one2one=struct[4], name=struct[5])
             child = Node(*struct[0])  # extant child, specify labels so it matches not creates
-            rels.append(Relationship(found_node, 'HAS_CHILD', child, **props))  # new rel, should not exists, create
-            if struct[4]:  # is_one2one, so add a reflected relation as well
-                rels.append(Relationship(child, 'HAS_CHILD', found_node, **props))
-            children.append(child)
+            children.append([child, props])
     else:
         found_node = results[0][0]
         actual_parents = set(actual_parents)
@@ -119,8 +133,12 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
 
         # gather extant info
         found_factors = set(found_node.get('factors', []))
-        found_parents = {(frozenset(r[1].labels), rel['optional'], (rel['minnumber'], rel['maxnumber']), rel['idname']) for r in results if r[1] is not None for rel in r[3]}
-        found_children = {(frozenset(r[2].labels), rel['optional'], (rel['minnumber'], rel['maxnumber']), rel['idname']) for r in results if r[2] is not None for rel in r[4]}
+        found_parents = {(frozenset(r[1].labels), bool(rel['optional']),
+                          (int_or_none(rel['minnumber']), int_or_none(rel['maxnumber'])),
+                          rel['idname'], bool(rel['one2one']), rel['name']) for r in results if r[1] is not None for rel in r[3]}
+        found_children = {(frozenset(r[2].labels), bool(rel['optional']),
+                           (int_or_none(rel['minnumber']), int_or_none(rel['maxnumber'])),
+                           rel['idname'], bool(rel['one2one']), rel['name']) for r in results if r[2] is not None for rel in r[4]}
 
         # see if hierarchy is different in anyway
         different_idname = found_node.get('idname') != hierarchy.idname
@@ -163,29 +181,50 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
             msg += f'any flagged children or parents may have inconsistent min/max number'
             raise AttemptedSchemaViolation(msg)
 
-        nodes, rels = [], []
+        nodes = []
         if set(hierarchy.factors) != found_factors:
             found_node['factors'] = hierarchy.factors  # update
             nodes.append(found_node)
         if found_children.symmetric_difference(actual_children):
-            children = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn, idname=idname))
-                        for labels, optional, (minn, maxn), idname in actual_children]
+            children = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn,
+                                             idname=idname, one2one=one2one, name=name))
+                        for labels, optional, (minn, maxn), idname, one2one, name in actual_children]
             nodes += children
         else:
             children = []
         if found_parents.symmetric_difference(actual_parents):
-            parents = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn, idname=idname))
-                       for labels, optional, (minn, maxn), idname in actual_parents]
+            parents = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn,
+                                            idname=idname, one2one=one2one, name=name))
+                       for labels, optional, (minn, maxn), idname, one2one, name in actual_parents]
             nodes += parents
         else:
             parents = []
-        # repeat the relationship if it is multiple
-        rels = [Relationship(found_node, 'HAS_CHILD', c, **props) for c, props in children for _ in range((props['maxnumber'] > 1 or props['maxnumber'] is None) + 1)] \
-               + [Relationship(p, 'IS_PARENT_OF', found_node, **props) for p, props in parents for _ in range((props['maxnumber'] > 1 or props['maxnumber'] is None) + 1)]
-    return Subgraph(parents + children + [found_node], rels)
+    # repeat the relationship if it is multiple
+    # reflect the relationship if it is One2One
+    # else just add one relationship
+    rels = []
+    for c, props in children:
+            rels.append(Relationship(found_node, 'HAS_CHILD', c, **props, originated=found_node.get('name')))
+            if props['one2one']:
+                rels.append(Relationship(c, 'HAS_CHILD', found_node, **props, originated=found_node.get('name')))
+            # elif props['maxnumber'] is None:
+            #     rels.append(Relationship(found_node, 'HAS_CHILD', c, **props, duplicated=True))
+            # elif props['maxnumber'] > 1:
+            #     rels.append(Relationship(found_node, 'HAS_CHILD', c, **props, duplicated=True))
+
+    for p, props in parents:
+            rels.append(Relationship(p, 'IS_PARENT_OF', found_node, **props, originated=found_node.get('name')))
+            if props['one2one']:
+                rels.append(Relationship(found_node, 'IS_PARENT_OF', p, **props, originated=found_node.get('name')))
+            # elif props['maxnumber'] is None:
+            #     rels.append(Relationship(p, 'IS_PARENT_OF', found_node, **props, duplicated=True))
+            # elif props['maxnumber'] > 1:
+            #     rels.append(Relationship(p, 'IS_PARENT_OF', found_node, **props, duplicated=True))
+
+    return Subgraph([i[0] for i in parents + children] + [found_node], rels)
 
 
-def write_schema(graph, hierarchies, dryrun=False):
+def write_schema(graph, hierarchies, dryrun=False, return_subgraph=False):
     """
     writes to the neo4j schema graph for use in optimising queries
     this should always be done before writing data
@@ -211,7 +250,9 @@ def write_schema(graph, hierarchies, dryrun=False):
             hierarchies.append(hier)  # do it after the dependencies are done
             nmisses += 1
             continue
-        executions.append(push_py2neo_schema_subgraph_cypher(diff_hierarchy_schema_node(graph, hier)))
+        subgraph = diff_hierarchy_schema_node(graph, hier)
+        executions.append(push_py2neo_schema_subgraph_cypher(subgraph))
+        # executions.append(push_py2neo_schema_subgraph_cypher(get_type_hierarchy_subgraph(graph, hier))
         nmisses = 0  # reset counter
         done.append(hier)
     if not dryrun:
@@ -220,6 +261,56 @@ def write_schema(graph, hierarchies, dryrun=False):
     return True
 
 
-def read_schema(graph) -> Set[Type[Hierarchy]]:
-    nondependents = graph.execute('MATCH (n) WHERE not exists((n)<-[:IS_PARENT_OF]-()) AND not exists((n)-[:HAS_CHILD]->()) RETURN n').to_subgraph()
+def get_dependencies_from_schema_rows(rows):
+    parents = {row[1].get('name'): row[3][0] for row in rows if row[3]}
+    children = {row[2].get('name'): row[4][0] for row in rows if row[4]}
+    return parents, children
 
+
+def parse_dependency(hierarchies: Dict[str, Type[Hierarchy]], dependency: Relationship) -> Union[Multiple, Type[Hierarchy]]:
+    hierarchy = hierarchies[dependency.start_node['name']]
+    mn, mx = dependency.get('minnumber', None), dependency.get('minnumber', None)
+    if dependency['one2one']:
+        dep = One2One(hierarchy, idname=dependency['name'])
+    elif dependency['optional']:
+        dep = Optional(hierarchy, idname=dependency['name'])
+    elif mn is not None or mx is not None:
+        dep = Multiple(hierarchy, mn, mx, idname=dependency['name'])
+    else:
+        dep = hierarchy
+    return dep
+
+
+class SchemaNode:
+    pass
+
+
+def read_schema(graph) -> Set[Type[Hierarchy]]:
+    bases_and_attrs = {r[0]: (r[1], r[2]) for r in get_all_schema_nodes(graph)}
+    relation_tables = [(name, get_dependencies_from_schema_rows(get_all_schema_rows(graph, name))) for name, (bases, attrs) in bases_and_attrs.items()]
+    relation_tables = deque(sorted(relation_tables, key=lambda x: len(x[1][0]) + len(x[1][1])))
+    done = {'Hierarchy': Hierarchy, 'SchemaNode': SchemaNode}
+    nmisses = 0
+    while relation_tables:
+        if nmisses == len(relation_tables):
+            raise AttemptedSchemaViolation(f"Dependency resolution impossible, read schema elements may have cyclic dependencies:"
+                                           f"{[i[0] for i in relation_tables]}")
+        name, (parents, children) = relation_tables.popleft()
+        if not all(parent in done for parent in parents) or not all(child in done for child in children):
+            logging.info(f"{name} put at the back because it requires dependencies which have not been written yet")
+            relation_tables.append((name, (parents, children)))  # do it after the dependencies are done
+            nmisses += 1
+            continue
+        base_names, attrs = bases_and_attrs[name]
+        bases = [done.get(base) for base in base_names]
+        parents = [parse_dependency(done, parent) for parent in parents.values()]
+        children = [parse_dependency(done, child) for child in children.values()]
+        attrs['parents'] = parents
+        attrs['children'] = children
+        done[name] = type(name, bases, attrs)
+    for k, v in done.items():
+        v.instantate_nodes()
+    return set(done.values())
+
+
+# TODO: put templates in and also label class dependency tree in neo4j

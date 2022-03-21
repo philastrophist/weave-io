@@ -29,8 +29,8 @@ class C(Hierarchy):
 class D(Hierarchy):
     idname = 'id'
     factors = ['d']
-    parents = [One2One(A)]
-    children = [Optional(C)]
+    parents = []
+    children = [One2One(A), Optional(C)]
 
 class E(C):
     idname = 'id'
@@ -54,7 +54,7 @@ def graph():
     if len(graph.execute('MATCH (n) return n').to_table()):
         raise ValueError(f"Cannot start doing tests on a non-empty database")
     yield graph
-    # graph.execute('MATCH (n) detach delete n')
+    graph.execute('MATCH (n) detach delete n')
 
 
 def test_push_dryrun_makes_no_changes(graph):
@@ -70,11 +70,10 @@ def test_push_one_to_empty(graph):
 def test_same_node_no_change(graph):
     """Pushing the same hierarchy makes no changes"""
     write_schema(graph, entire_hierarchy)
-    subgraph1 = graph.execute('MATCH (n)--(m) return n').to_subgraph()  # type: Subgraph
+    subgraph1 = graph.execute('MATCH (n)-[r]-(m) return *').to_subgraph()  # type: Subgraph
     write_schema(graph, entire_hierarchy)
-    subgraph2 = graph.execute('MATCH (n)--(m) return n').to_subgraph()  # type: Subgraph
+    subgraph2 = graph.execute('MATCH (n)-[r]-(m) return *').to_subgraph()  # type: Subgraph
     assert subgraph1 == subgraph2
-
 
 
 def test_changing_idname_is_not_allowed(graph):
@@ -128,14 +127,6 @@ def test_adding_multiple_children_with_min0__is_allowed(graph):
     pass
 
 
-def test_pushing_multiple_relationships_makes_2_neo4j_rels(graph):
-    pass
-
-
-def test_pushing_one2one_relationship_makes_2_neo4j_rels(graph):
-    pass
-
-
 def test_push_entire_hierarchy(graph):
     write_schema(graph, entire_hierarchy)
 
@@ -146,7 +137,11 @@ def test_pull_hierarchy_matches_creator(graph):
     assert read_hierarchy == entire_hierarchy  # including template ones
 
 
-def test_template_hierarchies_are_not_written():
+def test_template_hierarchies_are_not_written(graph):
     write_schema(graph, entire_hierarchy)
-    nodes = graph.execute('match (n: F:E:C:Hierarchy:SchemaNode) where size(labels(n)) == 5 return n').to_table()
+    nodes = graph.execute('match (n: SchemaNode {name: "F"}) return n').to_table()
     assert len(nodes) == 0
+
+
+def test_template_hierarchies_are_recomposed_at_read_from_other_hierarchies(graph):
+    pass
