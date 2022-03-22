@@ -1,6 +1,7 @@
 import logging
 from collections import deque
-from typing import Type, List, Union, Tuple, Dict, Set
+from functools import reduce
+from typing import Type, List, Union, Tuple, Dict, Set, Iterable
 
 import py2neo
 from py2neo import Relationship, Node, Subgraph
@@ -9,20 +10,20 @@ from py2neo.export import Table
 from tqdm import tqdm
 
 from weaveio.graph import Graph
-from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional
+from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional, GraphableMeta
 
 
 class AttemptedSchemaViolation(Exception):
     pass
 
 
-def get_all_class_bases(cls: Type[Graphable]) -> List[Type[Graphable]]:
+def get_all_class_bases(cls: Type[Graphable], exclude=Graphable) -> List[Type[Graphable]]:
     new = []
     for b in cls.__bases__:
-        if b is Graphable or not issubclass(b, Graphable):
+        if b is exclude or not issubclass(b, exclude):
             continue
         new.append(b)
-        new += get_all_class_bases(b)
+        new += get_all_class_bases(b, exclude=exclude)
     return new
 
 
@@ -46,10 +47,11 @@ def push_py2neo_schema_subgraph_cypher(subgraph: Subgraph) -> Tuple[str, Dict]:
     cypher = []
     params = {}
     for i, node in enumerate(subgraph.nodes):
-        cypher.append(f"MERGE (n{i}{node.labels}) WITH * WHERE size(labels(n{i})) = {len(node.labels)}")
+        cypher.append(f"MERGE (n{i}{node.labels} {{name: '{node['name']}'}})")
         for k, v in node.items():
-            params[f'n{i}{k}'] = v
-            cypher.append(f"SET n{i}.{k} = $n{i}{k}")
+            if k != 'name':
+                params[f'n{i}{k}'] = v
+                cypher.append(f"SET n{i}.{k} = $n{i}{k}")
     for i, rel in enumerate(subgraph.relationships):
         a = list(subgraph.nodes).index(rel.start_node)
         b = list(subgraph.nodes).index(rel.end_node)
@@ -80,8 +82,62 @@ def get_all_schema_rows(graph, hierarchy_name) -> Table:
     """
     return graph.execute(cypher).to_table()
 
-def get_type_hierarchy_subgraph(graph, hierarchy):
-    get_all_class_bases()
+def hierarchy_dependency_tree(hierarchies, done=None):
+    done = [] if done is None else done
+    hierarchies = deque(sorted(list(hierarchies),
+                               key=lambda x: len(x.children) + len(x.parents) + len(x.products)))
+    nmisses = 0
+    while hierarchies:
+        if nmisses == len(hierarchies):
+            raise AttemptedSchemaViolation(f"Dependency resolution impossible, proposed schema elements may have cyclic dependencies:"
+                                           f"{list(hierarchies)}")
+        hier = hierarchies.popleft()  # type: Type[Hierarchy]
+        hier.instantate_nodes()
+        if hier.is_template:
+            continue  # don't need to add templates, they just provide labels
+        dependencies = [d.node if isinstance(d, Multiple) else d for d in hier.parents + hier.children]
+        dependencies = filter(lambda d: d != hier, dependencies)  # allow self-references
+        if not all(d in done for d in dependencies):
+            logging.info(f"{hier} put at the back because it requires dependencies which have not been written yet")
+            hierarchies.append(hier)  # do it after the dependencies are done
+            nmisses += 1
+            continue
+        yield hier
+        nmisses = 0  # reset counter
+        done.append(hier)
+
+
+def hierarchy_type_tree(hierarchies: Iterable[Type[Hierarchy]], done: List[Type[Hierarchy]] = None):
+    done = [] if done is None else done
+    nmisses = 0
+    hierarchies = deque(hierarchies)
+    while hierarchies:
+        if nmisses == len(hierarchies):
+            raise AttemptedSchemaViolation(f"Type resolution impossible, proposed schema elements may have cyclic type dependencies:"
+                                           f"{list(hierarchies)}")
+        hier = hierarchies.popleft()  # type: Type[Hierarchy]
+        dependencies = get_all_class_bases(hier, exclude=Hierarchy)
+        if not all(d in done for d in dependencies):
+            logging.info(f"{hier} put at the back because it requires dependencies which have not been written yet")
+            hierarchies.append(hier)  # do it after the dependencies are done
+            nmisses += 1
+            continue
+        yield hier
+        nmisses = 0  # reset counter
+        done.append(hier)
+
+
+def make_type_hierarchy_subgraph(hierarchies: Iterable[Type[Hierarchy]]) -> Subgraph:
+    subgraphs = []
+    for hier in hierarchy_type_tree(hierarchies):
+        labels = get_labels_of_schema_hierarchy(hier)
+        node = Node(*labels, name=hier.__name__)
+        bases = [Node(*get_labels_of_schema_hierarchy(b), name=b.__name__) for b in hier.__bases__ if b is not Hierarchy]
+        rels = [Relationship(node, 'IS_TYPE_OF', b, order=i) for i, b in enumerate(bases)]
+        subgraphs.append(Subgraph(bases + [node], rels))
+    return reduce(lambda a, b: a | b, subgraphs)
+
+
 
 def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
     """
@@ -217,31 +273,11 @@ def write_schema(graph, hierarchies, dryrun=False, return_subgraph=False):
     this should always be done before writing data
     """
     # sort available hierarchies meaning non-dependents first
-    hierarchies = deque(sorted(list(hierarchies),
-                               key=lambda x: len(x.children) + len(x.parents) + len(x.products)))
-    done = []
     executions = []
-    nmisses = 0
-    while hierarchies:
-        if nmisses == len(hierarchies):
-            raise AttemptedSchemaViolation(f"Dependency resolution impossible, proposed schema elements may have cyclic dependencies:"
-                                           f"{list(hierarchies)}")
-        hier = hierarchies.popleft()  # type: Type[Hierarchy]
-        hier.instantate_nodes()
-        if hier.is_template:
-            continue  # don't need to add templates, they just provide labels
-        dependencies = [d.node if isinstance(d, Multiple) else d for d in hier.parents + hier.children]
-        dependencies = filter(lambda d: d != hier, dependencies)  # allow self-references
-        if not all(d in done for d in dependencies):
-            logging.info(f"{hier} put at the back because it requires dependencies which have not been written yet")
-            hierarchies.append(hier)  # do it after the dependencies are done
-            nmisses += 1
-            continue
+    for hier in hierarchy_dependency_tree(hierarchies):
         subgraph = diff_hierarchy_schema_node(graph, hier)
         executions.append(push_py2neo_schema_subgraph_cypher(subgraph))
-        # executions.append(push_py2neo_schema_subgraph_cypher(get_type_hierarchy_subgraph(graph, hier))
-        nmisses = 0  # reset counter
-        done.append(hier)
+    executions.append(push_py2neo_schema_subgraph_cypher(make_type_hierarchy_subgraph(hierarchies)))
     if not dryrun:
         for cypher, params in tqdm(executions, desc='schema updates'):
             graph.execute(cypher, **params)
@@ -268,8 +304,8 @@ def parse_dependency(hierarchies: Dict[str, Type[Hierarchy]], dependency: Relati
     return dep
 
 
-class SchemaNode:
-    pass
+class SchemaNode(Hierarchy):
+    idname='name'
 
 
 def read_schema(graph) -> Set[Type[Hierarchy]]:
@@ -289,7 +325,7 @@ def read_schema(graph) -> Set[Type[Hierarchy]]:
             nmisses += 1
             continue
         base_names, attrs = bases_and_attrs[name]
-        bases = [done.get(base) for base in base_names]
+        bases = tuple([done.get(base) for base in base_names])
         parents = [parse_dependency(done, parent) for parent in parents.values()]
         children = [parse_dependency(done, child) for child in children.values()]
         attrs['parents'] = parents

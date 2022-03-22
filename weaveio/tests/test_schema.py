@@ -44,10 +44,8 @@ class F(E):
 class G(F):
     pass
 
-
 class H(Hierarchy):
     idname = 'id'
-
 
 class I(Hierarchy):
     idname = 'id'
@@ -147,14 +145,16 @@ def test_pull_hierarchy_matches_creator(graph):
     assert read_hierarchy == entire_hierarchy  # including template ones
 
 
-def test_template_hierarchies_are_not_written(graph):
+def test_template_hierarchies_dont_have_deps_written(graph):
     write_schema(graph, entire_hierarchy)
-    nodes = graph.execute('match (n: SchemaNode {name: "F"}) return n').to_table()
-    assert len(nodes) == 0
+    nodes = graph.execute('match (n: SchemaNode {name: "F"}) '
+                          'optional match (n)-[r]-(m) where not r:IS_TYPE_OF '
+                          'return n, count(r)').to_table()
+    assert len(nodes) == 1
+    assert nodes[0][1] == 0
 
 
 def test_template_hierarchies_are_recomposed_at_read_from_other_hierarchies(graph):
     pass
 
 
-# TODO: make sure relation idnames are the same
