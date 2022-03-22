@@ -198,17 +198,6 @@ class ProgTemp(Hierarchy):
                    instrumentconfiguration=config)
 
 
-class OBSpec(Hierarchy):
-    """
-    When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
-    the information about when and how to observe.
-    When actually observing them, an "OB" is create with its own unique obid.
-    """
-    factors = ['obtitle']
-    parents = [ObsTemp, ProgTemp, Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
-    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
-
-
 class FibreTarget(Hierarchy):
     """
     A fibretarget is the combination of fibre and surveytarget which is created after submission when
@@ -217,9 +206,19 @@ class FibreTarget(Hierarchy):
     """
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [OBSpec, Fibre, SurveyTarget]
-    identifier_builder = ['obspec', 'fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-    belongs_to = ['obspec', 'surveytarget']
+    parents = [Fibre, SurveyTarget]
+    identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
+
+
+class OBSpec(Hierarchy):
+    """
+    When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
+    the information about when and how to observe.
+    When actually observing them, an "OB" is create with its own unique obid.
+    """
+    factors = ['obtitle']
+    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
+    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
 class OB(Hierarchy):
@@ -451,30 +450,5 @@ class Redrock(Fit):
     children = Multiple.from_names(Measurement, 'best_redshift')
 
 
-class RedshiftChi2Grid(Hierarchy):
-    factors = ['template', 'redshifts', 'chi2']
-    parents = [Redrock]
-    identifier_builder = ['redrock', 'template']
-
-
-class RVSpecfit(Fit):
-    plural_name = 'rvspecfits'
-    factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
-    children = Multiple.from_names(Measurement, 'vrad', 'logg', 'teff', 'feh', 'alpha')
-
-
-class Ferre(Fit):
-    plural_name = 'ferres'
-    factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
-    children = Multiple.from_names(Measurement, 'micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
-
-
-class Gandalf(Fit):
-    plural_name = 'gandalfs'
-    children = [Multiple(Line), Multiple(SpectralIndex)]
-    factors = Fit.factors + ['fwhm_flag']
-
-
-class PPXF(Fit):
-    plural_name = 'ppxfs'
-    children = Multiple.from_names(MCMCMeasurement, 'v', 'sigma', 'h3', 'h4', 'h5', 'h6')
+import sys, inspect
+hierarchies = list(filter(lambda x: issubclass(x, Hierarchy), [obj for name, obj in inspect.getmembers(sys.modules[__name__]) if inspect.isclass(obj)]))

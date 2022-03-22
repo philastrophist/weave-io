@@ -96,7 +96,7 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
             (additional parents and children can only be specified if they are optional)
 
     In the schema:
-        (a)-[:is_parent_of]->(b) indicates that (b) requires a parent (a) at instantiation time
+        (a)<-[:has_parent]-(b) indicates that (b) requires a parent (a) at instantiation time
         (a)-[:has_child]->(b) indicates that (a) requires a child (b) at instantiation time
     """
     # structure is [{labels}, is_optional, (minn, maxn), rel_idname, is_one2one, class_name]
@@ -118,13 +118,13 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
                           plural_name=hierarchy.plural_name)
         for struct in actual_parents:
             props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
-                         idname=struct[3], one2one=struct[4], name=struct[5])
-            parent = Node(*struct[0])  # extant parent, specify labels so it matches not creates
+                         idname=struct[3], one2one=struct[4])
+            parent = Node(*struct[0], name=struct[5])  # extant parent, specify labels so it matches not creates
             parents.append([parent, props])
         for struct in actual_children:
             props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
-                         idname=struct[3], one2one=struct[4], name=struct[5])
-            child = Node(*struct[0])  # extant child, specify labels so it matches not creates
+                         idname=struct[3], one2one=struct[4])
+            child = Node(*struct[0], name=struct[5])  # extant child, specify labels so it matches not creates
             children.append([child, props])
     else:
         found_node = results[0][0]
@@ -135,12 +135,12 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
         found_factors = set(found_node.get('factors', []))
         found_parents = {(frozenset(r[1].labels), bool(rel['optional']),
                           (int_or_none(rel['minnumber']), int_or_none(rel['maxnumber'])),
-                          rel['idname'], bool(rel['one2one']), rel['name']) for r in results if r[1] is not None for rel in r[3]}
+                          rel['idname'], bool(rel['one2one']), r[1]['name']) for r in results if r[1] is not None for rel in r[3]}
         found_children = {(frozenset(r[2].labels), bool(rel['optional']),
                            (int_or_none(rel['minnumber']), int_or_none(rel['maxnumber'])),
-                           rel['idname'], bool(rel['one2one']), rel['name']) for r in results if r[2] is not None for rel in r[4]}
+                           rel['idname'], bool(rel['one2one']), r[2]['name']) for r in results if r[2] is not None for rel in r[4]}
 
-        # see if hierarchy is different in anyway
+        # see if hierarchy is different in any way
         different_idname = found_node.get('idname') != hierarchy.idname
         different_singular_name = found_node.get('singular_name') != hierarchy.singular_name
         different_plural_name = found_node.get('plural_name') != hierarchy.plural_name
@@ -186,41 +186,28 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
             found_node['factors'] = hierarchy.factors  # update
             nodes.append(found_node)
         if found_children.symmetric_difference(actual_children):
-            children = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn,
-                                             idname=idname, one2one=one2one, name=name))
+            children = [(Node(*labels, name=name), dict(optional=optional, minnumber=minn, maxnumber=maxn,
+                                             idname=idname, one2one=one2one))
                         for labels, optional, (minn, maxn), idname, one2one, name in actual_children]
             nodes += children
         else:
             children = []
         if found_parents.symmetric_difference(actual_parents):
-            parents = [(Node(*labels), dict(optional=optional, minnumber=minn, maxnumber=maxn,
-                                            idname=idname, one2one=one2one, name=name))
+            parents = [(Node(*labels, name=name), dict(optional=optional, minnumber=minn, maxnumber=maxn,
+                                            idname=idname, one2one=one2one))
                        for labels, optional, (minn, maxn), idname, one2one, name in actual_parents]
             nodes += parents
         else:
             parents = []
-    # repeat the relationship if it is multiple
-    # reflect the relationship if it is One2One
-    # else just add one relationship
     rels = []
     for c, props in children:
             rels.append(Relationship(found_node, 'HAS_CHILD', c, **props, originated=found_node.get('name')))
-            if props['one2one']:
+            if props['one2one']: # reflect the relationship if it is One2One
                 rels.append(Relationship(c, 'HAS_CHILD', found_node, **props, originated=found_node.get('name')))
-            # elif props['maxnumber'] is None:
-            #     rels.append(Relationship(found_node, 'HAS_CHILD', c, **props, duplicated=True))
-            # elif props['maxnumber'] > 1:
-            #     rels.append(Relationship(found_node, 'HAS_CHILD', c, **props, duplicated=True))
-
     for p, props in parents:
             rels.append(Relationship(p, 'IS_PARENT_OF', found_node, **props, originated=found_node.get('name')))
-            if props['one2one']:
+            if props['one2one']: # reflect the relationship if it is One2One
                 rels.append(Relationship(found_node, 'IS_PARENT_OF', p, **props, originated=found_node.get('name')))
-            # elif props['maxnumber'] is None:
-            #     rels.append(Relationship(p, 'IS_PARENT_OF', found_node, **props, duplicated=True))
-            # elif props['maxnumber'] > 1:
-            #     rels.append(Relationship(p, 'IS_PARENT_OF', found_node, **props, duplicated=True))
-
     return Subgraph([i[0] for i in parents + children] + [found_node], rels)
 
 

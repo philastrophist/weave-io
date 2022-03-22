@@ -44,7 +44,17 @@ class F(E):
 class G(F):
     pass
 
-entire_hierarchy = [A, B, C, D, E, F, G]
+
+class H(Hierarchy):
+    idname = 'id'
+
+
+class I(Hierarchy):
+    idname = 'id'
+    parents = [G]
+    children = [H]
+
+entire_hierarchy = [A, B, C, D, E, F, G, H, I]
 
 
 @pytest.fixture(scope='function')
@@ -123,7 +133,7 @@ def test_adding_multiple_parents_with_min0_is_allowed(graph):
     pass
 
 
-def test_adding_multiple_children_with_min0__is_allowed(graph):
+def test_adding_multiple_children_with_min0_is_allowed(graph):
     pass
 
 
@@ -145,3 +155,6 @@ def test_template_hierarchies_are_not_written(graph):
 
 def test_template_hierarchies_are_recomposed_at_read_from_other_hierarchies(graph):
     pass
+
+
+# TODO: make sure relation idnames are the same
