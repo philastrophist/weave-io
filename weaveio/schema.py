@@ -3,14 +3,13 @@ from collections import deque
 from functools import reduce
 from typing import Type, List, Union, Tuple, Dict, Set, Iterable
 
-import py2neo
 from py2neo import Relationship, Node, Subgraph
-from py2neo.cypher import Cursor
 from py2neo.export import Table
 from tqdm import tqdm
 
+from utilities import int_or_none
 from weaveio.graph import Graph
-from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional, GraphableMeta
+from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional
 
 
 class AttemptedSchemaViolation(Exception):
@@ -63,18 +62,14 @@ def push_py2neo_schema_subgraph_cypher(subgraph: Subgraph) -> Tuple[str, Dict]:
         cypher.append(f"MERGE (n{a})-[r{i}:{list(rel.types())[0]} {{{rel_params}}}]->(n{b})")
     return "\n".join(cypher), params
 
-def int_or_none(x):
-    if x is None:
-        return None
-    return int(x)
 
 def get_all_schema_nodes(graph):
-    return graph.execute("MATCH (n:SchemaNode) return n.name, labels(n), properties(n)").to_table()
+    return graph.execute("MATCH (n:SchemaNode) OPTIONAL MATCH (n)-[:IS_TYPE_OF]->(m) with n, collect(m.name) as bases return n.name, bases, properties(n)").to_table()
 
 def get_all_schema_rows(graph, hierarchy_name) -> Table:
     cypher = f"""
     MATCH (n:{hierarchy_name}:SchemaNode {{name: '{hierarchy_name}'}})
-    OPTIONAL MATCH (n)-[child_rel:HAS_CHILD]->(child:SchemaNode) WHERE child_rel.originated = n.name
+    OPTIONAL MATCH (child:SchemaNode)<-[child_rel:HAS_CHILD]-(n) WHERE child_rel.originated = n.name
     with n, child, collect(child_rel) as child_rels
     OPTIONAL MATCH (parent:SchemaNode)-[parent_rel:IS_PARENT_OF]->(n) WHERE parent_rel.originated = n.name
     with n, child, child_rels, parent, collect(parent_rel) as parent_rels
@@ -291,16 +286,22 @@ def get_dependencies_from_schema_rows(rows):
 
 
 def parse_dependency(hierarchies: Dict[str, Type[Hierarchy]], dependency: Relationship) -> Union[Multiple, Type[Hierarchy]]:
-    hierarchy = hierarchies[dependency.start_node['name']]
-    mn, mx = dependency.get('minnumber', None), dependency.get('minnumber', None)
+    try:
+        hierarchy = hierarchies[dependency.start_node['name']]
+    except KeyError:
+        try:
+            hierarchy = hierarchies[dependency.end_node['name']]
+        except KeyError:
+            hierarchy = dependency.start_node['name']  # itself then
+    mn, mx = dependency['minnumber'], dependency['maxnumber']
     if dependency['one2one']:
         dep = One2One(hierarchy, idname=dependency['name'])
-    elif dependency['optional']:
+    elif mn == 0 or mn is None:
         dep = Optional(hierarchy, idname=dependency['name'])
-    elif mn is not None or mx is not None:
-        dep = Multiple(hierarchy, mn, mx, idname=dependency['name'])
-    else:
+    elif mn == 1 and mx == 1 and dependency.get('name') is None:
         dep = hierarchy
+    else:
+        dep = Multiple(hierarchy, mn, mx, idname=dependency['name'])
     return dep
 
 
@@ -315,25 +316,37 @@ def read_schema(graph) -> Set[Type[Hierarchy]]:
     done = {'Hierarchy': Hierarchy, 'SchemaNode': SchemaNode}
     nmisses = 0
     while relation_tables:
-        if nmisses == len(relation_tables):
+        if nmisses > len(relation_tables): # a whole pass has been made without a success
             raise AttemptedSchemaViolation(f"Dependency resolution impossible, read schema elements may have cyclic dependencies:"
                                            f"{[i[0] for i in relation_tables]}")
         name, (parents, children) = relation_tables.popleft()
-        if not all(parent in done for parent in parents) or not all(child in done for child in children):
+        base_names, attrs = bases_and_attrs[name]
+        if not all(p in done for p in parents if p != name) or not all(c in done for c in children if c != name):
             logging.info(f"{name} put at the back because it requires dependencies which have not been written yet")
             relation_tables.append((name, (parents, children)))  # do it after the dependencies are done
             nmisses += 1
             continue
-        base_names, attrs = bases_and_attrs[name]
-        bases = tuple([done.get(base) for base in base_names])
+        try:
+            bases = tuple([done[base] for base in base_names])
+            if len(bases) == 0:
+                bases = (Hierarchy,)
+        except KeyError:
+            nmisses += 1
+            relation_tables.append((name, (parents, children)))  # do it after the dependencies are done
+            continue
         parents = [parse_dependency(done, parent) for parent in parents.values()]
         children = [parse_dependency(done, child) for child in children.values()]
         attrs['parents'] = parents
         attrs['children'] = children
+        if 'idname' not in attrs:
+            attrs['is_template'] = True
+            del attrs['parents']
+            del attrs['children']
         done[name] = type(name, bases, attrs)
+        nmisses = 0
     for k, v in done.items():
         v.instantate_nodes()
-    return set(done.values())
+    return set(done.values()) - {SchemaNode, Hierarchy}
 
 
 # TODO: put templates in and also label class dependency tree in neo4j

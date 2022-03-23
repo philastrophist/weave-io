@@ -7,7 +7,7 @@ from warnings import warn
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
-from .utilities import Varname, make_plural
+from .utilities import Varname, make_plural, int_or_none
 
 
 def _convert_types_to_node(x):
@@ -62,8 +62,8 @@ def all_subclasses(cls):
 class Multiple:
     def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None):
         self.node = node
-        self.minnumber = minnumber
-        self.maxnumber = maxnumber
+        self.minnumber = int_or_none(minnumber)
+        self.maxnumber = int_or_none(maxnumber)
         self.constrain = [] if constrain is None else constrain
         self.relation_idname = idname
         if inspect.isclass(self.node):
@@ -89,13 +89,21 @@ class Multiple:
             self.parents = []
 
     def __repr__(self):
-        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
+        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}] id={self.relation_idname})>"
+
+    def __hash__(self):
+        return hash(self.__class__) ^ hash(self.minnumber) ^ hash(self.maxnumber) ^\
+        hash(''.join(self.constrain)) ^ hash(self.relation_idname)
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
 
     @classmethod
     def from_names(cls, hierarchy: Type['Hierarchy'], *singles: str, **multiples: Union[int, Tuple[_Optional[int], _Optional[int]]]) -> List['Multiple']:
         single_list = [One2One(hierarchy, idname=name) for name in singles]
         multiple_list = [Multiple(hierarchy, i, i) if isinstance(i, int) else Multiple(cls, *i) for k, i in multiples.items()]
         return single_list + multiple_list
+
 
 class One2One(Multiple):
     def __init__(self, node, constrain=None, idname=None):

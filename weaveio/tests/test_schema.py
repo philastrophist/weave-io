@@ -5,7 +5,7 @@ from py2neo import Subgraph
 
 from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy, Multiple, Optional, One2One
-from weaveio.schema import diff_hierarchy_schema_node, write_schema, AttemptedSchemaViolation, read_schema
+from weaveio.schema import diff_hierarchy_schema_node, write_schema, AttemptedSchemaViolation, read_schema, SchemaNode
 
 
 class A(Hierarchy):
@@ -54,6 +54,29 @@ class I(Hierarchy):
 
 entire_hierarchy = [A, B, C, D, E, F, G, H, I]
 
+def decompose_parents_children_into_names(x):
+    if isinstance(x, str):
+        return x
+    if isinstance(x, type):
+        return x.__name__
+    if isinstance(x, Multiple):
+        if isinstance(x, Optional):
+            return Multiple(x.node.__name__, 0, 1, x.constrain, x.relation_idname)
+        if x.minnumber == 1 and x.maxnumber == 1 and len(x.constrain) == 0 and x.relation_idname is None:
+            return x.node.__name__
+        return x.__class__(x.node.__name__, x.minnumber, x.maxnumber, x.constrain, x.idname)
+
+def assert_class_equality(a, b):
+    for attr in ['__name__', 'idname', 'idname']:
+        assert getattr(a, attr) == getattr(b, attr), f'{attr} not matched for {a} and {b}'
+    for attr in ['parents', 'children', '__bases__']:  # order doesn't matter
+        assert set(map(decompose_parents_children_into_names, getattr(a, attr))) == \
+               set(map(decompose_parents_children_into_names, getattr(b, attr))), \
+            f'{attr} not matched for {a} and {b}'
+    for attr in ['factors']:  # order doesn't matter
+        assert set(getattr(a, attr)) == set(getattr(b, attr)), f'{attr} not matched for {a} and {b}'
+
+
 
 @pytest.fixture(scope='function')
 def graph():
@@ -96,43 +119,43 @@ def test_changing_idname_is_not_allowed(graph):
 
 
 def test_changing_singular_name_is_not_allowed(graph):
-    pass
+    assert False
 
 
 def test_changing_plural_name_is_not_allowed(graph):
-    pass
+    assert False
 
 
 def test_shortening_factors_is_not_allowed(graph):
-    pass
+    assert False
 
 
 def test_lengthening_factors_is_allowed(graph):
-    pass
+    assert False
 
 
 def test_removing_parents_is_not_allowed(graph):
-    pass
+    assert False
 
 
 def test_removing_children_is_not_allowed(graph):
-    pass
+    assert False
 
 
 def test_adding_optional_parents_is_allowed(graph):
-    pass
+    assert False
 
 
 def test_adding_optional_children_is_allowed(graph):
-    pass
+    assert False
 
 
 def test_adding_multiple_parents_with_min0_is_allowed(graph):
-    pass
+    assert False
 
 
 def test_adding_multiple_children_with_min0_is_allowed(graph):
-    pass
+    assert False
 
 
 def test_push_entire_hierarchy(graph):
@@ -141,8 +164,11 @@ def test_push_entire_hierarchy(graph):
 
 def test_pull_hierarchy_matches_creator(graph):
     write_schema(graph, entire_hierarchy)
-    read_hierarchy = read_schema(graph)
-    assert read_hierarchy == entire_hierarchy  # including template ones
+    read_hierarchy = {v.__name__: v for v in read_schema(graph)}
+    original = {v.__name__: v for v in entire_hierarchy}
+    assert set(read_hierarchy.keys()) == set(original.keys())
+    for k in original.keys():
+        assert_class_equality(read_hierarchy[k], original[k])
 
 
 def test_template_hierarchies_dont_have_deps_written(graph):
@@ -155,6 +181,6 @@ def test_template_hierarchies_dont_have_deps_written(graph):
 
 
 def test_template_hierarchies_are_recomposed_at_read_from_other_hierarchies(graph):
-    pass
+    assert False
 
 
