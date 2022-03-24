@@ -166,7 +166,8 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
                           factors=hierarchy.factors, idname=hierarchy.idname,
                           name=hierarchy.__name__,
                           singular_name=hierarchy.singular_name,
-                          plural_name=hierarchy.plural_name)
+                          plural_name=hierarchy.plural_name,
+                          identifier_builder=hierarchy.identifier_builder)
         for struct in actual_parents:
             props = dict(optional=struct[1], minnumber=struct[2][0], maxnumber=struct[2][1],
                          idname=struct[3], one2one=struct[4])
@@ -193,6 +194,7 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
 
         # see if hierarchy is different in any way
         different_idname = found_node.get('idname') != hierarchy.idname
+        different_identifier_builder = found_node.get('identifier_builder') != hierarchy.identifier_builder
         different_singular_name = found_node.get('singular_name') != hierarchy.singular_name
         different_plural_name = found_node.get('plural_name') != hierarchy.plural_name
         missing_factors = found_factors - set(hierarchy.factors)
@@ -213,6 +215,8 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
                   f'The differences are listed below:\n'
             if different_idname:
                 msg += f'- proposed idname {hierarchy.idname} is different from the original {found_node.get("idname")}\n'
+            if different_identifier_builder:
+                msg += f'- proposed identifier_builder {hierarchy.identifier_builder} is different from the original {found_node.get("identifier_builder")}\n'
             if different_singular_name:
                 msg += f'- proposed singular_name {hierarchy.singular_name} is different from the original {found_node.get("singular_name")}\n'
             if different_plural_name:

@@ -1,5 +1,6 @@
 import os
 from copy import deepcopy
+from time import sleep
 from typing import Type
 
 import pytest
@@ -47,10 +48,11 @@ class G(F):
     pass
 
 class H(Hierarchy):
-    idname = 'id'
+    factors = ['hh']
+    indexes = ['hh']
 
 class I(Hierarchy):
-    idname = 'id'
+    identifier_builder = ['g', 'i']
     factors = ['i', 'ii']
     parents = [G]
     children = [H]
@@ -69,6 +71,7 @@ def decompose_parents_children_into_names(x):
             return x.node.__name__
         return x.__class__(x.node.__name__, x.minnumber, x.maxnumber, x.constrain, x.idname)
 
+
 def assert_class_equality(a, b):
     for attr in ['__name__', 'idname', 'idname']:
         assert getattr(a, attr) == getattr(b, attr), f'{attr} not matched for {a} and {b}'
@@ -78,6 +81,7 @@ def assert_class_equality(a, b):
             f'{attr} not matched for {a} and {b}'
     for attr in ['factors']:  # order doesn't matter
         assert set(getattr(a, attr)) == set(getattr(b, attr)), f'{attr} not matched for {a} and {b}'
+
 
 def copy_class(X, replace_base=None) -> Type[Hierarchy]:
     """
@@ -110,11 +114,10 @@ def replace_class_in_type_hierarchy(hierarchies, replace):
     return hier_list
 
 
-
 @pytest.fixture(scope='function')
 def graph():
     graph = Graph(name='playground', host='127.0.0.1', port=7687,
-                 user=os.environ['WEAVEIO_USER'], password=os.environ['WEAVEIO_PASS'], write=True)
+                  user=os.environ['WEAVEIO_USER'], password=os.environ['WEAVEIO_PASS'], write=True)
     if len(graph.execute('MATCH (n) return n').to_table()):
         raise ValueError(f"Cannot start doing tests on a non-empty database")
     yield graph
@@ -122,7 +125,7 @@ def graph():
 
 
 def test_push_dryrun_makes_no_changes(graph):
-    write_schema(graph, [A], dryrun=True)
+    write_schema(graph, entire_hierarchy, dryrun=True)
     assert len(graph.execute('MATCH (n) return n').to_table()) == 0
 
 
@@ -141,18 +144,23 @@ def test_same_node_no_change(graph):
 
 
 @pytest.mark.parametrize('attr', ['idname', 'singular_name', 'plural_name'])
-def test_changing_string_attributes_is_not_allowed(graph, attr):
+@pytest.mark.parametrize('node', entire_hierarchy)
+def test_changing_string_attributes_is_not_allowed(graph, attr, node):
     write_schema(graph, entire_hierarchy)
-    newA = copy_class(A)
-    setattr(newA, attr, 'changed')
+    new_node = copy_class(node)
+    setattr(new_node, attr, 'changed')
     with pytest.raises(AttemptedSchemaViolation, match=f'proposed {attr} .+ is different from the original'):
-        write_schema(graph, [newA] + entire_hierarchy[1:])
+        write_schema(graph, replace_class_in_type_hierarchy(entire_hierarchy, new_node))
 
 
-@pytest.mark.parametrize('attr', ['factors', 'parents', 'children'])
+def test_changing_relidname_is_not_allowed(graph):
+    assert False
+
+
+@pytest.mark.parametrize('attr', ['factors', 'parents', 'children', 'identifier_builder', 'indexes'])
 @pytest.mark.parametrize('node', entire_hierarchy)
 def test_shortening_attributes_is_not_allowed(graph, attr, node):
-    if len(getattr(node, attr)) == 0:
+    if len(getattr(node, attr) or []) == 0:
         return
     write_schema(graph, entire_hierarchy)
     i = entire_hierarchy.index(node)
@@ -186,6 +194,31 @@ def test_adding_multiple_children_with_min0_is_allowed(graph):
     assert False
 
 
+def test_changing_bound_max_to_unbound_is_allowed(graph):
+    assert False
+
+
+def test_changing_bound_min_to_0_or_None_is_allowed(graph):
+    assert False
+
+
+def test_changing_one2one_to_another_is_not_allowed(graph):
+    assert False
+
+
+def test_changing_singular_or_multiple_to_one2one_is_not_allowed(graph):
+    assert False
+
+
+def test_changing_to_template_is_not_allowed(graph):
+    assert False
+
+
+def test_changing_from_template_is_not_allowed(graph):
+    assert False
+
+
+
 def test_push_entire_hierarchy(graph):
     write_schema(graph, entire_hierarchy)
 
@@ -211,4 +244,13 @@ def test_template_hierarchies_dont_have_deps_written(graph):
 def test_template_hierarchies_are_recomposed_at_read_from_other_hierarchies(graph):
     assert False
 
+
+def test_writing_the_read_graph_back(graph):
+    write_schema(graph, entire_hierarchy)
+    graph.execute('MATCH (n)-[r]-(m) return *').to_subgraph()  # type: Subgraph
+    read_hierarchy1 = {v.__name__: v for v in read_schema(graph)}
+    write_schema(graph, read_hierarchy1.values())
+    read_hierarchy2 = {v.__name__: v for v in read_schema(graph)}
+    for k, v in read_hierarchy2.items():
+        assert_class_equality(read_hierarchy1[k], v)
 
