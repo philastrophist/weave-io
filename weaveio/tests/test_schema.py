@@ -1,11 +1,13 @@
 import os
+from copy import deepcopy
+from typing import Type
 
 import pytest
 from py2neo import Subgraph
 
 from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy, Multiple, Optional, One2One
-from weaveio.schema import diff_hierarchy_schema_node, write_schema, AttemptedSchemaViolation, read_schema, SchemaNode
+from weaveio.schema import diff_hierarchy_schema_node, write_schema, AttemptedSchemaViolation, read_schema, SchemaNode, hierarchy_type_tree, hierarchy_dependency_tree
 
 
 class A(Hierarchy):
@@ -49,6 +51,7 @@ class H(Hierarchy):
 
 class I(Hierarchy):
     idname = 'id'
+    factors = ['i', 'ii']
     parents = [G]
     children = [H]
 
@@ -75,6 +78,36 @@ def assert_class_equality(a, b):
             f'{attr} not matched for {a} and {b}'
     for attr in ['factors']:  # order doesn't matter
         assert set(getattr(a, attr)) == set(getattr(b, attr)), f'{attr} not matched for {a} and {b}'
+
+def copy_class(X, replace_base=None) -> Type[Hierarchy]:
+    """
+    copies a class and changes it's bases to 'replace_base' if the names are the same.
+    This is done recursively
+    """
+    if not issubclass(X, Hierarchy):
+        return X
+    if replace_base is not None:
+        if X.__name__ == replace_base.__name__:
+            return replace_base
+    new_bases = tuple(copy_class(b, replace_base) for b in X.__bases__)
+    if new_bases == X.__bases__:
+        return X
+    return type(X.__name__, new_bases, deepcopy(dict(X.__dict__)))
+
+
+def replace_class_in_type_hierarchy(hierarchies, replace):
+    """
+    Replaces all mentions of a hierarchy with the same name as `replace` with `replace` itself
+    """
+    hier_list = [copy_class(hier, replace) for hier in hierarchy_type_tree(hierarchies)]
+    for list_type in ['parents', 'children']:
+        for hier in hierarchy_dependency_tree(hier_list):
+            for i, h in enumerate(getattr(hier, list_type)):
+                if isinstance(h, Multiple):
+                    h.node = copy_class(h.node, replace)
+                else:
+                    getattr(hier, list_type)[i] = copy_class(h, replace)
+    return hier_list
 
 
 
@@ -107,39 +140,34 @@ def test_same_node_no_change(graph):
     assert subgraph1 == subgraph2
 
 
-def test_changing_idname_is_not_allowed(graph):
-    write_schema(graph, entire_hierarchy[:1])
-    class A(Hierarchy):
-        idname = 'id_changed'
-        factors = ['a', 'aa']
-        parents = []
-        children = []
-    with pytest.raises(AttemptedSchemaViolation, match=f'proposed idname {A.idname} is different from the original'):
-        write_schema(graph, [A])
+@pytest.mark.parametrize('attr', ['idname', 'singular_name', 'plural_name'])
+def test_changing_string_attributes_is_not_allowed(graph, attr):
+    write_schema(graph, entire_hierarchy)
+    newA = copy_class(A)
+    setattr(newA, attr, 'changed')
+    with pytest.raises(AttemptedSchemaViolation, match=f'proposed {attr} .+ is different from the original'):
+        write_schema(graph, [newA] + entire_hierarchy[1:])
 
 
-def test_changing_singular_name_is_not_allowed(graph):
-    assert False
-
-
-def test_changing_plural_name_is_not_allowed(graph):
-    assert False
-
-
-def test_shortening_factors_is_not_allowed(graph):
-    assert False
+@pytest.mark.parametrize('attr', ['factors', 'parents', 'children'])
+@pytest.mark.parametrize('node', entire_hierarchy)
+def test_shortening_attributes_is_not_allowed(graph, attr, node):
+    if len(getattr(node, attr)) == 0:
+        return
+    write_schema(graph, entire_hierarchy)
+    i = entire_hierarchy.index(node)
+    new_node = copy_class(node)
+    setattr(new_node, attr, getattr(new_node, attr)[:-1])  # shorten it
+    with pytest.raises(AttemptedSchemaViolation, match=f'{attr}'):
+        write_schema(graph, replace_class_in_type_hierarchy(entire_hierarchy, new_node))
 
 
 def test_lengthening_factors_is_allowed(graph):
-    assert False
-
-
-def test_removing_parents_is_not_allowed(graph):
-    assert False
-
-
-def test_removing_children_is_not_allowed(graph):
-    assert False
+    write_schema(graph, entire_hierarchy)
+    newI = copy_class(I)
+    newI.factors += ['new']
+    write_schema(graph, entire_hierarchy[:-1] + [newI])
+    assert graph.execute('MATCH (n:I {name:"I"}) return n.factors').evaluate() == newI.factors
 
 
 def test_adding_optional_parents_is_allowed(graph):

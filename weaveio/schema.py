@@ -7,9 +7,9 @@ from py2neo import Relationship, Node, Subgraph
 from py2neo.export import Table
 from tqdm import tqdm
 
-from utilities import int_or_none
-from weaveio.graph import Graph
-from weaveio.hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional
+from .utilities import int_or_none
+from .graph import Graph
+from .hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional
 
 
 class AttemptedSchemaViolation(Exception):
@@ -84,7 +84,7 @@ def hierarchy_dependency_tree(hierarchies, done=None):
     nmisses = 0
     while hierarchies:
         if nmisses == len(hierarchies):
-            raise AttemptedSchemaViolation(f"Dependency resolution impossible, proposed schema elements may have cyclic dependencies:"
+            raise TypeError(f"Dependency resolution impossible, proposed schema elements may have cyclic dependencies:"
                                            f"{list(hierarchies)}")
         hier = hierarchies.popleft()  # type: Type[Hierarchy]
         hier.instantate_nodes()
@@ -108,7 +108,7 @@ def hierarchy_type_tree(hierarchies: Iterable[Type[Hierarchy]], done: List[Type[
     hierarchies = deque(hierarchies)
     while hierarchies:
         if nmisses == len(hierarchies):
-            raise AttemptedSchemaViolation(f"Type resolution impossible, proposed schema elements may have cyclic type dependencies:"
+            raise TypeError(f"Type resolution impossible, proposed schema elements may have cyclic type dependencies:"
                                            f"{list(hierarchies)}")
         hier = hierarchies.popleft()  # type: Type[Hierarchy]
         dependencies = get_all_class_bases(hier, exclude=Hierarchy)
@@ -195,12 +195,12 @@ def diff_hierarchy_schema_node(graph: Graph, hierarchy: Type[Hierarchy]):
         different_idname = found_node.get('idname') != hierarchy.idname
         different_singular_name = found_node.get('singular_name') != hierarchy.singular_name
         different_plural_name = found_node.get('plural_name') != hierarchy.plural_name
-        missing_factors = set(hierarchy.factors) - found_factors
+        missing_factors = found_factors - set(hierarchy.factors)
         different_labels = set(labels).symmetric_difference(found_node.labels)
 
         # parents are different?
-        missing_parents = set(actual_parents - found_parents)
-        new_parents = {p for p in found_parents - actual_parents if not p[1]}  # allowed if the new ones are optional
+        missing_parents = found_parents - actual_parents
+        new_parents = {p for p in actual_parents - found_parents if not p[1]}  # allowed if the new ones are optional
 
         # children are different?
         missing_children = found_children - actual_children  # missing from new definition
