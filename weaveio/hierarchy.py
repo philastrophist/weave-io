@@ -61,6 +61,8 @@ def all_subclasses(cls):
 
 class Multiple:
     def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None):
+        if minnumber == 1 and maxnumber == 1:
+            raise ValueError(f"Do not use Multiple with min=1, max=1")
         self.node = node
         self.minnumber = int_or_none(minnumber)
         self.maxnumber = int_or_none(maxnumber)

@@ -73,13 +73,15 @@ def decompose_parents_children_into_names(x):
 
 
 def assert_class_equality(a, b):
-    for attr in ['__name__', 'idname', 'idname']:
+    for attr in ['__name__', 'idname']:
         assert getattr(a, attr) == getattr(b, attr), f'{attr} not matched for {a} and {b}'
     for attr in ['parents', 'children', '__bases__']:  # order doesn't matter
         assert set(map(decompose_parents_children_into_names, getattr(a, attr))) == \
                set(map(decompose_parents_children_into_names, getattr(b, attr))), \
             f'{attr} not matched for {a} and {b}'
-    for attr in ['factors']:  # order doesn't matter
+    for attr in ['factors', 'identifier_builder', 'indexes']:  # order doesn't matter
+        if not (getattr(a, attr) is None and getattr(b, attr) is None):
+            assert False
         assert set(getattr(a, attr)) == set(getattr(b, attr)), f'{attr} not matched for {a} and {b}'
 
 
@@ -163,7 +165,6 @@ def test_shortening_attributes_is_not_allowed(graph, attr, node):
     if len(getattr(node, attr) or []) == 0:
         return
     write_schema(graph, entire_hierarchy)
-    i = entire_hierarchy.index(node)
     new_node = copy_class(node)
     setattr(new_node, attr, getattr(new_node, attr)[:-1])  # shorten it
     with pytest.raises(AttemptedSchemaViolation, match=f'{attr}'):
@@ -178,23 +179,40 @@ def test_lengthening_factors_is_allowed(graph):
     assert graph.execute('MATCH (n:I {name:"I"}) return n.factors').evaluate() == newI.factors
 
 
-def test_adding_optional_parents_is_allowed(graph):
-    assert False
+@pytest.mark.parametrize('node', entire_hierarchy)
+@pytest.mark.parametrize('attr', ['children', 'parents'])
+def test_adding_nonoptional_parents_is_not_allowed(graph, node, attr):
+    write_schema(graph, entire_hierarchy)
+    new_node = copy_class(node)
+    class NewClass(Hierarchy):
+        idname = 'id'
+    setattr(new_node, attr, getattr(new_node, attr) + [NewClass])
+    with pytest.raises(AttemptedSchemaViolation, match=f'{attr}'):
+        write_schema(graph, replace_class_in_type_hierarchy(entire_hierarchy, new_node)+[NewClass])
 
 
-def test_adding_optional_children_is_allowed(graph):
-    assert False
+@pytest.mark.parametrize('node', entire_hierarchy)
+@pytest.mark.parametrize('attr', ['children', 'parents'])
+@pytest.mark.parametrize('use_Optional', [True, False])
+def test_adding_optional_parents_is_allowed(graph, node, attr, use_Optional):
+    write_schema(graph, entire_hierarchy)
+    new_node = copy_class(node)
+    class NewClass(Hierarchy):
+        idname = 'id'
+    if use_Optional:
+        new = Optional(NewClass)
+    else:
+        new = Multiple(NewClass, 0)
+    setattr(new_node, attr, getattr(new_node, attr) + [new])
+    with pytest.raises(AttemptedSchemaViolation, match=f'{attr}'):
+        write_schema(graph, replace_class_in_type_hierarchy(entire_hierarchy, new_node) + [NewClass])
 
 
-def test_adding_multiple_parents_with_min0_is_allowed(graph):
-    assert False
-
-
-def test_adding_multiple_children_with_min0_is_allowed(graph):
-    assert False
-
-
-def test_changing_bound_max_to_unbound_is_allowed(graph):
+@pytest.mark.parametrize('node', entire_hierarchy)
+@pytest.mark.parametrize('attr', ['children', 'parents'])
+def test_changing_bound_max_above_1_to_unbound_is_allowed(graph, node, attr):
+    if not any(isinstance(i, Multiple) and getattr(i, 'maxnumber', 0) > 1 for i in getattr(node, attr)):
+        return
     assert False
 
 
