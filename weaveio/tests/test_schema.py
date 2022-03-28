@@ -1,7 +1,8 @@
 import os
 from copy import deepcopy
+from functools import partial
 from time import sleep
-from typing import Type
+from typing import Type, Callable
 
 import pytest
 from py2neo import Subgraph
@@ -26,7 +27,7 @@ class B(A):
 class C(Hierarchy):
     idname = 'id'
     factors = ['c']
-    parents = [Multiple(B)]
+    parents = [Multiple(B, 1, 2)]
     children = []
 
 class D(Hierarchy):
@@ -55,7 +56,12 @@ class I(Hierarchy):
     identifier_builder = ['g', 'i']
     factors = ['i', 'ii']
     parents = [G]
-    children = [H]
+    children = [Multiple(H, 1, 1)]
+
+class J(Hierarchy):
+    idname = 'id'
+    children = [Multiple(H)]
+
 
 entire_hierarchy = [A, B, C, D, E, F, G, H, I]
 
@@ -84,6 +90,39 @@ def assert_class_equality(a, b):
             assert False
         assert set(getattr(a, attr)) == set(getattr(b, attr)), f'{attr} not matched for {a} and {b}'
 
+
+def nodes_with_parents_or_children_that_meet_condition(condition: Callable, children_or_parents: str = None, *further):
+    if children_or_parents is None:
+        children_or_parents = ['children', 'parents']
+    else:
+        children_or_parents = [children_or_parents]
+    any_yielded = False
+    for node in entire_hierarchy:
+        for attr in children_or_parents:
+            for target_i, target_node in enumerate(getattr(node, attr)):
+                if condition(target_node):
+                    _name = getattr(target_node, '__name__', getattr(target_node.node, '__name__', target_node.node))
+                    id = f"{node.__name__}.{attr}[{target_i}] == {_name}"
+                    yield pytest.param(node, attr, target_node, target_i, *further, id=id)
+                    any_yielded = True
+    if not any_yielded:
+        raise RuntimeError(f"No node in the hierarchy can be used to run this test with condition: {further}")
+
+
+def subnode_meets_condition(subnode, *conditions):
+    if isinstance(subnode, Multiple):
+        for condition in conditions:
+            if not eval(f'subnode' + condition):
+                return False
+        return True
+    return False
+
+has_maxnumber_above_1 = lambda x: subnode_meets_condition(x, '.maxnumber is not None', '.maxnumber > 1')
+has_maxnumber_1 = lambda x: subnode_meets_condition(x, '.maxnumber is not None', '.maxnumber == 1')
+has_maxnumber_None = lambda x: subnode_meets_condition(x, '.maxnumber is None')
+has_maxnumber_0 = lambda x: subnode_meets_condition(x, '.maxnumber is not None', '.maxnumber == 0')
+has_minnumber_0 = lambda x: subnode_meets_condition(x, '.minnumber is not None', '.minnumber == 0')
+has_minnumber_1 = lambda x: subnode_meets_condition(x, '.minnumber is not None', '.minnumber == 1')
 
 def copy_class(X, replace_base=None) -> Type[Hierarchy]:
     """
@@ -208,16 +247,31 @@ def test_adding_optional_parents_is_allowed(graph, node, attr, use_Optional):
         write_schema(graph, replace_class_in_type_hierarchy(entire_hierarchy, new_node) + [NewClass])
 
 
-@pytest.mark.parametrize('node', entire_hierarchy)
-@pytest.mark.parametrize('attr', ['children', 'parents'])
-def test_changing_bound_max_above_1_to_unbound_is_allowed(graph, node, attr):
-    if not any(isinstance(i, Multiple) and getattr(i, 'maxnumber', 0) > 1 for i in getattr(node, attr)):
-        return
-    assert False
-
-
-def test_changing_bound_min_to_0_or_None_is_allowed(graph):
-    assert False
+params = [
+    list(nodes_with_parents_or_children_that_meet_condition(has_maxnumber_above_1, None, 'max >1 -> None', True)),
+    list(nodes_with_parents_or_children_that_meet_condition(has_maxnumber_1, None, 'max 1 -> None', False)),
+    list(nodes_with_parents_or_children_that_meet_condition(has_maxnumber_None, None, 'max None -> 2', False)),
+    list(nodes_with_parents_or_children_that_meet_condition(has_maxnumber_1, None, 'max 1 -> 2', False)),
+    list(nodes_with_parents_or_children_that_meet_condition(has_minnumber_0, None, 'min 0 -> 1', False)),
+    list(nodes_with_parents_or_children_that_meet_condition(has_minnumber_1, None, 'min 1 -> 2', False)),
+    list(nodes_with_parents_or_children_that_meet_condition(has_minnumber_1, None, 'min 1 -> 0', True))
+]
+@pytest.mark.parametrize('node,attr,target_node,target_i,condition,allowed', [p for plist in params for p in plist])
+def test_changing_bound_multiples(graph, node, attr, target_node, target_i, condition, allowed):
+    write_schema(graph, entire_hierarchy)
+    new_node = copy_class(node)
+    new_target = deepcopy(target_node)
+    new_target.maxnumber = None
+    getattr(new_node, attr)[target_i] = new_target
+    new_hierarchy = replace_class_in_type_hierarchy(entire_hierarchy, new_node)
+    if not allowed:
+        with pytest.raises(AttemptedSchemaViolation):
+            write_schema(graph, new_hierarchy)
+    else:
+        write_schema(graph, new_hierarchy)
+        hiers = {v.__name__: v for v in read_schema(graph)}
+        retrieved_attrs = getattr(hiers[target_node.__name__], attr)[target_i]
+        assert any(i for i in retrieved_attrs if i == new_target)  # make there is one match
 
 
 def test_changing_one2one_to_another_is_not_allowed(graph):
