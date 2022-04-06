@@ -28,7 +28,7 @@ def make_node(graph: nx.DiGraph, parent, subgraph: nx.DiGraph, scalars: list,
     label += f'\n{path}'
     graph.add_node(label, subgraph=subgraph, scalars=scalars, _name=_name, i=i)
     if parent is not None:
-        graph.add_edge(parent, label, type=type, label=f"{type}:{opertation}", operation=opertation)
+        graph.add_edge(parent, label, type=type, label=f"{type}-{opertation}", operation=opertation)
     return label
 
 def add_start(graph: nx.DiGraph, name):
@@ -45,7 +45,7 @@ def add_traversal(graph: nx.DiGraph, parent, path):
 
 def add_filter(graph: nx.DiGraph, parent, dependencies, operation):
     subgraph = graph.nodes[parent]['subgraph'].copy()
-    n = make_node(graph, parent, subgraph, [], parent, 'filter', operation)
+    n = make_node(graph, parent, subgraph, [], graph.nodes[parent]['_name'], 'filter', operation)
     for d in dependencies:
         graph.add_edge(d, n)
     return n
@@ -118,12 +118,14 @@ class QueryGraph:
 
 
 if __name__ == '__main__':
-    # obs[all(obs.runs.runid*2 > 0, wrt=obs)].runs
+    # obs[all(obs.runs.runid*2 > 0, wrt=obs)].runs.runid
     G = QueryGraph()
     obs = G.add_traversal(['OB'])  # obs = data.obs
     runs = G.add_traversal(['run'], obs)  # runs = obs.runs
     runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runid2 = runs.runid * 2 > 0
     agg = G.add_aggregation(runid2, wrt=obs, operation='all(run.runid*2 > 0)')
     obs = G.add_filter(obs, [agg], 'all(run.runid > 0)')
+    runs = G.add_traversal(['run'], obs)
+    runid = G.add_operation(runs, [], 'runid')
     G.export('parser')
     G.parse()
