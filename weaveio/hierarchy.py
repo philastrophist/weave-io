@@ -70,10 +70,13 @@ class Multiple:
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
 
-    def instantate_node(self):
+    def instantate_node(self, include_hierarchies=None):
         if not inspect.isclass(self.node):
             if isinstance(self.node, str):
                 hierarchies = {i.__name__: i for i in all_subclasses(Hierarchy)}
+                if include_hierarchies is not None:
+                    for h in include_hierarchies:
+                        hierarchies[h.__name__] = h  # this overrides the default
                 self.node = hierarchies[self.node]
         self.name = self.node.plural_name
         self.singular_name = self.node.singular_name
@@ -546,11 +549,11 @@ class Hierarchy(Graphable):
         return specification, factors, children
 
     @classmethod
-    def instantate_nodes(cls):
+    def instantate_nodes(cls, hierarchies=None):
         for i in cls.parents + cls.factors + cls.children:
             if isinstance(i, Multiple):
                 if isinstance(i.node, str):
-                    i.instantate_node()
+                    i.instantate_node(hierarchies)
 
     def __init__(self, do_not_create=False, tables=None, **kwargs):
         self.instantate_nodes()

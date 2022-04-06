@@ -87,7 +87,7 @@ def hierarchy_dependency_tree(hierarchies, done=None):
             raise TypeError(f"Dependency resolution impossible, proposed schema elements may have cyclic dependencies:"
                                            f"{list(hierarchies)}")
         hier = hierarchies.popleft()  # type: Type[Hierarchy]
-        hier.instantate_nodes()
+        hier.instantate_nodes(hierarchies)
         if hier.is_template:
             continue  # don't need to add templates, they just provide labels
         dependencies = [d.node if isinstance(d, Multiple) else d for d in hier.parents + hier.children]

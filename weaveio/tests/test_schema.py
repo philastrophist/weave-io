@@ -10,6 +10,8 @@ from py2neo import Subgraph
 from weaveio.graph import Graph
 from weaveio.hierarchy import Hierarchy, Multiple, Optional, One2One
 from weaveio.schema import diff_hierarchy_schema_node, write_schema, AttemptedSchemaViolation, read_schema, SchemaNode, hierarchy_type_tree, hierarchy_dependency_tree
+from collections import Mapping, Set, Sequence
+
 
 
 class A(Hierarchy):
@@ -63,7 +65,7 @@ class J(Hierarchy):
     children = [Multiple(H)]
 
 
-entire_hierarchy = [A, B, C, D, E, F, G, H, I]
+entire_hierarchy = [A, B, C, D, E, F, G, H, I, J]
 
 def decompose_parents_children_into_names(x):
     if isinstance(x, str):
@@ -74,21 +76,69 @@ def decompose_parents_children_into_names(x):
         if isinstance(x, Optional):
             return Multiple(x.node.__name__, 0, 1, x.constrain, x.relation_idname)
         if x.minnumber == 1 and x.maxnumber == 1 and len(x.constrain) == 0 and x.relation_idname is None:
+            if isinstance(x.node, str):
+                return x.node
             return x.node.__name__
-        return x.__class__(x.node.__name__, x.minnumber, x.maxnumber, x.constrain, x.idname)
+        if isinstance(x.node, str):
+            name = x.node
+        else:
+            name = x.node.__name__
+        return x.__class__(name, x.minnumber, x.maxnumber, x.constrain, x.relation_idname)
 
 
 def assert_class_equality(a, b):
     for attr in ['__name__', 'idname']:
-        assert getattr(a, attr) == getattr(b, attr), f'{attr} not matched for {a} and {b}'
+        attr_a = getattr(a, attr)
+        attr_b = getattr(b, attr)
+        assert getattr(a, attr) == getattr(b, attr), f'{a}.{attr} == {attr_a} != {b}.{attr} == {attr_b}'
     for attr in ['parents', 'children', '__bases__']:  # order doesn't matter
-        assert set(map(decompose_parents_children_into_names, getattr(a, attr))) == \
-               set(map(decompose_parents_children_into_names, getattr(b, attr))), \
-            f'{attr} not matched for {a} and {b}'
+        attr_a = getattr(a, attr)
+        attr_b = getattr(b, attr)
+        assert set(map(decompose_parents_children_into_names, attr_a)) == \
+               set(map(decompose_parents_children_into_names, attr_b)), \
+            f'{a}.{attr} == {attr_a} != {b}.{attr} == {attr_b}'
     for attr in ['factors', 'identifier_builder', 'indexes']:  # order doesn't matter
-        if not (getattr(a, attr) is None and getattr(b, attr) is None):
-            assert False
-        assert set(getattr(a, attr)) == set(getattr(b, attr)), f'{attr} not matched for {a} and {b}'
+        attr_a = getattr(a, attr)
+        attr_b = getattr(b, attr)
+        if attr_a is None or attr_b is None:
+            assert attr_b is None and attr_b is None, f'{a}.{attr} == {attr_a} != {b}.{attr} == {attr_b}'
+        else:
+            assert set(attr_a) == set(attr_b), f'{a}.{attr} == {attr_a} != {b}.{attr} == {attr_b}'
+
+
+@pytest.mark.parametrize('cls', entire_hierarchy)
+def test_assert_class_equality(cls):
+    assert_class_equality(cls, cls)
+
+
+@pytest.mark.parametrize('cls', entire_hierarchy)
+def test_assert_class_equality_copy(cls):
+    assert_class_equality(cls, copy_class(cls))
+
+
+@pytest.mark.parametrize('cls1,cls2', [(a, b) for a in entire_hierarchy for b in entire_hierarchy if a is not b])
+def test_assert_class_nonequality(cls1, cls2):
+    with pytest.raises(AssertionError):
+        assert_class_equality(cls1, cls2)
+
+
+@pytest.mark.parametrize('cls', entire_hierarchy)
+@pytest.mark.parametrize('attr', ['parents', 'children', 'idname', 'identifier_builder', 'factors'])
+def test_assert_class_nonequality_copy(cls, attr):
+    new = copy_class(cls)
+    try:
+        first = getattr(new, attr)[0]
+        if isinstance(first, str):
+            getattr(new, attr)[0] = first[:-1]
+        elif isinstance(first, type):
+            getattr(new, attr)[0] = Multiple(first)
+        else:
+            getattr(new, attr)[0] = Multiple(first.node, first.minnumber, first.maxnumber + 1, first.constrain, first.relation_idname)
+    except (AttributeError, IndexError, TypeError):  # non-existent, emptylist, None
+        return pytest.xfail()
+    with pytest.raises(AssertionError):
+        assert_class_equality(cls, new)
+
 
 
 def nodes_with_parents_or_children_that_meet_condition(condition: Callable, children_or_parents: str = None, *further):
@@ -126,6 +176,7 @@ has_minnumber_1 = lambda x: subnode_meets_condition(x, '.minnumber is not None',
 
 def copy_class(X, replace_base=None) -> Type[Hierarchy]:
     """
+    # TODO: make this recursive in __dict__
     copies a class and changes it's bases to 'replace_base' if the names are the same.
     This is done recursively
     """
@@ -134,9 +185,9 @@ def copy_class(X, replace_base=None) -> Type[Hierarchy]:
     if replace_base is not None:
         if X.__name__ == replace_base.__name__:
             return replace_base
-    new_bases = tuple(copy_class(b, replace_base) for b in X.__bases__)
-    if new_bases == X.__bases__:
-        return X
+    new_bases = tuple(copy_class(b, replace_base) if b is not Hierarchy else b for b in X.__bases__ )
+    # if new_bases == X.__bases__:
+    #     return X
     return type(X.__name__, new_bases, deepcopy(dict(X.__dict__)))
 
 
@@ -149,7 +200,8 @@ def replace_class_in_type_hierarchy(hierarchies, replace):
         for hier in hierarchy_dependency_tree(hier_list):
             for i, h in enumerate(getattr(hier, list_type)):
                 if isinstance(h, Multiple):
-                    h.node = copy_class(h.node, replace)
+                    if not isinstance(h.node, str):
+                        h.node = copy_class(h.node, replace)
                 else:
                     getattr(hier, list_type)[i] = copy_class(h, replace)
     return hier_list
