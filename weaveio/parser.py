@@ -77,8 +77,13 @@ class QueryGraph:
 
     Golden rule:
         dependencies of a node must share an explicit parent node
-        this basically says that you can only compare nodes which are
+        this basically says that you can only compare nodes which have the same parents
 
+    optimisations:
+        If the graph is duplicated in multiple positions, attempt to not redo effort
+        For instance, if you traverse and then agg+filter back to a parent and the traverse the same path
+        again after filtering, then the aggregation is changed to conserve the required data and the duplicated traversal is removed
+        
     """
 
     def __init__(self):
