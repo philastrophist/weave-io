@@ -18,7 +18,6 @@ def graph2string(graph: nx.DiGraph):
     sources = {n for n in graph.nodes() if len(list(graph.predecessors(n))) == 0}
     return ','.join('->'.join(dfs_tree(graph, source)) for source in sources)
 
-
 def make_node(graph: nx.DiGraph, parent, subgraph: nx.DiGraph, scalars: list,
               label: str, type: str, opertation: str):
     _name = label
@@ -44,11 +43,13 @@ def add_traversal(graph: nx.DiGraph, parent, path):
     subgraph.add_edge(graph.nodes[parent]['_name'], path[0])
     for a, b in zip(path[:-1], path[1:]):
         subgraph.add_edge(a, b)
-    return make_node(graph, parent, subgraph, [], ''.join(path[-1:]), 'traversal', '->'.join(path))
+    cypher = f'OPTIONAL MATCH {path}'
+    return make_node(graph, parent, subgraph, [], ''.join(path[-1:]), 'traversal', cypher)
 
 def add_filter(graph: nx.DiGraph, parent, dependencies, operation):
     subgraph = graph.nodes[parent]['subgraph'].copy()
-    n = make_node(graph, parent, subgraph, [], graph.nodes[parent]['_name'], 'filter', operation)
+    n = make_node(graph, parent, subgraph, [], graph.nodes[parent]['_name'], 'filter',
+                  f'WHERE {operation}')
     for d in dependencies:
         graph.add_edge(d, n)
     return n
@@ -63,7 +64,7 @@ def add_aggregation(graph: nx.DiGraph, parent, wrt, operation):
 def add_operation(graph: nx.DiGraph, parent, dependencies, operation):
     subgraph = graph.nodes[parent]['subgraph'].copy()  # type: nx.DiGraph
     n = make_node(graph, parent, subgraph, graph.nodes[parent]['scalars'] + [operation],
-                  operation, 'operation', operation)
+                  operation, 'operation', f'WITH *, {operation} as ...')
     for d in dependencies:
         graph.add_edge(d, n)
     return n
@@ -74,19 +75,14 @@ def add_unwind(graph: nx.DiGraph, wrt, sub_dag_nodes):
         for edge in sub_dag.in_edges(node):
             graph.remove_edge(*edge) # will be collaped, so remove the original edge
     # for node in sub_dag_nodes[:-1]:  # don't link the aggregation again, it can only
-    r = None
     others = list(graph.successors(sub_dag_nodes[0]))
     if any(i not in sub_dag_nodes for i in others):
         # if the node is going to be used later, add a way to access it again
         graph.add_edge(wrt, sub_dag_nodes[0], label='unwind', operation='unwind')  # TODO: input correct operation
-        r = (wrt, sub_dag_nodes[0])
     graph.remove_node(sub_dag_nodes[-1])
     for node in sub_dag_nodes[:-1]:
         if graph.in_degree[node] + graph.out_degree[node] == 0:
             graph.remove_node(node)
-    return r
-    # graph.add_edge(wrt, sub_dag_nodes[-1], **graph.edges[(sub_dag_nodes[-1], wrt)])
-    # graph.remove_edge(sub_dag_nodes[-1], wrt)
 
 def parse_edge(graph: nx.DiGraph, a, b, dependencies):
     # TODO: will do it properly
@@ -97,8 +93,8 @@ def aggregate(graph: nx.DiGraph, wrt, sub_dag_nodes):
     modifies `graph` inplace
     """
     statement = parse_edge(graph, sub_dag_nodes[-2], sub_dag_nodes[-1], [])
-    priority_edge = add_unwind(graph, wrt, sub_dag_nodes)
-    return statement, priority_edge
+    add_unwind(graph, wrt, sub_dag_nodes)
+    return statement
 
 import heapq
 
@@ -225,16 +221,25 @@ class QueryGraph:
             if previous_node is None:
                 previous_node = node
                 continue
-            if self.G.edges[(previous_node, node)]['type'] == 'aggr':
+            edge_type = self.G.edges[(previous_node, node)]['type']
+            if edge_type == 'aggr':
                 # now change the graph to reflect that we've collected things
                 wrt = next(G.successors(node))
-                statement, priority_edge = aggregate(G, wrt, branch[:-1])
-                plot_graph(G).render('parser2')
+                statement = aggregate(G, wrt, branch[:-1])
                 before = nx.ancestors(dag, wrt)
                 ordering = UniqueDeque(nx.topological_sort(nx.subgraph_view(dag, lambda n: n not in before)))
                 previous_node = None
+            elif self.G.edges[(previous_node, node)]['type'] == 'filter':
+                # make sure everyone is finished with previous_node before proceeding
+                others = [n for n in G.successors(previous_node) if n != node]
+                if others:
+                    ordering.appendleft(node)
+                    ordering.extendleft(others)
+                    continue
+                statement = parse_edge(G, previous_node, node, [])
+                previous_node = node
             else:
-                # create the statement given by the edge
+                # just create the statement given by the edge
                 statement = parse_edge(G, previous_node, node, [])
                 previous_node = node
             statements.append(statement)
