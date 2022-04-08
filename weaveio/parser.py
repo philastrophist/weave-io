@@ -1,3 +1,6 @@
+from collections import deque
+
+
 import networkx as nx
 import graphviz
 from networkx import dfs_tree, dfs_edges
@@ -41,7 +44,7 @@ def add_traversal(graph: nx.DiGraph, parent, path):
     subgraph.add_edge(graph.nodes[parent]['_name'], path[0])
     for a, b in zip(path[:-1], path[1:]):
         subgraph.add_edge(a, b)
-    return make_node(graph, parent, subgraph, [], ''.join(path[-1:]), 'traversal', '')
+    return make_node(graph, parent, subgraph, [], ''.join(path[-1:]), 'traversal', '->'.join(path))
 
 def add_filter(graph: nx.DiGraph, parent, dependencies, operation):
     subgraph = graph.nodes[parent]['subgraph'].copy()
@@ -65,6 +68,84 @@ def add_operation(graph: nx.DiGraph, parent, dependencies, operation):
         graph.add_edge(d, n)
     return n
 
+def add_unwind(graph: nx.DiGraph, wrt, sub_dag_nodes):
+    sub_dag = nx.subgraph_view(graph, lambda n: n in sub_dag_nodes+[wrt]).copy()  # type: nx.DiGraph
+    for node in sub_dag_nodes:
+        for edge in sub_dag.in_edges(node):
+            graph.remove_edge(*edge) # will be collaped, so remove the original edge
+    # for node in sub_dag_nodes[:-1]:  # don't link the aggregation again, it can only
+    r = None
+    others = list(graph.successors(sub_dag_nodes[0]))
+    if any(i not in sub_dag_nodes for i in others):
+        # if the node is going to be used later, add a way to access it again
+        graph.add_edge(wrt, sub_dag_nodes[0], label='unwind', operation='unwind')  # TODO: input correct operation
+        r = (wrt, sub_dag_nodes[0])
+    graph.remove_node(sub_dag_nodes[-1])
+    for node in sub_dag_nodes[:-1]:
+        if graph.in_degree[node] + graph.out_degree[node] == 0:
+            graph.remove_node(node)
+    return r
+    # graph.add_edge(wrt, sub_dag_nodes[-1], **graph.edges[(sub_dag_nodes[-1], wrt)])
+    # graph.remove_edge(sub_dag_nodes[-1], wrt)
+
+def parse_edge(graph: nx.DiGraph, a, b, dependencies):
+    # TODO: will do it properly
+    return graph.edges[(a, b)]['operation']
+
+def aggregate(graph: nx.DiGraph, wrt, sub_dag_nodes):
+    """
+    modifies `graph` inplace
+    """
+    statement = parse_edge(graph, sub_dag_nodes[-2], sub_dag_nodes[-1], [])
+    priority_edge = add_unwind(graph, wrt, sub_dag_nodes)
+    return statement, priority_edge
+
+import heapq
+
+class UniqueDeque(deque):
+
+    def __init__(self, iterable, maxlen=None, maintain=True) -> None:
+        super().__init__([], maxlen)
+        for x in iterable:
+            self.append(x, maintain)
+
+    def append(self, x, maintain=False) -> None:
+        if x in self:
+            if maintain:
+               return
+            self.remove(x)
+        super().append(x)
+
+    def appendleft(self, x, maintain=False) -> None:
+        if x in self:
+            if maintain:
+               return
+            self.remove(x)
+        super().appendleft(x)
+
+    def extend(self, iterable, maintain=False) -> None:
+        for x in iterable:
+            self.append(x, maintain)
+
+    def extendleft(self, iterable, maintain=False) -> None:
+        for x in reversed(iterable):
+            self.appendleft(x, maintain)
+
+    def insert(self, i: int, x, maintain=False) -> None:
+        if x in self:
+            ii = self.index(x)
+            if i == ii:
+                return
+            if maintain:
+                return
+            self.remove(x)
+            if ii < i:
+                super().insert(i-1, x)
+            elif ii == i:
+                super().insert(i, x)
+
+
+
 class QueryGraph:
     """
     Rules of adding nodes/edges:
@@ -83,7 +164,7 @@ class QueryGraph:
         If the graph is duplicated in multiple positions, attempt to not redo effort
         For instance, if you traverse and then agg+filter back to a parent and the traverse the same path
         again after filtering, then the aggregation is changed to conserve the required data and the duplicated traversal is removed
-        
+
     """
 
     def __init__(self):
@@ -91,7 +172,7 @@ class QueryGraph:
         self.start = add_start(self.G, 'data')
 
     def export(self, fname):
-        return plot_graph(self.G).view(fname)
+        return plot_graph(self.G).render(fname)
 
     def add_traversal(self, path, parent=None):
         if parent is None:
@@ -99,6 +180,7 @@ class QueryGraph:
         return add_traversal(self.G, parent, path)
 
     def add_operation(self, parent, dependencies, operation):
+        # do not allow
         return add_operation(self.G, parent, dependencies, operation)
 
     def add_aggregation(self, parent, wrt, operation):
@@ -107,30 +189,72 @@ class QueryGraph:
     def add_filter(self, parent, dependencies, operation):
         return add_filter(self.G, parent, dependencies, operation)
 
+    def optimise(self):
+        # TODO: combine get-attribute statements etc...
+        pass
+
     def parse(self):
         """
         Traverse this query graph in the order that will produce a valid cypher query
         Rules:
             1. DAG rules apply: dependencies must be completed before their dependents
             2. When an aggregation route is traversed, you must follow its outward line back to wrt
-                This means collecting the node and
+            3. Do aggregations as early as possible
+            4. Aggregations change the graph by collecting
         """
+        G = self.G.copy()
+        statements = []
+        dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt')  # type: nx.DiGraph
+        backwards = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') == 'wrt')  # type: nx.DiGraph
+        ordering = UniqueDeque(nx.topological_sort(dag))
+        previous_node = None
+        branch = []
+        while ordering:
+            node = ordering.popleft()
+            branches = []
+            # find the simplest aggregation and add the required nodes to the front of the queue
+            for future_aggregation in backwards.predecessors(node):
+                agg_ancestors = nx.ancestors(dag, future_aggregation)
+                node_ancestors = nx.ancestors(dag, node)
+                sub_dag = nx.subgraph_view(dag, lambda n: n in agg_ancestors and n not in node_ancestors)
+                branches.append(list(nx.topological_sort(sub_dag))[1:]+[future_aggregation, node])
+            branches.sort(key=lambda x: len(x))
+            if branches:
+                branch = branches[0]
+                ordering.extendleft(branch)
+            if previous_node is None:
+                previous_node = node
+                continue
+            if self.G.edges[(previous_node, node)]['type'] == 'aggr':
+                # now change the graph to reflect that we've collected things
+                wrt = next(G.successors(node))
+                statement, priority_edge = aggregate(G, wrt, branch[:-1])
+                plot_graph(G).render('parser2')
+                before = nx.ancestors(dag, wrt)
+                ordering = UniqueDeque(nx.topological_sort(nx.subgraph_view(dag, lambda n: n not in before)))
+                previous_node = None
+            else:
+                # create the statement given by the edge
+                statement = parse_edge(G, previous_node, node, [])
+                previous_node = node
+            statements.append(statement)
+        return statements
 
 
-        dag = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)].get('type', '') != 'wrt')
-        for node in nx.topological_sort(dag):
-            print(self.G.nodes[node]['i'])
-
+# TODO: for each visited node do all aggregations first (sorted by topological ordering)
 
 if __name__ == '__main__':
-    # obs[all(obs.runs.runid*2 > 0, wrt=obs)].runs.runid
     G = QueryGraph()
     obs = G.add_traversal(['OB'])  # obs = data.obs
     runs = G.add_traversal(['run'], obs)  # runs = obs.runs
-    runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runid2 = runs.runid * 2 > 0
+    spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
+    l2 = G.add_traversal(['l2'], runs)  # runs.l2
+    runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runs.runid * 2 > 0
     agg = G.add_aggregation(runid2, wrt=obs, operation='all(run.runid*2 > 0)')
-    obs = G.add_filter(obs, [agg], 'all(run.runid > 0)')
-    runs = G.add_traversal(['run'], obs)
-    runid = G.add_operation(runs, [], 'runid')
+    spectra = G.add_filter(spectra, [agg], 'spectra = spectra[all(run.runid*2 > 0)]')
+    agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
+    l2 = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
+
     G.export('parser')
-    G.parse()
+    for s in G.parse():
+        print(s)
