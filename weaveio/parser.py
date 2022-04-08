@@ -51,7 +51,7 @@ def add_filter(graph: nx.DiGraph, parent, dependencies, operation):
     n = make_node(graph, parent, subgraph, [], graph.nodes[parent]['_name'], 'filter',
                   f'WHERE {operation}')
     for d in dependencies:
-        graph.add_edge(d, n)
+        graph.add_edge(d, n, type='dep')
     return n
 
 def add_aggregation(graph: nx.DiGraph, parent, wrt, operation):
@@ -73,12 +73,12 @@ def add_unwind(graph: nx.DiGraph, wrt, sub_dag_nodes):
     sub_dag = nx.subgraph_view(graph, lambda n: n in sub_dag_nodes+[wrt]).copy()  # type: nx.DiGraph
     for node in sub_dag_nodes:
         for edge in sub_dag.in_edges(node):
-            graph.remove_edge(*edge) # will be collaped, so remove the original edge
-    # for node in sub_dag_nodes[:-1]:  # don't link the aggregation again, it can only
+            if graph.edges[edge]['type'] != 'unwind':  # in case someone else needs it
+                graph.remove_edge(*edge) # will be collapsed, so remove the original edge
     others = list(graph.successors(sub_dag_nodes[0]))
     if any(i not in sub_dag_nodes for i in others):
         # if the node is going to be used later, add a way to access it again
-        graph.add_edge(wrt, sub_dag_nodes[0], label='unwind', operation='unwind')  # TODO: input correct operation
+        graph.add_edge(wrt, sub_dag_nodes[0], label='unwind', operation='unwind', type='unwind')  # TODO: input correct operation
     graph.remove_node(sub_dag_nodes[-1])
     for node in sub_dag_nodes[:-1]:
         if graph.in_degree[node] + graph.out_degree[node] == 0:
@@ -140,6 +140,13 @@ class UniqueDeque(deque):
             elif ii == i:
                 super().insert(i, x)
 
+def aggregate_reused_filtered_nodes(graph: nx.DiGraph):
+    for n in graph.nodes:
+        filts = [edge for edge in graph.out_edges(n) if graph.edges[edge]['type'] == 'filter']
+        nonfilts = [edge for edge in graph.out_edges(n) if graph.edges[edge]['type'] != 'filter']
+        if filts and nonfilts:
+            wrt = next(graph.predecessors(n))  # TODO: this fails if its not a traversal edge
+            add_aggregation(graph, n, wrt, f'collect({n})')
 
 
 class QueryGraph:
@@ -189,7 +196,7 @@ class QueryGraph:
         # TODO: combine get-attribute statements etc...
         pass
 
-    def parse(self):
+    def parse(self, output):
         """
         Traverse this query graph in the order that will produce a valid cypher query
         Rules:
@@ -199,8 +206,10 @@ class QueryGraph:
             4. Aggregations change the graph by collecting
         """
         G = self.G.copy()
+        aggregate_reused_filtered_nodes(G)
         statements = []
-        dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt')  # type: nx.DiGraph
+        dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt',
+                               filter_node=lambda n: nx.has_path(G, n, output))  # type: nx.DiGraph
         backwards = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') == 'wrt')  # type: nx.DiGraph
         ordering = UniqueDeque(nx.topological_sort(dag))
         previous_node = None
@@ -215,6 +224,10 @@ class QueryGraph:
                 sub_dag = nx.subgraph_view(dag, lambda n: n in agg_ancestors and n not in node_ancestors)
                 branches.append(list(nx.topological_sort(sub_dag))[1:]+[future_aggregation, node])
             branches.sort(key=lambda x: len(x))
+            # if a branch depends on another branch then that first branch will contain the required branch
+            # therefore, taking the branch with minimum number of nodes will suffice
+            # However, if a filter is required and the nfiltered node is required later, then we either
+            # have to repeat ourselves or collect everything
             if branches:
                 branch = branches[0]
                 ordering.extendleft(branch)
@@ -229,15 +242,15 @@ class QueryGraph:
                 before = nx.ancestors(dag, wrt)
                 ordering = UniqueDeque(nx.topological_sort(nx.subgraph_view(dag, lambda n: n not in before)))
                 previous_node = None
-            elif self.G.edges[(previous_node, node)]['type'] == 'filter':
-                # make sure everyone is finished with previous_node before proceeding
-                others = [n for n in G.successors(previous_node) if n != node]
-                if others:
-                    ordering.appendleft(node)
-                    ordering.extendleft(others)
-                    continue
-                statement = parse_edge(G, previous_node, node, [])
-                previous_node = node
+            # elif self.G.edges[(previous_node, node)]['type'] == 'filter':
+            #     # make sure everyone is finished with previous_node before proceeding
+            #     others = [n for n in G.successors(previous_node) if n != node]
+            #     if others:
+            #         ordering.appendleft(node)
+            #         ordering.extendleft(others)
+            #         continue
+            #     statement = parse_edge(G, previous_node, node, [])
+            #     previous_node = node
             else:
                 # just create the statement given by the edge
                 statement = parse_edge(G, previous_node, node, [])
@@ -261,5 +274,5 @@ if __name__ == '__main__':
     l2 = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
     G.export('parser')
-    for s in G.parse():
+    for s in G.parse(l2):
         print(s)
