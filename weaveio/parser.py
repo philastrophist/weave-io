@@ -23,7 +23,6 @@ def graph2string(graph: nx.DiGraph):
 def make_node(graph: nx.DiGraph, parent, subgraph: nx.DiGraph, scalars: list,
               label: str, type: str, operation: str, **edge_data):
     _name = label
-    _name = label
     i = graph.number_of_nodes()
     try:
         label = f'{i}\n{graph.nodes[label]["_name"]}'
@@ -60,7 +59,7 @@ def add_filter(graph: nx.DiGraph, parent, dependencies, operation):
 def add_aggregation(graph: nx.DiGraph, parent, wrt, operation, type='aggr'):
     subgraph = graph.nodes[wrt]['subgraph'].copy() # type: nx.DiGraph
     n = make_node(graph, parent, subgraph, graph.nodes[parent]['scalars'] + [operation],
-                     operation, type, operation, state_to_collect=[parent])
+                     operation, type, operation)
     graph.add_edge(n, wrt, type='wrt', style='dashed')
     return n
 
@@ -438,51 +437,89 @@ def save_state(graph: nx.DiGraph, wrt: str, node: str):
     collects up the given node into a state list which can be unwound to get back to where you were
     this replaces the `traversal` with an `unwind`
     """
-    aggregated = add_aggregation(graph, node, wrt, 'save-state', 'save-state')
-    d = graph.edges[(wrt, node)]
-    d['label'] = 'load-state'
+    aggregated = add_aggregation(graph, node, wrt, 'save-state', 'save-state')  # new node attached to node and then to wrt
+    d = graph.edges[(wrt, node)]  # original edge
+    d['label'] = f'load-state {graph.nodes[node]["_name"]}'
     d['type'] = 'load-state'
     d['operation'] = 'load-state'
-    graph.remove_edge(wrt, node)
-    graph.add_edge(wrt, aggregated)
-    for successor in graph.successors(node):
-        new = make_node(graph, aggregated, graph.nodes[wrt]['subgraph'], [], **d)
-        graph.add_edge(new, successor, **graph.edges[(node, successor)])
-    graph.remove_node(node)
+    # graph.remove_edge(wrt, node)
+    # graph.add_edge(wrt, aggregated)
+    for successor in list(graph.successors(node)):
+        if successor != aggregated:
+            loaded_state = make_node(graph, wrt, graph.nodes[node]['subgraph'], [], **d)
+            graph.add_edge(loaded_state, successor, **graph.edges[(node, successor)])
+            graph.remove_edge(node, successor)
+    # graph.remove_node(node)
     return aggregated
 
-def traverse_query_graph(G: nx.DiGraph, output: str, node, original_graph: nx.DiGraph = None, aggregating=False):
+def has_outside_dependencies(super_graph: nx.DiGraph, graph: nx.DiGraph, node: str) -> bool:
+    return any(n not in graph for n in super_graph.successors(node) if super_graph.edges[(node, n)]['type'] != 'load-state')
+
+def subgraph_view(graph: nx.DiGraph, excluded_edge_type=None, only_edge_type=None,
+                  only_nodes: List = None, excluded_nodes: List = None,
+                  only_edges: List[Tuple] = None, excluded_edges: List[Tuple] = None,
+                  path_to = None,
+                  ) -> nx.DiGraph:
+    """
+    filters out edges and nodes
+    """
+    if excluded_edges is None:
+        excluded_edges = []
+    if excluded_nodes is None:
+        excluded_nodes = []
+    if excluded_edge_type is not None:
+        excluded_edges += [e for e in graph.edges if graph.edges[e].get('type', '') == excluded_edge_type]
+    if only_edge_type is not None:
+        excluded_edges += [e for e in graph.edges if graph.edges[e].get('type', '') != only_edge_type]
+    if only_nodes is not None:
+        excluded_nodes += [n for n in graph.nodes if n not in only_nodes]
+    if only_edges is not None:
+        excluded_edges += [e for e in graph.edges if e not in only_edges]
+    r = nx.restricted_view(graph, excluded_nodes, excluded_edges)  # type: nx.DiGraph
+    if path_to:
+        r = nx.subgraph_view(r, lambda n:  nx.has_path(graph, n, path_to))
+    return r
+
+
+
+def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: nx.DiGraph = None, aggregating=False):
+    """
+    if there is a fork in the graph, then this means the state should be saved
+    """
     if original_graph is None:
         # all graph operations must be done on the original_graph, since only Views get passed on to recursion
         original_graph = G.copy()
-    dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt')  # type: nx.DiGraph
-    backwards = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') == 'wrt')  # type: nx.DiGraph
+        G = subgraph_view(original_graph)
+    dag = subgraph_view(G, excluded_edge_type='wrt')
+    backwards = subgraph_view(G, only_edge_type='wrt')
     start = node
 
     while G:
         branches, _ = get_branches(dag, backwards, node)  # sorted in terms of inter-dependency
         if branches:
             branch = branches[0]
-            forbidden_edge =  (branch[-2], node)
-            sub_graph = nx.subgraph_view(nx.subgraph(G, branch), filter_edge=lambda a, b: (a, b) != forbidden_edge)
+            forbidden_edge = (branch[-2], node)
+            sub_graph = subgraph_view(G, only_nodes=branch, excluded_edges=[forbidden_edge],
+                                      path_to=branch[-2])
             # the below recursion may edit the graph
             yield from traverse_query_graph(sub_graph, branch[-2], node, original_graph, True)  # do the sub branch first
-        successors = list(dag.successors(node))
+            original_graph.remove_edge(branch[-2], branch[-1])
+            original_graph.remove_node(branch[-2])
+            continue
+        if len(list(subgraph_view(dag, excluded_edge_type='load-state').successors(node))) > 1:
+            raise nx.NetworkXUnfeasible(f"Fatal: Query node has > 1 unaggregated-successors. This is a bug")
+        successors = list(backwards.successors(node)) + list(dag.successors(node))
         if not successors:
             return  # terminate query
-        elif len(successors) == 1:
-            successor = successors[0]
-            yield get_statement_data(G, node, successor)
-            if aggregating:
-                if successor != output:
-                    if any(n not in G for n in original_graph.successors(successor)):
-                        # if the next node is going to be used, then save it for later
-                        save_state(original_graph, start, successor)
-                        # save in the last aggregation node of the branch
-                        last_aggregation_edge = list(original_graph.in_edges(output))[0]
-                        original_graph.edges[last_aggregation_edge]['state_to_collect'].append(successor)
-        else:
-            raise nx.NetworkXUnfeasible(f"Fatal: Query node has > 1 unaggregated-successors. This is a bug")
+        successor = successors[0]
+        yield get_statement_data(G, node, successor)
+        if aggregating:
+            if successor != output:
+                if has_outside_dependencies(original_graph, G, successor):
+                    save_state(original_graph, start, successor)
+                    G = subgraph_view(G, path_to=output)
+                    dag = subgraph_view(G, excluded_edge_type='wrt')
+                    backwards = subgraph_view(G, only_edge_type='wrt')
         # edge will not be used again so delete it
         original_graph.remove_edge(node, successor)
         node = successor
