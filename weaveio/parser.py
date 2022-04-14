@@ -428,8 +428,8 @@ def parse2(G: nx.DiGraph, output: str, subquery=False):
     return statements
 
 
-def get_statement_data(graph, a, b):
-    return (graph.nodes[a], graph.nodes[b], graph.edges[(a, b)])
+def get_statement_data(graph, a, b, is_aggregating):
+    return graph.nodes[a], graph.nodes[b], graph.edges[(a, b)], is_aggregating
 
 
 def save_state(graph: nx.DiGraph, wrt: str, node: str):
@@ -494,7 +494,7 @@ def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: 
     backwards = subgraph_view(G, only_edge_type='wrt')
     start = node
 
-    while G:
+    while G.edges:
         branches, _ = get_branches(dag, backwards, node)  # sorted in terms of inter-dependency
         if branches:
             branch = branches[0]
@@ -512,7 +512,7 @@ def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: 
         if not successors:
             return  # terminate query
         successor = successors[0]
-        yield get_statement_data(G, node, successor)
+        yield get_statement_data(G, node, successor, aggregating)
         if aggregating:
             if successor != output:
                 if has_outside_dependencies(original_graph, G, successor):
@@ -537,58 +537,66 @@ if __name__ == '__main__':
     # spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
     # result = spectra
 
-    # 1
-    obs = G.add_traversal(['OB'])  # obs = data.obs
-    runs = G.add_traversal(['run'], obs)  # runs = obs.runs
-    spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
-    l2 = G.add_traversal(['l2'], runs)  # runs.l2
-    runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runs.runid * 2 > 0
-    agg = G.add_aggregation(runid2, wrt=obs, operation='all(run.runid*2 > 0)')
-    spectra = G.add_filter(spectra, [agg], 'spectra = spectra[all(run.runid*2 > 0)]')
-    agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
-    result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
+    # # 1
+    # obs = G.add_traversal(['OB'])  # obs = data.obs
+    # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
+    # spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
+    # l2 = G.add_traversal(['l2'], runs)  # runs.l2
+    # runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runs.runid * 2 > 0
+    # agg = G.add_aggregation(runid2, wrt=obs, operation='all(run.runid*2 > 0)')
+    # spectra = G.add_filter(spectra, [agg], 'spectra = spectra[all(run.runid*2 > 0)]')
+    # agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
+    # result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
-    # 2
+    # # 2
     # obs = G.add_traversal(['OB'])  # obs = data.obs
     # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
     # red_runs = G.add_filter(runs, [], 'run.camera==red')
     # red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
     # spec = G.add_traversal(['spec'], runs)
     # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
-    # l2 = G.traversal(['l2'], spec)
+    # result = G.add_traversal(['l2'], spec)
 
     # # 3
     # # obs = data.obs
     # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0], wrt=runs).l1s.snr, wrt=obs)
+    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
     # # z = all(obs.targets.ra > 0, wrt=obs)
     # # result = obs[x & y & z]
     # obs = G.add_traversal(['OB'])  # obs = data.obs
     # l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
     # has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
-    # above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, '')  # l2s > 2
+    # above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
     # hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
-    # x = G.add_aggregation(G.add_filter(hb, [], '> 0'), obs, 'all')
+    # hb_above_0 = G.add_operation(hb, [], '> 0')
+    # x = G.add_aggregation(hb_above_0, obs, 'all')
     #
     # runs = G.add_traversal(['runs'], obs)
     # l1s = G.add_traversal(['l1'], runs)
     # camera = G.add_traversal(['camera'], l1s)
-    # red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, '')
+    # red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
     # red_l1s = G.add_filter(l1s, [red], '')
     # red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
-    # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], 'all')
+    # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
     # red_l1s = G.add_traversal(['l1'], red_runs)
     # y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
     #
     # targets = G.add_traversal(['target'], obs)
     # z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
     #
-    # result = G.add_filter(obs, [x, y, z], 'x&y&z')
+    # # TODO: need to somehow make this happen in the syntax
+    # op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
+    #
+    # result = G.add_filter(obs, [op], '')
+
+    ## 4
+    
+
 
 
     G.export('parser')
     statements = []
     for statement_data in traverse_query_graph(G.G, result, G.start):
         statements.append(statement_data)
-        print(statement_data)
+        print(statement_data[0]['i'], statement_data[1]['i'], statement_data[2]['type'])
     statements
