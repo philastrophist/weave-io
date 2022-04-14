@@ -53,7 +53,7 @@ def add_filter(graph: nx.DiGraph, parent, dependencies, operation):
     n = make_node(graph, parent, subgraph, [], graph.nodes[parent]['_name'], 'filter',
                   f'WHERE {operation}')
     for d in dependencies:
-        graph.add_edge(d, n, type='dep')
+        graph.add_edge(d, n, type='dep', style='dotted')
     return n
 
 def add_aggregation(graph: nx.DiGraph, parent, wrt, operation, type='aggr'):
@@ -68,7 +68,7 @@ def add_operation(graph: nx.DiGraph, parent, dependencies, operation):
     n = make_node(graph, parent, subgraph, graph.nodes[parent]['scalars'] + [operation],
                   operation, 'operation', f'WITH *, {operation} as ...')
     for d in dependencies:
-        graph.add_edge(d, n, type='dep')
+        graph.add_edge(d, n, type='dep', style='dotted')
     return n
 
 def add_unwind(graph: nx.DiGraph, wrt, sub_dag_nodes):
@@ -323,6 +323,12 @@ def get_branches(dag: nx.DiGraph, backwards: nx.DiGraph, parent: str) -> Tuple[L
         agg_ancestors = nx.ancestors(dag, future_aggregation)
         node_ancestors = nx.ancestors(dag, parent)
         sub_dag = nx.subgraph_view(dag, lambda n: n in agg_ancestors and n not in node_ancestors)
+        # sub_dag = subgraph_view(dag, only_nodes=agg_ancestors | {future_aggregation, parent},
+        #                         excluded_nodes=node_ancestors,
+        #                         excluded_edge_type='dep',
+        #                         path_to=future_aggregation)
+        # sub_dag is only the absolutely required nodes to reach `future_aggregation` from `parent`
+        # sub_dag = nx.shortest_simple_paths(dag, parent, future_aggregation)
         branches.append(list(nx.topological_sort(sub_dag))[1:] + [future_aggregation, parent])
     branches.sort(key=compare_two_dags)
     return branches, not any(i[-1]['type'] == 'unwind' for i in dag.in_edges(parent, data=True, default=(None, None, {'type': ''})))
@@ -463,18 +469,16 @@ def subgraph_view(graph: nx.DiGraph, excluded_edge_type=None, only_edge_type=Non
     """
     filters out edges and nodes
     """
-    if excluded_edges is None:
-        excluded_edges = []
-    if excluded_nodes is None:
-        excluded_nodes = []
+    excluded_edges = set([] if excluded_edges is None else excluded_edges)
+    excluded_nodes = set([] if excluded_nodes is None else excluded_nodes)
     if excluded_edge_type is not None:
-        excluded_edges += [e for e in graph.edges if graph.edges[e].get('type', '') == excluded_edge_type]
+        excluded_edges |= {e for e in graph.edges if graph.edges[e].get('type', '') == excluded_edge_type}
     if only_edge_type is not None:
-        excluded_edges += [e for e in graph.edges if graph.edges[e].get('type', '') != only_edge_type]
+        excluded_edges |= {e for e in graph.edges if graph.edges[e].get('type', '') != only_edge_type}
     if only_nodes is not None:
-        excluded_nodes += [n for n in graph.nodes if n not in only_nodes]
+        excluded_nodes |= {n for n in graph.nodes if n not in only_nodes}
     if only_edges is not None:
-        excluded_edges += [e for e in graph.edges if e not in only_edges]
+        excluded_edges |= {e for e in graph.edges if e not in only_edges}
     r = nx.restricted_view(graph, excluded_nodes, excluded_edges)  # type: nx.DiGraph
     if path_to:
         r = nx.subgraph_view(r, lambda n:  nx.has_path(graph, n, path_to))
@@ -505,6 +509,7 @@ def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: 
                                       path_to=branch[-2])
             # the below recursion may edit the graph
             yield from traverse_query_graph(sub_graph, branch[-2], node, original_graph, True)  # do the sub branch first
+            # TODO: remove the aggregation node, move output edges to come from the wrt node?
             original_graph.remove_edge(branch[-2], branch[-1])
             original_graph.remove_node(branch[-2])
             continue
@@ -528,7 +533,22 @@ def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: 
         original_graph.remove_edge(node, successor)  # edge will not be used again so delete it
         node = successor
 
-# TODO: multiple wrts/aggs at once
+def prepare_graph(graph: nx.DiGraph):
+    """
+    1. uses on aggregated nodes must take the wrt node as input and the aggregation as dep
+    2.
+    """
+    backwards = subgraph_view(graph, only_edge_type='wrt')
+    for a, b, data in list(graph.edges(data=True)):
+        if data['type'] == 'operation':
+            try:
+                wrt = next(backwards.successors(a))
+                graph.add_edge(wrt, b, **graph.edges[(a, b)])
+                graph.remove_edge(a, b)
+                graph.add_edge(a, b, type='dep', style='dotted')
+            except StopIteration:
+                pass
+
 
 def verify(graph: nx.DiGraph, ):
     """
@@ -549,13 +569,13 @@ def verify(graph: nx.DiGraph, ):
             no more than one out-path should be unaggregated in the end
             (i.e. there should only be one path from start-output which contains no aggregations)
     """
-    starts = [n for n in graph.nodes if graph.in_degree(n) == 0]
-    ends = [n for n in graph.nodes if graph.out_degree(n) == 0]
+    dag = subgraph_view(graph, excluded_edge_type='wrt')
+    starts = [n for n in dag.nodes if dag.in_degree(n) == 0]
+    ends = [n for n in dag.nodes if dag.out_degree(n) == 0]
     if len(starts) != 1:
         raise ParserError("Only one input node is allowed")
     if len(ends) != 1:
         raise ParserError("Only one output node is allowed")
-    dag = subgraph_view(graph, excluded_edge_type='wrt')
     backwards = subgraph_view(graph, only_edge_type='wrt')
     without_agg = subgraph_view(dag, excluded_edge_type='aggr')
     main_paths = nx.all_simple_paths(without_agg, starts[0], ends[0])
@@ -566,7 +586,7 @@ def verify(graph: nx.DiGraph, ):
         pass
     else:
         # there can be 0 in the case where the output is itself an aggregation
-        raise ParserError(f"There can only be at maximum one path from {starts[0]} to {ends[0]} that is not aggregated")      
+        raise ParserError(f"There can only be at maximum one path from {starts[0]} to {ends[0]} that is not aggregated")
     if not nx.is_directed_acyclic_graph(dag):
         raise ParserError(f"There are cyclical dependencies")
     if not nx.has_path(dag, starts[0], ends[0]):
@@ -607,7 +627,10 @@ def verify(graph: nx.DiGraph, ):
         if nops > 1:
             raise ParserError(f"Can only have one op input: {node}")
         elif nops:
-            if graph.edges[list(graph.out_edges(node))[0]]['type'] != 'aggr':
+            try:
+                if graph.edges[list(graph.out_edges(node))[0]]['type'] != 'aggr':
+                    raise ParserError(f"All operations must be aggregated back: {node}")
+            except IndexError:
                 raise ParserError(f"All operations must be aggregated back: {node}")
             if ntraversals + naggs + nfilters > 1:
                 raise ParserError(f"Can only have dependencies as input for an operation: {node}")
@@ -616,15 +639,6 @@ def verify(graph: nx.DiGraph, ):
                 raise ParserError(f"A traversal/aggregation cannot take any other inputs: {node}")
             if not (nops ^ nfilters):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
-
-
-
-
-
-
-
-
-
 
 
 if __name__ == '__main__':
@@ -649,20 +663,20 @@ if __name__ == '__main__':
     # result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
     # # 2
-    # obs = G.add_traversal(['OB'])  # obs = data.obs
-    # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
-    # red_runs = G.add_filter(runs, [], 'run.camera==red')
-    # red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
-    # spec = G.add_traversal(['spec'], runs)
-    # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
-    # result = G.add_traversal(['l2'], spec)
+    obs = G.add_traversal(['OB'])  # obs = data.obs
+    runs = G.add_traversal(['run'], obs)  # runs = obs.runs
+    red_runs = G.add_filter(runs, [], 'run.camera==red')
+    red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
+    spec = G.add_traversal(['spec'], runs)
+    spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
+    result = G.add_traversal(['l2'], spec)
 
     # # 3
-    # # obs = data.obs
-    # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
-    # # z = all(obs.targets.ra > 0, wrt=obs)
-    # # result = obs[x & y & z]
+    # obs = data.obs
+    # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
+    # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
+    # z = all(obs.targets.ra > 0, wrt=obs)
+    # result = obs[x & y & z]
     # obs = G.add_traversal(['OB'])  # obs = data.obs
     # l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
     # has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
@@ -670,7 +684,7 @@ if __name__ == '__main__':
     # hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
     # hb_above_0 = G.add_operation(hb, [], '> 0')
     # x = G.add_aggregation(hb_above_0, obs, 'all')
-    # 
+
     # runs = G.add_traversal(['runs'], obs)
     # l1s = G.add_traversal(['l1'], runs)
     # camera = G.add_traversal(['camera'], l1s)
@@ -680,40 +694,54 @@ if __name__ == '__main__':
     # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
     # red_l1s = G.add_traversal(['l1'], red_runs)
     # y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
-    # 
+
     # targets = G.add_traversal(['target'], obs)
     # z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
-    # 
-    # # TODO: need to somehow make this happen in the syntax
+
+    # TODO: need to somehow make this happen in the syntax
     # op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
-    # 
+
+    # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
     # result = G.add_filter(obs, [op], '')
 
-    ## 4
-    obs = G.add_traversal(['ob'])
-    exps = G.add_traversal(['exp'], obs)
-    runs = G.add_traversal(['run'], exps)
-    l1s = G.add_traversal(['l1'], runs)
-    snr = G.add_operation(l1s, [], 'snr')
-    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')
-    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')
 
-    exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')
-    run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')
-    l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')
+    # ## 4
+    # obs = G.add_traversal(['ob'])  # obs
+    # exps = G.add_traversal(['exp'], obs)  # obs.exps
+    # runs = G.add_traversal(['run'], exps)  # obs.exps.runs
+    # l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
+    # snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
+    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    #
+    # exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
+    # run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
+    # l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+    #
+    ## cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    # condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
+    # l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
+    # result = G.add_traversal(['l2'], l1s)
 
-    condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
-    l1s = G.add_filter(l1s, [condition], '')
-    result = G.add_traversal(['l2'], l1s)
-    
 
 
-
+    # used to use networkx 2.4
+    prepare_graph(G.G)
 
     G.export('parser')
-    statements = []
-    verify(G.G)
-    for statement_data in traverse_query_graph(G.G, result, G.start):
-        statements.append(statement_data)
-        print(statement_data[0]['i'], statement_data[1]['i'], statement_data[2]['type'])
-    statements
+    edge_graph = nx.line_graph(subgraph_view(G.G, excluded_edge_type='dep')).copy()
+    start = [n for n in edge_graph.nodes if edge_graph.in_degree(n) == 0][0]
+    end = [n for n in edge_graph.nodes if edge_graph.out_degree(n) == 0][0]
+    edge_graph.add_edge(end, start)
+    plot_graph(edge_graph).render('parser-edge')
+    from networkx.algorithms.approximation.traveling_salesman import traveling_salesman_problem
+    # todo: save states first
+    # todo: visit each edge once
+    # todo: travelling salesman on edge_graph
+    graph = subgraph_view(G.G, path_to=result).copy()
+    # verify(graph)
+    # statements = []
+    # for statement_data in traverse_query_graph(graph, result, G.start):
+    #     statements.append(statement_data)
+    #     print(statement_data[0]['i'], statement_data[1]['i'], statement_data[2]['type'])
+    # statements
