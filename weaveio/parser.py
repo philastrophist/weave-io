@@ -68,7 +68,7 @@ def add_operation(graph: nx.DiGraph, parent, dependencies, operation):
     n = make_node(graph, parent, subgraph, graph.nodes[parent]['scalars'] + [operation],
                   operation, 'operation', f'WITH *, {operation} as ...')
     for d in dependencies:
-        graph.add_edge(d, n)
+        graph.add_edge(d, n, type='dep')
     return n
 
 def add_unwind(graph: nx.DiGraph, wrt, sub_dag_nodes):
@@ -481,6 +481,8 @@ def subgraph_view(graph: nx.DiGraph, excluded_edge_type=None, only_edge_type=Non
     return r
 
 
+class ParserError(Exception):
+    pass
 
 def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: nx.DiGraph = None, aggregating=False):
     """
@@ -507,22 +509,120 @@ def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: 
             original_graph.remove_node(branch[-2])
             continue
         if len(list(subgraph_view(dag, excluded_edge_type='load-state').successors(node))) > 1:
-            raise nx.NetworkXUnfeasible(f"Fatal: Query node has > 1 unaggregated-successors. This is a bug")
+            raise ParserError(f"Fatal: Query node has > 1 unaggregated-successors. This is a bug")
         successors = list(backwards.successors(node)) + list(dag.successors(node))
         if not successors:
-            return  # terminate query
+            return  # terminate traversal
         successor = successors[0]
+        if G.edges[(node, successor)]['type'] == 'dep':
+            raise ParserError(f"Fatal: traversed a dependency indicator. This is a bug")
         yield get_statement_data(G, node, successor, aggregating)
         if aggregating:
             if successor != output:
+                # TODO: outside dependencies, not global deps because, hang on think about this
                 if has_outside_dependencies(original_graph, G, successor):
                     save_state(original_graph, start, successor)
                     G = subgraph_view(G, path_to=output)
                     dag = subgraph_view(G, excluded_edge_type='wrt')
                     backwards = subgraph_view(G, only_edge_type='wrt')
-        # edge will not be used again so delete it
-        original_graph.remove_edge(node, successor)
+        original_graph.remove_edge(node, successor)  # edge will not be used again so delete it
         node = successor
+
+# TODO: multiple wrts/aggs at once
+
+def verify(graph: nx.DiGraph, ):
+    """
+    Check that edges and nodes are allowed:
+        - There is only one output node and one input node (no hanging nodes)
+        - There is a path from input->output
+        - can only aggregate to a parent
+        - There are no cyclic dependencies in the dag
+        - can only use an aggregation when it's wrt is a parent
+        - all operations must be aggregated
+        - Multiple inputs into a node should comprise:
+            all deps that are aggregated
+            one other (can be anything)
+        - For an agg node, there is only one wrt
+        - You can have > 1 inputs when they are ops
+
+        - Multiple outputs from a node:
+            no more than one out-path should be unaggregated in the end
+            (i.e. there should only be one path from start-output which contains no aggregations)
+    """
+    starts = [n for n in graph.nodes if graph.in_degree(n) == 0]
+    ends = [n for n in graph.nodes if graph.out_degree(n) == 0]
+    if len(starts) != 1:
+        raise ParserError("Only one input node is allowed")
+    if len(ends) != 1:
+        raise ParserError("Only one output node is allowed")
+    dag = subgraph_view(graph, excluded_edge_type='wrt')
+    backwards = subgraph_view(graph, only_edge_type='wrt')
+    without_agg = subgraph_view(dag, excluded_edge_type='aggr')
+    main_paths = nx.all_simple_paths(without_agg, starts[0], ends[0])
+    try:
+        next(main_paths)
+        next(main_paths)
+    except StopIteration:
+        pass
+    else:
+        # there can be 0 in the case where the output is itself an aggregation
+        raise ParserError(f"There can only be at maximum one path from {starts[0]} to {ends[0]} that is not aggregated")      
+    if not nx.is_directed_acyclic_graph(dag):
+        raise ParserError(f"There are cyclical dependencies")
+    if not nx.has_path(dag, starts[0], ends[0]):
+        raise ParserError(f"There must be a path from {starts[0]} to {ends[0]}")
+    for agg, wrt in backwards.edges:
+        if not nx.has_path(graph, wrt, agg):
+            raise ParserError(f"{wrt} must be a parent of {agg} in order to aggregate")
+        for node in dag.successors(agg):
+            if not nx.has_path(graph, wrt, node):
+                raise ParserError(f"{node} can an only use what is aggregated above it. failure on {agg} (parent={wrt})")
+    for node in graph.nodes:
+        inputs = [graph.edges[i]['type'] for i in graph.in_edges(node)]
+        inputs = [i for i in inputs if i != 'wrt']
+        outputs = [graph.edges[i]['type'] for i in graph.out_edges(node)]
+        if sum(o == 'wrt' for o in outputs) > 1:
+            raise ParserError(f"Cannot put > 1 wrt paths as output from an aggregation")
+        outputs = [o for o in outputs if o != 'wrt']
+        nfilters = sum(i == 'filter' for i in inputs)
+        ntraversals = sum(i == 'traversal' for i in inputs)
+        ndeps = sum(i == 'dep' for i in inputs)
+        nops = sum(i == 'operation' for i in inputs)
+        naggs = sum(i == 'aggr' for i in inputs)
+        if naggs > 1:
+            raise ParserError(f"Cannot aggregate more than one node at a time: {node}")
+        elif naggs:
+            if not all(o in ['dep', 'operation'] for o in outputs):
+                raise ParserError(f"Can only use aggregations as a dependency/operation afterwards {node}")
+        if nfilters > 2:
+            raise ParserError(f"Can only have one filter input: {node}")
+        elif nfilters:
+            if ntraversals + nops + naggs > 0:
+                raise ParserError(f"A filter can only take dependencies not traversals/ops/aggregations: {node}")
+        if ntraversals > 2:
+            raise ParserError(f"Can only have one traversal input: {node}")
+        elif ntraversals:
+            if len(inputs) > 1:
+                raise ParserError(f"Can only traverse with one input: {node}")
+        if nops > 1:
+            raise ParserError(f"Can only have one op input: {node}")
+        elif nops:
+            if graph.edges[list(graph.out_edges(node))[0]]['type'] != 'aggr':
+                raise ParserError(f"All operations must be aggregated back: {node}")
+            if ntraversals + naggs + nfilters > 1:
+                raise ParserError(f"Can only have dependencies as input for an operation: {node}")
+        if ndeps:
+            if ntraversals or naggs:
+                raise ParserError(f"A traversal/aggregation cannot take any other inputs: {node}")
+            if not (nops ^ nfilters):
+                raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
+
+
+
+
+
+
+
 
 
 
@@ -570,7 +670,7 @@ if __name__ == '__main__':
     # hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
     # hb_above_0 = G.add_operation(hb, [], '> 0')
     # x = G.add_aggregation(hb_above_0, obs, 'all')
-    #
+    # 
     # runs = G.add_traversal(['runs'], obs)
     # l1s = G.add_traversal(['l1'], runs)
     # camera = G.add_traversal(['camera'], l1s)
@@ -580,22 +680,39 @@ if __name__ == '__main__':
     # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
     # red_l1s = G.add_traversal(['l1'], red_runs)
     # y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
-    #
+    # 
     # targets = G.add_traversal(['target'], obs)
     # z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
-    #
+    # 
     # # TODO: need to somehow make this happen in the syntax
     # op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
-    #
+    # 
     # result = G.add_filter(obs, [op], '')
 
     ## 4
+    obs = G.add_traversal(['ob'])
+    exps = G.add_traversal(['exp'], obs)
+    runs = G.add_traversal(['run'], exps)
+    l1s = G.add_traversal(['l1'], runs)
+    snr = G.add_operation(l1s, [], 'snr')
+    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')
+    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')
+
+    exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')
+    run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')
+    l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')
+
+    condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
+    l1s = G.add_filter(l1s, [condition], '')
+    result = G.add_traversal(['l2'], l1s)
     
+
 
 
 
     G.export('parser')
     statements = []
+    verify(G.G)
     for statement_data in traverse_query_graph(G.G, result, G.start):
         statements.append(statement_data)
         print(statement_data[0]['i'], statement_data[1]['i'], statement_data[2]['type'])
