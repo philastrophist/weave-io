@@ -769,17 +769,20 @@ if __name__ == '__main__':
                 return
             yield ancestor
 
-
     def traverse(start):
         yield start
         node = start
         while True:
-            successor = where_next(node)
+            try:
+                successor = where_next(node)
+            except ValueError:
+                return  # no more to do
             yield successor
             if G.G.edges[(node, successor)]['type'] == 'wrt':
                 G.G.remove_edge(node, successor)
             if not traversal_graph.out_degree(node):
-                G.G.remove_nodes_from(dangling_branch(node))
+                to_remove = list(dangling_branch(node))
+                G.G.remove_nodes_from(to_remove)
             node = successor
 
 
@@ -802,8 +805,6 @@ if __name__ == '__main__':
     #     print(a, b)
 
 
-
-    from networkx.algorithms.approximation.traveling_salesman import traveling_salesman_problem
     # todo: save states first
     # todo: visit each edge once
     # todo: travelling salesman on edge_graph
