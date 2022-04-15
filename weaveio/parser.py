@@ -665,16 +665,16 @@ if __name__ == '__main__':
     # spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
     # result = spectra
 
-    # # 1
-    # obs = G.add_traversal(['OB'])  # obs = data.obs
-    # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
-    # spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
-    # l2 = G.add_traversal(['l2'], runs)  # runs.l2
-    # runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runs.runid * 2 > 0
-    # agg = G.add_aggregation(runid2, wrt=obs, operation='all(run.runid*2 > 0)')
-    # spectra = G.add_filter(spectra, [agg], 'spectra = spectra[all(run.runid*2 > 0)]')
-    # agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
-    # result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
+    # 1
+    obs = G.add_traversal(['OB'])  # obs = data.obs
+    runs = G.add_traversal(['run'], obs)  # runs = obs.runs
+    spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
+    l2 = G.add_traversal(['l2'], runs)  # runs.l2
+    runid2 = G.add_operation(runs, [], 'runid*2 > 0')  # runs.runid * 2 > 0
+    agg = G.add_aggregation(runid2, wrt=obs, operation='all(run.runid*2 > 0)')
+    spectra = G.add_filter(spectra, [agg], 'spectra = spectra[all(run.runid*2 > 0)]')
+    agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
+    result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
     # # 2
     # obs = G.add_traversal(['OB'])  # obs = data.obs
@@ -685,38 +685,38 @@ if __name__ == '__main__':
     # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
     # result = G.add_traversal(['l2'], spec)
 
-    # 3
-    # obs = data.obs
-    # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
-    # z = all(obs.targets.ra > 0, wrt=obs)
-    # result = obs[x & y & z]
-    obs = G.add_traversal(['OB'])  # obs = data.obs
-    l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
-    has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
-    above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
-    hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
-    hb_above_0 = G.add_operation(hb, [], '> 0')
-    x = G.add_aggregation(hb_above_0, obs, 'all')
-
-    runs = G.add_traversal(['runs'], obs)
-    l1s = G.add_traversal(['l1'], runs)
-    camera = G.add_traversal(['camera'], l1s)
-    red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
-    red_l1s = G.add_filter(l1s, [red], '')
-    red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
-    red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
-    red_l1s = G.add_traversal(['l1'], red_runs)
-    y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
-
-    targets = G.add_traversal(['target'], obs)
-    z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
-
-    # TODO: need to somehow make this happen in the syntax
-    op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
-    # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
-
-    result = G.add_filter(obs, [op], '')
+    # # 3
+    # # obs = data.obs
+    # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
+    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
+    # # z = all(obs.targets.ra > 0, wrt=obs)
+    # # result = obs[x & y & z]
+    # obs = G.add_traversal(['OB'])  # obs = data.obs
+    # l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
+    # has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
+    # above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
+    # hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
+    # hb_above_0 = G.add_operation(hb, [], '> 0')
+    # x = G.add_aggregation(hb_above_0, obs, 'all')
+    #
+    # runs = G.add_traversal(['runs'], obs)
+    # l1s = G.add_traversal(['l1'], runs)
+    # camera = G.add_traversal(['camera'], l1s)
+    # red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
+    # red_l1s = G.add_filter(l1s, [red], '')
+    # red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
+    # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
+    # red_l1s = G.add_traversal(['l1'], red_runs)
+    # y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
+    #
+    # targets = G.add_traversal(['target'], obs)
+    # z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
+    #
+    # # TODO: need to somehow make this happen in the syntax
+    # op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
+    # # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
+    #
+    # result = G.add_filter(obs, [op], '')
 
 
     # ## 4
@@ -753,14 +753,27 @@ if __name__ == '__main__':
     def get_node_i(graph, i):
         return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
 
-    def where_next(shared, backwards_graph, traversal_graph, dep_graph):
+    def where_next(shared, backwards_graph, traversal_graph, dep_graph, dag):
         try:
             return next(backwards_graph.successors(shared))  # always follow wrt
         except StopIteration:
-            potential_nodes = list(traversal_graph.successors(shared))
-            ancestors = nx.ancestors(traversal_graph, shared) | {shared}
-            deps = [set(dep_graph.predecessors(n)) - ancestors for n in potential_nodes]
-            return min(potential_nodes, key=lambda n: len(deps[potential_nodes.index(n)]))
+            sort = nx.topological_sort(nx.dfs_tree(dag, shared))
+            next(sort)
+            return next(sort)
+            # potential_nodes = list(traversal_graph.successors(shared))
+            # if len(potential_nodes) == 1:
+            #     return potential_nodes[0]
+            # ancestors = nx.ancestors(traversal_graph, shared) | {shared}
+            # deps = {}
+            # for n in potential_nodes:
+            #     dep_list = set()
+            #     descendants = set(nx.descendants(traversal_graph, n))
+            #     for d in descendants:
+            #         dep_list |= set(dep_graph.predecessors(d))
+            #     dep_list -= ancestors
+            #     dep_list -= descendants
+            #     deps[n] = dep_list
+            # return min(potential_nodes, key=lambda n: len(deps[n]))
 
     def dangling_branch(node, traversal_graph):
         for ancestor in nx.dfs_tree(traversal_graph.reverse(), node):
@@ -769,6 +782,7 @@ if __name__ == '__main__':
             yield ancestor
 
     def traverse(graph, node=None):
+        """still needs backtracking"""
         graph = graph.copy()
         dag = subgraph_view(graph, excluded_edge_type='wrt')
         backwards_graph = subgraph_view(graph, only_edge_type='wrt')
@@ -779,7 +793,7 @@ if __name__ == '__main__':
         yield node
         while True:
             try:
-                successor = where_next(node, backwards_graph, traversal_graph, dep_graph)
+                successor = where_next(node, backwards_graph, traversal_graph, dep_graph, dag)
             except ValueError:
                 return  # no more to do
             yield successor
