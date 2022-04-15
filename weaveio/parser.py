@@ -685,57 +685,57 @@ if __name__ == '__main__':
     # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
     # result = G.add_traversal(['l2'], spec)
 
-    # # 3
-    # # obs = data.obs
-    # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
-    # # z = all(obs.targets.ra > 0, wrt=obs)
-    # # result = obs[x & y & z]
-    # obs = G.add_traversal(['OB'])  # obs = data.obs
-    # l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
-    # has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
-    # above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
-    # hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
-    # hb_above_0 = G.add_operation(hb, [], '> 0')
-    # x = G.add_aggregation(hb_above_0, obs, 'all')
-    #
-    # runs = G.add_traversal(['runs'], obs)
-    # l1s = G.add_traversal(['l1'], runs)
-    # camera = G.add_traversal(['camera'], l1s)
-    # red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
-    # red_l1s = G.add_filter(l1s, [red], '')
-    # red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
-    # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
-    # red_l1s = G.add_traversal(['l1'], red_runs)
-    # y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
-    #
-    # targets = G.add_traversal(['target'], obs)
-    # z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
-    #
-    # # TODO: need to somehow make this happen in the syntax
-    # op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
-    # # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
-    #
-    # result = G.add_filter(obs, [op], '')
+    # 3
+    # obs = data.obs
+    # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
+    # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
+    # z = all(obs.targets.ra > 0, wrt=obs)
+    # result = obs[x & y & z]
+    obs = G.add_traversal(['OB'])  # obs = data.obs
+    l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
+    has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
+    above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
+    hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
+    hb_above_0 = G.add_operation(hb, [], '> 0')
+    x = G.add_aggregation(hb_above_0, obs, 'all')
+
+    runs = G.add_traversal(['runs'], obs)
+    l1s = G.add_traversal(['l1'], runs)
+    camera = G.add_traversal(['camera'], l1s)
+    red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
+    red_l1s = G.add_filter(l1s, [red], '')
+    red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
+    red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
+    red_l1s = G.add_traversal(['l1'], red_runs)
+    y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
+
+    targets = G.add_traversal(['target'], obs)
+    z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
+
+    # TODO: need to somehow make this happen in the syntax
+    op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
+    # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
+
+    result = G.add_filter(obs, [op], '')
 
 
-    ## 4
-    obs = G.add_traversal(['ob'])  # obs
-    exps = G.add_traversal(['exp'], obs)  # obs.exps
-    runs = G.add_traversal(['run'], exps)  # obs.exps.runs
-    l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
-    snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
-    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
-
-    exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
-    run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
-    l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
-
-    # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
-    l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
-    result = G.add_traversal(['l2'], l1s)
+    # ## 4
+    # obs = G.add_traversal(['ob'])  # obs
+    # exps = G.add_traversal(['exp'], obs)  # obs.exps
+    # runs = G.add_traversal(['run'], exps)  # obs.exps.runs
+    # l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
+    # snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
+    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    #
+    # exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
+    # run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
+    # l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+    #
+    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    # condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
+    # l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
+    # result = G.add_traversal(['l2'], l1s)
 
 
 
@@ -790,10 +790,23 @@ if __name__ == '__main__':
                 graph.remove_nodes_from(to_remove)
             node = successor
 
+    def verify_traversal(graph, traversal_order):
+        edges = list(zip(traversal_order[:-1], traversal_order[1:]))
+        if any(graph.edges[e]['type'] == 'dep' for e in edges):
+            raise ParserError(f"Some dep edges where traversed. This is a bug")
+        semi_dag = subgraph_view(graph, excluded_edge_type='dep')
+        if set(semi_dag.edges) != set(edges):
+            raise ParserError(f"Not all edges were traversed.")
+
+
+
+
 
     # begin = get_node_i(G.G, 0)
     ordering = list(traverse(G.G))
     print([G.G.nodes[n]["i"] for n in ordering])
+    verify_traversal(G.G, ordering)
+
 
 
     # edge_graph = nx.line_graph(subgraph_view(G.G, excluded_edge_type='dep')).copy()
