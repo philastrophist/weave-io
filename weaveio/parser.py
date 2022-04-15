@@ -747,51 +747,56 @@ if __name__ == '__main__':
     backwards = subgraph_view(G.G, only_edge_type='wrt')
     traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
     dep_graph = subgraph_view(G.G, only_edge_type='dep')
-    ordering = list(nx.topological_sort(dag))
-
     plot_graph(traversal_graph).render('parser-traversal')
+
 
     def get_node_i(graph, i):
         return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
 
-    def where_next(shared):
+    def where_next(shared, backwards_graph, traversal_graph, dep_graph):
         try:
-            return next(backwards.successors(shared))  # always follow wrt
+            return next(backwards_graph.successors(shared))  # always follow wrt
         except StopIteration:
             potential_nodes = list(traversal_graph.successors(shared))
             ancestors = nx.ancestors(traversal_graph, shared) | {shared}
             deps = [set(dep_graph.predecessors(n)) - ancestors for n in potential_nodes]
             return min(potential_nodes, key=lambda n: len(deps[potential_nodes.index(n)]))
 
-    def dangling_branch(node):
+    def dangling_branch(node, traversal_graph):
         for ancestor in nx.dfs_tree(traversal_graph.reverse(), node):
             if traversal_graph.out_degree(ancestor) > 1:
                 return
             yield ancestor
 
-    def traverse(start):
-        yield start
-        node = start
+    def traverse(graph, node=None):
+        graph = graph.copy()
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        dep_graph = subgraph_view(graph, only_edge_type='dep')
+        if node is None:
+            node = next(nx.topological_sort(traversal_graph))  # get top node
+        yield node
         while True:
             try:
-                successor = where_next(node)
+                successor = where_next(node, backwards_graph, traversal_graph, dep_graph)
             except ValueError:
                 return  # no more to do
             yield successor
-            if G.G.edges[(node, successor)]['type'] == 'wrt':
-                G.G.remove_edge(node, successor)
+            if graph.edges[(node, successor)]['type'] == 'wrt':
+                graph.remove_edge(node, successor)
             if not traversal_graph.out_degree(node):
-                to_remove = list(dangling_branch(node))
-                G.G.remove_nodes_from(to_remove)
+                to_remove = list(dangling_branch(node, traversal_graph))
+                graph.remove_nodes_from(to_remove)
             node = successor
 
 
+    # begin = get_node_i(G.G, 0)
+    ordering = list(traverse(G.G))
+    print([G.G.nodes[n]["i"] for n in ordering])
 
-    for n in traverse(get_node_i(G.G, 0)):
-        print(G.G.nodes[n]['i'])
 
-
-    edge_graph = nx.line_graph(subgraph_view(G.G, excluded_edge_type='dep')).copy()
+    # edge_graph = nx.line_graph(subgraph_view(G.G, excluded_edge_type='dep')).copy()
     # start = [n for n in edge_graph.nodes if edge_graph.in_degree(n) == 0][0]
     # end = [n for n in edge_graph.nodes if edge_graph.out_degree(n) == 0][0]
     # edge_graph.add_edge(end, start)
