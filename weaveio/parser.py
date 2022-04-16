@@ -665,7 +665,7 @@ if __name__ == '__main__':
     # spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
     # result = spectra
 
-    # 1
+    # #1
     # obs = G.add_traversal(['OB'])  # obs = data.obs
     # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
     # spectra = G.add_traversal(['spectra'], runs)  # runs.spectra
@@ -676,7 +676,7 @@ if __name__ == '__main__':
     # agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
     # result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
-    # # 2
+    # 2
     # obs = G.add_traversal(['OB'])  # obs = data.obs
     # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
     # red_runs = G.add_filter(runs, [], 'run.camera==red')
@@ -685,57 +685,57 @@ if __name__ == '__main__':
     # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
     # result = G.add_traversal(['l2'], spec)
 
-    # 3
-    # obs = data.obs
-    # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
-    # z = all(obs.targets.ra > 0, wrt=obs)
-    # result = obs[x & y & z]
-    obs = G.add_traversal(['OB'])  # obs = data.obs
-    l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
-    has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
-    above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
-    hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
-    hb_above_0 = G.add_operation(hb, [], '> 0')
-    x = G.add_aggregation(hb_above_0, obs, 'all')
-
-    runs = G.add_traversal(['runs'], obs)
-    l1s = G.add_traversal(['l1'], runs)
-    camera = G.add_traversal(['camera'], l1s)
-    red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
-    red_l1s = G.add_filter(l1s, [red], '')
-    red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
-    red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
-    red_l1s = G.add_traversal(['l1'], red_runs)
-    y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
-
-    targets = G.add_traversal(['target'], obs)
-    z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
-
-    # TODO: need to somehow make this happen in the syntax
-    op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
-    # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
-
-    result = G.add_filter(obs, [op], '')
-
-
-    # ## 4
-    # obs = G.add_traversal(['ob'])  # obs
-    # exps = G.add_traversal(['exp'], obs)  # obs.exps
-    # runs = G.add_traversal(['run'], exps)  # obs.exps.runs
-    # l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
-    # snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
-    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    # # 3
+    # # obs = data.obs
+    # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
+    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
+    # # z = all(obs.targets.ra > 0, wrt=obs)
+    # # result = obs[x & y & z]
+    # obs = G.add_traversal(['OB'])  # obs = data.obs
+    # l2s = G.add_traversal(['l2'], obs)  # l2s = obs.l2s
+    # has = G.add_traversal(['ha'], l2s)  # l2s = obs.l2s.ha
+    # above_2 = G.add_aggregation(G.add_operation(has, [], '> 2'), l2s, 'single')  # l2s > 2
+    # hb = G.add_traversal(['hb'], G.add_filter(l2s, [above_2], ''))
+    # hb_above_0 = G.add_operation(hb, [], '> 0')
+    # x = G.add_aggregation(hb_above_0, obs, 'all')
     #
-    # exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
-    # run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
-    # l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+    # runs = G.add_traversal(['runs'], obs)
+    # l1s = G.add_traversal(['l1'], runs)
+    # camera = G.add_traversal(['camera'], l1s)
+    # red = G.add_aggregation(G.add_operation(camera, [], '==red'), l1s, 'single')
+    # red_l1s = G.add_filter(l1s, [red], '')
+    # red_snrs = G.add_operation(red_l1s, [], 'snr > 0')
+    # red_runs = G.add_filter(runs, [G.add_aggregation(red_snrs, runs, 'all')], '')
+    # red_l1s = G.add_traversal(['l1'], red_runs)
+    # y = G.add_aggregation(G.add_operation(red_l1s, [], 'snr'), obs, 'mean')
     #
-    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    # condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
-    # l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
-    # result = G.add_traversal(['l2'], l1s)
+    # targets = G.add_traversal(['target'], obs)
+    # z = G.add_aggregation(G.add_operation(targets, [], 'target.ra > 0'), obs, 'all')
+    #
+    # # TODO: need to somehow make this happen in the syntax
+    # op = G.add_aggregation(G.add_operation(obs, [x, y, z], 'x&y&z'), obs, 'single')
+    # # op = G.add_aggregation(G.add_operation(obs, [x], 'x'), obs, 'single')
+    #
+    # result = G.add_filter(obs, [op], '')
+
+
+    ## 4
+    obs = G.add_traversal(['ob'])  # obs
+    exps = G.add_traversal(['exp'], obs)  # obs.exps
+    runs = G.add_traversal(['run'], exps)  # obs.exps.runs
+    l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
+    snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
+    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+
+    exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
+    run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
+    l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+
+    # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
+    l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
+    result = G.add_traversal(['l2'], l1s)
 
 
 
@@ -884,12 +884,14 @@ if __name__ == '__main__':
     class DeadEndException(Exception):
         pass
 
-    def traverse3(graph, start=None, end=None, done=None):
+    def traverse3(graph, start=None, end=None, done=None, indent=''):
         """
         traverse the traversal_graph with backtracking
         """
         dag = subgraph_view(graph, excluded_edge_type='wrt')
-        semi_traversal = subgraph_view(graph, excluded_edge_type='dep')   # can go through wrt and traversals
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        # semi_traversal = subgraph_view(graph, excluded_edge_type='dep')   # can go through wrt and traversals
         dep_graph = subgraph_view(graph, only_edge_type='dep')
         if start is None or end is None:
             naive_ordering = list(nx.topological_sort(dag))
@@ -901,10 +903,13 @@ if __name__ == '__main__':
         node = start
         done = set() if done is None else done  # stores wrt edges and visited nodes
         while True:
+            i = graph.nodes[node]['i']
             dependencies = dep_graph.predecessors(node)
             if not all(dep in done for dep in dependencies):
                 raise DeadEndException
-            options = list(semi_traversal.successors(node))   # where to go next?
+            options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
+            if not options:
+                options = list(traversal_graph.successors(node))   # where to go next?
             if not options:
                 # if you cant go anywhere and you're not done, then this recursive path is bad
                 if node != end:
@@ -928,7 +933,10 @@ if __name__ == '__main__':
                 for option in options:
                     try:
                         new_done = done.copy()
-                        ordering += traverse3(graph, option, end, new_done)
+                        o = [graph.nodes[n]['i'] for n in ordering]
+                        op = graph.nodes[option]['i']
+                        print(f'{indent}{o} -> attempt {op}')
+                        ordering += traverse3(graph, option, end, new_done, indent+'\t')
                         done.update(new_done)
                         node = ordering[-1]
                         break
