@@ -1,11 +1,9 @@
-from collections import deque
-from functools import cmp_to_key
+from typing import List, Tuple
 
-import networkx as nx
 import graphviz
-from networkx import dfs_tree, dfs_edges, NodeNotFound
+import networkx as nx
+from networkx import dfs_tree
 from networkx.drawing.nx_pydot import to_pydot
-from typing import List, Tuple, Optional
 
 
 def plot_graph(graph):
@@ -99,368 +97,6 @@ def aggregate(graph: nx.DiGraph, wrt, sub_dag_nodes):
     return statement
 
 
-class UniqueDeque(deque):
-
-    def __init__(self, iterable, maxlen=None, maintain=True) -> None:
-        super().__init__([], maxlen)
-        for x in iterable:
-            self.append(x, maintain)
-
-    def append(self, x, maintain=False) -> None:
-        if x in self:
-            if maintain:
-               return
-            self.remove(x)
-        super().append(x)
-
-    def appendleft(self, x, maintain=False) -> None:
-        if x in self:
-            if maintain:
-               return
-            self.remove(x)
-        super().appendleft(x)
-
-    def extend(self, iterable, maintain=False) -> None:
-        for x in iterable:
-            self.append(x, maintain)
-
-    def extendleft(self, iterable, maintain=False) -> None:
-        for x in reversed(iterable):
-            self.appendleft(x, maintain)
-
-    def insert(self, i: int, x, maintain=False) -> None:
-        if x in self:
-            ii = self.index(x)
-            if i == ii:
-                return
-            if maintain:
-                return
-            self.remove(x)
-            if ii < i:
-                super().insert(i-1, x)
-            elif ii == i:
-                super().insert(i, x)
-
-def aggregate_reused_filtered_nodes(graph: nx.DiGraph):
-    """
-
-
-    """
-
-    for n in list(graph.nodes):
-        filts = [edge for edge in graph.out_edges(n) if graph.edges[edge]['type'] == 'filter']
-        nonfilts = [edge for edge in graph.out_edges(n) if graph.edges[edge]['type'] != 'filter']
-        if filts and nonfilts:
-            wrt = next(graph.predecessors(n))  # TODO: this fails if its not a traversal edge
-            add_aggregation(graph, n, wrt, f'collect({n})')
-
-
-class QueryGraph:
-    """
-    Rules of adding nodes/edges:
-    Traversal:
-        Can only traverse to another hierarchy object if there is a path between them
-        Always increases/maintains cardinality
-    Aggregation:
-        You can only aggregate back to a predecessor of a node (the parent)
-        Nodes which require another aggregation node must share the same parent as just defined above
-
-    Golden rule:
-        dependencies of a node must share an explicit parent node
-        this basically says that you can only compare nodes which have the same parents
-
-    optimisations:
-        If the graph is duplicated in multiple positions, attempt to not redo effort
-        For instance, if you traverse and then agg+filter back to a parent and the traverse the same path
-        again after filtering, then the aggregation is changed to conserve the required data and the duplicated traversal is removed
-
-    """
-
-    def __init__(self):
-        self.G = nx.DiGraph()
-        self.start = add_start(self.G, 'data')
-
-    def export(self, fname):
-        return plot_graph(self.G).render(fname)
-
-    def add_traversal(self, path, parent=None):
-        if parent is None:
-            parent = self.start
-        return add_traversal(self.G, parent, path)
-
-    def add_operation(self, parent, dependencies, operation):
-        # do not allow
-        return add_operation(self.G, parent, dependencies, operation)
-
-    def add_aggregation(self, parent, wrt, operation):
-        return add_aggregation(self.G, parent, wrt, operation)
-
-    def add_filter(self, parent, dependencies, operation):
-        return add_filter(self.G, parent, dependencies, operation)
-
-    def optimise(self):
-        # TODO: combine get-attribute statements etc...
-        pass
-
-    def parse(self, output):
-        """
-        Traverse this query graph in the order that will produce a valid cypher query
-        Rules:
-            1. DAG rules apply: dependencies must be completed before their dependents
-            2. When an aggregation route is traversed, you must follow its outward line back to wrt
-            3. Do aggregations as early as possible
-            4. Aggregations change the graph by collecting
-            5. If a node is subsequently filtered, do all unfiltered ops first
-        Order of operations at a node N are:
-            1. Aggregation branches that perform any filter (
-            2. Aggregation branches that perform any filter (add a collection before doing this)
-            3. Root continuation
-        """
-        G = nx.subgraph_view(self.G, filter_node=lambda n: nx.has_path(self.G, n, output)).copy()  # type: nx.DiGraph
-        # return parse(G, output)
-        statements = []
-        dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt')  # type: nx.DiGraph
-        backwards = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') == 'wrt')  # type: nx.DiGraph
-        ordering = UniqueDeque(nx.topological_sort(dag))
-        # TODO: when do we break into subqueries? at aggregation?
-        previous_node = None
-        branch = []
-        while ordering:
-            node = ordering.popleft()
-            branches = []
-            # find the simplest aggregation and add the required nodes to the front of the queue
-            for future_aggregation in backwards.predecessors(node):
-                agg_ancestors = nx.ancestors(dag, future_aggregation)
-                node_ancestors = nx.ancestors(dag, node)
-                sub_dag = nx.subgraph_view(dag, lambda n: n in agg_ancestors and n not in node_ancestors)
-                branches.append(list(nx.topological_sort(sub_dag))[1:]+[future_aggregation, node])
-            simple_branches = [branch for branch in branches if all(dag.edges[a, b]['type'] != 'filter' for a, b in zip(branch[:-1], branch[1:]))]
-
-            if simple_branches:
-                branches = simple_branches  # do the filters later
-            elif branches:
-                # there are filters annoying us here, so we protect the previous+current state by aggregating it
-                # this bit isn't hit if there is a filter-branch that doesn't aggregate (ie. its the main root)
-                statement = parse_edge(G, previous_node, node, [])
-                statements.append(statement)
-                path_backwards = nx.shortest_path(dag, self.start, node)[::-1]  # only one path exists
-                for b, a in zip(path_backwards[:-1], path_backwards[1:]):
-                    if G.edges[(a, b)]['type'] == 'traversal':
-                        break
-                else:
-                    raise ValueError("No part of this branch contains a traversal")
-                statement = aggregate(G, a, path_backwards[:path_backwards.index(a)+1])  # TODO: does this work when its a single traversal?
-                statements.append(statement)
-                before = nx.ancestors(dag, a)
-                ordering = UniqueDeque(nx.topological_sort(nx.subgraph_view(dag, lambda n: n not in before)))
-                previous_node = None
-                continue
-            branches.sort(key=lambda x: len(x))
-
-            # if a branch depends on another branch then that first branch will contain the required branch
-            # therefore, taking the branch with minimum number of nodes will suffice
-            # However, if a filter is required and the nfiltered node is required later, then we either
-            # have to repeat ourselves or collect everything
-            if branches:
-                branch = branches[0]
-                ordering.extendleft(branch)
-            if previous_node is None:
-                previous_node = node
-                continue
-            edge_type = self.G.edges[(previous_node, node)]['type']
-            if edge_type == 'aggr':
-                # now change the graph to reflect that we've collected things
-                wrt = next(backwards.successors(node))
-                statement = aggregate(G, wrt, branch[:-1])
-                before = nx.ancestors(dag, wrt)
-                ordering = UniqueDeque(nx.topological_sort(nx.subgraph_view(dag, lambda n: n not in before)))
-                previous_node = None
-            else:
-                # just create the statement given by the edge
-                statement = parse_edge(G, previous_node, node, [])
-                previous_node = node
-            statements.append(statement)
-        return statements
-
-
-@cmp_to_key
-def compare_two_dags(dag1: str, dag2: str):
-    if any(n in dag2 for n in dag1):
-        return +1
-    if any(n in dag1 for n in dag2):
-        return -1
-    else:
-        return 0
-
-def preserve_state_for_subqueries(graph: nx.DiGraph, start: str, node: str):
-    dag = nx.subgraph_view(graph, filter_edge=lambda a, b: graph.edges[(a, b)].get('type', '') != 'wrt')
-    wrts = nx.subgraph_view(graph, filter_edge=lambda a, b: graph.edges[(a, b)].get('type', '') == 'wrt')
-    path_backwards = nx.shortest_path(dag, start, node)[::-1]  # only one path exists
-    for b, wrt in zip(path_backwards[:-1], path_backwards[1:]):
-        if graph.edges[(wrt, b)]['type'] == 'traversal':
-            break
-    else:
-        raise ValueError("Fatal error: BUG: No part of this branch contains a traversal")
-    aggregated_node = add_aggregation(graph, node, wrt, f'collect()', type='pre-subquery')
-    unwound = make_node(graph, aggregated_node, graph.nodes[node]['subgraph'], [], 'unwind', 'unwind', 'unwind')
-    for out_edge in list(graph.out_edges(node)):
-        if out_edge[1] != aggregated_node:
-            graph.add_edge(unwound, out_edge[1], **graph.edges[out_edge])
-            graph.remove_edge(*out_edge)
-    for in_edge in list(wrts.in_edges(node)):
-        graph.add_edge(in_edge[0], unwound, **graph.edges[in_edge])
-        graph.remove_edge(*in_edge)
-    return aggregated_node, unwound
-    # return aggregate(graph, wrt, path_backwards[:path_backwards.index(wrt) + 1]), wrt  # this works when its a single traversal
-
-def get_branches(dag: nx.DiGraph, backwards: nx.DiGraph, parent: str) -> Tuple[List[List[str]], bool]:
-    """
-    finds the sub DAG nodes which comprise branches separating off from `parent`
-    returns: branches: List[List[str]], unwound: True/False
-    """
-    branches = []
-    for future_aggregation in backwards.predecessors(parent):
-        agg_ancestors = nx.ancestors(dag, future_aggregation)
-        node_ancestors = nx.ancestors(dag, parent)
-        sub_dag = nx.subgraph_view(dag, lambda n: n in agg_ancestors and n not in node_ancestors)
-        # sub_dag = subgraph_view(dag, only_nodes=agg_ancestors | {future_aggregation, parent},
-        #                         excluded_nodes=node_ancestors,
-        #                         excluded_edge_type='dep',
-        #                         path_to=future_aggregation)
-        # sub_dag is only the absolutely required nodes to reach `future_aggregation` from `parent`
-        # sub_dag = nx.shortest_simple_paths(dag, parent, future_aggregation)
-        branches.append(list(nx.topological_sort(sub_dag))[1:] + [future_aggregation, parent])
-    branches.sort(key=compare_two_dags)
-    return branches, not any(i[-1]['type'] == 'unwind' for i in dag.in_edges(parent, data=True, default=(None, None, {'type': ''})))
-
-
-def sever_branch_wrt_connections(graph: nx.DiGraph, *branches: List[str]) -> None:
-    for branch in branches:
-        agg = branch[-2]
-        wrt = branch[-1]
-        graph.remove_edge(agg, wrt)
-
-
-def rephrase_filtered_operations(graph: nx.DiGraph) -> None:
-    """
-    You are allowed to filter on operations such as:
-    (ob.runids * sum(ob.expmjds, wrt=ob))[ob.expmjd > 0 & ob.runid > 0]
-    but for the filtering to work, it needs to be rephrased as a filtering on a hierarchy
-    ob.runs[ob.expmjd > 0 & ob.runs.runid > 0].runid * sum(ob.expmjds, wrt=ob))
-    [off-branch dependencies are already folded in]
-    steps:
-    1. find all filter edges where output is operation
-    2. replace (hier)--(op)--(op)--...--(op)-|-(op) with (hier)-|-(hier)--(get
-    """
-    for edge in graph.edges:
-        if graph.edges[edge]['type'] == 'filter':
-            if any(graph.edges[e]['type'] == 'operation' for e in graph.in_edges(edge[1])):
-                raise NotImplementedError(f"Filtering an operation is not yet supported")
-
-
-
-# def parse(G: nx.DiGraph, output: str):
-#     G = nx.subgraph_view(G, filter_node=lambda n: nx.has_path(G, n, output)).copy()  # type: nx.DiGraph
-#     rephrase_filtered_operations(G)
-#     statements = []
-#     dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt')  # type: nx.DiGraph
-#     backwards = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') == 'wrt')  # type: nx.DiGraph
-#     ordering = UniqueDeque(nx.topological_sort(dag))
-#     previous_node = None
-#     while ordering:
-#         node = ordering.popleft()
-#         branches, needs_preserving = get_branches(dag, backwards, node)
-#         if branches:
-#             branches.sort(key=compare_two_dags)
-#             branch = branches[0]
-#             ordering.extendleft(branch)
-#         if previous_node is None:
-#             previous_node = node
-#             continue
-#         edge_type = G.edges[(previous_node, node)]['type']
-#         if edge_type == 'aggr':
-#             previous_node =
-
-def parse2(G: nx.DiGraph, output: str, subquery=False):
-    """
-    Traverse the dependency DAG in order of dependency
-    Open and close subqueries on branches off of the main trunk that contain filters
-    """
-    G = nx.subgraph_view(G, filter_node=lambda n: nx.has_path(G, n, output)).copy()  # type: nx.DiGraph
-    statements = []
-    dag = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') != 'wrt')  # type: nx.DiGraph
-    backwards = nx.subgraph_view(G, filter_edge=lambda a, b: G.edges[(a, b)].get('type', '') == 'wrt')  # type: nx.DiGraph
-    ordering = list(nx.topological_sort(dag))
-    start = ordering[0]
-    ordering = UniqueDeque(ordering)
-    previous_node = None
-    branch = []
-
-    if subquery:
-        statements.append('CALL { with variables ')
-        # previous_node = ordering.popleft()
-
-    while ordering:
-        node = ordering.popleft()
-        branches, needs_preserving = get_branches(dag, backwards, node)
-        if branches:
-            if needs_preserving:
-                aggregated, unwound = preserve_state_for_subqueries(G, start, node)
-                ordering.appendleft(unwound)
-                ordering.appendleft(aggregated)
-            else:
-                branches.sort(key=compare_two_dags)
-                # if a branch depends on another branch then that first branch will contain the required branch
-                # therefore, taking the branch with minimum number of nodes will suffice
-                branch = branches[0]
-                sever_branch_wrt_connections(G, branch)
-                collection = next(G.predecessors(node))
-                sub_graph = nx.subgraph_view(G, lambda n: (n in branch) or (n == collection)).copy()
-                sub_statements = parse(sub_graph, branch[-2], node)
-                for node in branch[:-1]:
-                    ordering.remove(node)
-                previous_node = node
-                statements.append(sub_statements)
-                continue
-        if previous_node is None:
-            previous_node = node
-            continue
-        # just create the statement given by the edge
-        statement = parse_edge(G, previous_node, node, [])
-        previous_node = node
-        statements.append(statement)
-    if subquery:
-        statements.append('return variables }')
-    return statements
-
-
-def get_statement_data(graph, a, b, is_aggregating):
-    return graph.nodes[a], graph.nodes[b], graph.edges[(a, b)], is_aggregating
-
-
-def save_state(graph: nx.DiGraph, wrt: str, node: str):
-    """
-    collects up the given node into a state list which can be unwound to get back to where you were
-    this replaces the `traversal` with an `unwind`
-    """
-    aggregated = add_aggregation(graph, node, wrt, 'save-state', 'save-state')  # new node attached to node and then to wrt
-    d = graph.edges[(wrt, node)]  # original edge
-    d['label'] = f'load-state {graph.nodes[node]["_name"]}'
-    d['type'] = 'load-state'
-    d['operation'] = 'load-state'
-    # graph.remove_edge(wrt, node)
-    # graph.add_edge(wrt, aggregated)
-    for successor in list(graph.successors(node)):
-        if successor != aggregated:
-            loaded_state = make_node(graph, wrt, graph.nodes[node]['subgraph'], [], **d)
-            graph.add_edge(loaded_state, successor, **graph.edges[(node, successor)])
-            graph.remove_edge(node, successor)
-    # graph.remove_node(node)
-    return aggregated
-
-def has_outside_dependencies(super_graph: nx.DiGraph, graph: nx.DiGraph, node: str) -> bool:
-    return any(n not in graph for n in super_graph.successors(node) if super_graph.edges[(node, n)]['type'] != 'load-state')
-
 def subgraph_view(graph: nx.DiGraph, excluded_edge_type=None, only_edge_type=None,
                   only_nodes: List = None, excluded_nodes: List = None,
                   only_edges: List[Tuple] = None, excluded_edges: List[Tuple] = None,
@@ -488,69 +124,92 @@ def subgraph_view(graph: nx.DiGraph, excluded_edge_type=None, only_edge_type=Non
 class ParserError(Exception):
     pass
 
-def traverse_query_graph(G: nx.DiGraph, output: str, node: str, original_graph: nx.DiGraph = None, aggregating=False):
-    """
-    if there is a fork in the graph, then this means the state should be saved
-    """
-    if original_graph is None:
-        # all graph operations must be done on the original_graph, since only Views get passed on to recursion
-        original_graph = G.copy()
-        G = subgraph_view(original_graph)
-    dag = subgraph_view(G, excluded_edge_type='wrt')
-    backwards = subgraph_view(G, only_edge_type='wrt')
-    start = node
 
-    while G.edges:
-        branches, _ = get_branches(dag, backwards, node)  # sorted in terms of inter-dependency
-        if branches:
-            branch = branches[0]
-            forbidden_edge = (branch[-2], node)
-            sub_graph = subgraph_view(G, only_nodes=branch, excluded_edges=[forbidden_edge],
-                                      path_to=branch[-2])
-            # the below recursion may edit the graph
-            yield from traverse_query_graph(sub_graph, branch[-2], node, original_graph, True)  # do the sub branch first
-            # TODO: remove the aggregation node, move output edges to come from the wrt node?
-            original_graph.remove_edge(branch[-2], branch[-1])
-            original_graph.remove_node(branch[-2])
-            continue
-        if len(list(subgraph_view(dag, excluded_edge_type='load-state').successors(node))) > 1:
-            raise ParserError(f"Fatal: Query node has > 1 unaggregated-successors. This is a bug")
-        successors = list(backwards.successors(node)) + list(dag.successors(node))
-        if not successors:
-            return  # terminate traversal
-        successor = successors[0]
-        if G.edges[(node, successor)]['type'] == 'dep':
-            raise ParserError(f"Fatal: traversed a dependency indicator. This is a bug")
-        yield get_statement_data(G, node, successor, aggregating)
-        if aggregating:
-            if successor != output:
-                # TODO: outside dependencies, not global deps because, hang on think about this
-                if has_outside_dependencies(original_graph, G, successor):
-                    save_state(original_graph, start, successor)
-                    G = subgraph_view(G, path_to=output)
-                    dag = subgraph_view(G, excluded_edge_type='wrt')
-                    backwards = subgraph_view(G, only_edge_type='wrt')
-        original_graph.remove_edge(node, successor)  # edge will not be used again so delete it
-        node = successor
+def get_node_i(graph, i):
+    return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
 
-def prepare_graph(graph: nx.DiGraph):
-    """
-    1. uses on aggregated nodes must take the wrt node as input and the aggregation as dep
-    2.
-    """
-    backwards = subgraph_view(graph, only_edge_type='wrt')
-    for a, b, data in list(graph.edges(data=True)):
-        if data['type'] == 'operation':
-            try:
-                wrt = next(backwards.successors(a))
-                graph.add_edge(wrt, b, **graph.edges[(a, b)])
-                graph.remove_edge(a, b)
-                graph.add_edge(a, b, type='dep', style='dotted')
-            except StopIteration:
-                pass
+def node_dependencies(graph, node):
+    dag = subgraph_view(graph, excluded_edge_type='wrt')
+    return {n for n in graph.nodes if nx.has_path(dag, n, node)} - {node}
+
+def verify_traversal(graph, traversal_order):
+    edges = list(zip(traversal_order[:-1], traversal_order[1:]))
+    if any(graph.edges[e]['type'] == 'dep' for e in edges):
+        raise ParserError(f"Some dep edges where traversed. This is a bug")
+    semi_dag = subgraph_view(graph, excluded_edge_type='dep')
+    if set(semi_dag.edges) != set(edges):
+        raise ParserError(f"Not all edges were traversed. This is a bug")
+    done = set()
+    for n in traversal_order:
+        if n not in done:
+            if not all(dep in done for dep in node_dependencies(graph, n)):
+                raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug")
+            done.add(n)
 
 
-def verify(graph: nx.DiGraph, ):
+class DeadEndException(Exception):
+    pass
+
+
+def traverse(graph, start=None, end=None, done=None):
+    """
+    traverse the traversal_graph with backtracking
+    """
+    dag = subgraph_view(graph, excluded_edge_type='wrt')
+    backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+    traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+    # semi_traversal = subgraph_view(graph, excluded_edge_type='dep')   # can go through wrt and traversals
+    dep_graph = subgraph_view(graph, only_edge_type='dep')
+    if start is None or end is None:
+        naive_ordering = list(nx.topological_sort(dag))
+        if start is None:
+            start = naive_ordering[0]  # get top node
+        if end is None:
+            end = naive_ordering[-1]
+    ordering = [start]
+    node = start
+    done = set() if done is None else done  # stores wrt edges and visited nodes
+    while True:
+        dependencies = dep_graph.predecessors(node)
+        if not all(dep in done for dep in dependencies):
+            raise DeadEndException
+        options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
+        if not options:
+            options = list(traversal_graph.successors(node))   # where to go next?
+        if not options:
+            # if you cant go anywhere and you're not done, then this recursive path is bad
+            if node != end:
+                raise DeadEndException
+            else:
+                return ordering
+        elif len(options) == 1:
+            # if there is only one option, go there... obviously
+            edge = (node, options[0])
+            if edge in done:
+                # recursive path is bad if you have to go over the same wrt edge more than once
+                raise DeadEndException
+            elif graph.edges[edge]['type'] == 'wrt':
+                done.add(edge)
+            done.add(node)
+            node = options[0]
+            ordering.append(node)
+        else:
+            # open up recursive paths from each available option
+            # this is such a greedy algorithm
+            for option in options:
+                try:
+                    new_done = done.copy()
+                    ordering += traverse(graph, option, end, new_done)
+                    done.update(new_done)
+                    node = ordering[-1]
+                    break
+                except DeadEndException:
+                    pass  # try another option
+            else:
+                raise DeadEndException  # all options exhausted, entire recursive path is bad
+
+
+def verify(graph):
     """
     Check that edges and nodes are allowed:
         - There is only one output node and one input node (no hanging nodes)
@@ -643,20 +302,63 @@ def verify(graph: nx.DiGraph, ):
             if not (nops ^ nfilters):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
 
-def traverse_backtrack(graph):
-    """
-    There is always only one way to get to a node (in the dag)
 
-    Rules:
-        - wrt are traversed exactly once
-        -
+class QueryGraph:
     """
-    edge_graph = nx.line_graph(subgraph_view(graph, excluded_edge_type='dep')).copy()
-    start = [n for n in edge_graph.nodes if edge_graph.in_degree(n) == 0][0]
-    end = [n for n in edge_graph.nodes if edge_graph.out_degree(n) == 0][0]
+    Rules of adding nodes/edges:
+    Traversal:
+        Can only traverse to another hierarchy object if there is a path between them
+        Always increases/maintains cardinality
+    Aggregation:
+        You can only aggregate back to a predecessor of a node (the parent)
+        Nodes which require another aggregation node must share the same parent as just defined above
+
+    Golden rule:
+        dependencies of a node must share an explicit parent node
+        this basically says that you can only compare nodes which have the same parents
+
+    optimisations:
+        If the graph is duplicated in multiple positions, attempt to not redo effort
+        For instance, if you traverse and then agg+filter back to a parent and the traverse the same path
+        again after filtering, then the aggregation is changed to conserve the required data and the duplicated traversal is removed
+
+    """
+
+    def __init__(self):
+        self.G = nx.DiGraph()
+        self.start = add_start(self.G, 'data')
+
+    def export(self, fname):
+        return plot_graph(self.G).render(fname)
+
+    def add_traversal(self, path, parent=None):
+        if parent is None:
+            parent = self.start
+        return add_traversal(self.G, parent, path)
+
+    def add_operation(self, parent, dependencies, operation):
+        # do not allow
+        return add_operation(self.G, parent, dependencies, operation)
+
+    def add_aggregation(self, parent, wrt, operation):
+        return add_aggregation(self.G, parent, wrt, operation)
+
+    def add_filter(self, parent, dependencies, operation):
+        return add_filter(self.G, parent, dependencies, operation)
+
+    def optimise(self):
+        # TODO: combine get-attribute statements etc...
+        pass
+
+    def traverse(self, result_node=None):
+        if result_node is not None:
+            graph = nx.subgraph_view(G.G, path_to=result_node)
+        else:
+            graph = G.G
+        verify(graph)
+        return traverse(graph)
 
 if __name__ == '__main__':
-    from json import dumps
     G = QueryGraph()
 
     # # # 0
@@ -740,8 +442,6 @@ if __name__ == '__main__':
 
 
     # used to use networkx 2.4
-    verify(G.G)
-    # prepare_graph(G.G)
     G.export('parser')
     dag = subgraph_view(G.G, excluded_edge_type='wrt')
     backwards = subgraph_view(G.G, only_edge_type='wrt')
@@ -750,206 +450,11 @@ if __name__ == '__main__':
     plot_graph(traversal_graph).render('parser-traversal')
 
 
-    def get_node_i(graph, i):
-        return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
-
-    def where_next(shared, backwards_graph, traversal_graph, dep_graph, dag):
-        try:
-            return next(backwards_graph.successors(shared))  # always follow wrt
-        except StopIteration:
-            sort = nx.topological_sort(nx.dfs_tree(dag, shared))
-            next(sort)
-            return next(sort)
-
-    def dependencies_of_branches(graph, node):
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-        aggregations = list(backwards_graph.predecessors(node))
-        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-        if not aggregations:
-            return []
-        ancestors = nx.ancestors(dag, node)
-        ancestors.add(node)
-        branches = []
-        for aggregation in aggregations:
-            path = nx.shortest_path(traversal_graph, node, aggregation)
-            deps = {d for n in path for d in subgraph_view(dag, path_to=n).nodes} - ancestors
-            deps -= set(path)
-            branches.append((path[1:], deps))
-        branches.sort(key=lambda b: len(b[1]))
-        return branches
-
-    def dependencies_of_forks(graph, node):
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-        successors = list(node.successors(node))
-        if not successors:
-            return []
-        ancestors = nx.ancestors(dag, node)
-        ancestors.add(node)
-        branches = []
-        for successor in successors:
-            tree = nx.dfs_tree(traversal_graph, node)
-            deps = {d for n in tree for d in subgraph_view(dag, path_to=n).nodes} - ancestors
-            deps -= set(tree.nodes)
-            branches.append(deps)
-        branches.sort(key=lambda b: len(b[1]))
-        return branches
-
-
-
-
-
-    def dangling_branch(node, traversal_graph):
-        for ancestor in nx.dfs_tree(traversal_graph.reverse(), node):
-            if traversal_graph.out_degree(ancestor) > 1:
-                return
-            yield ancestor
-
-    def traverse(graph, node=None):
-        """still needs backtracking"""
-        graph = graph.copy()
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-        dep_graph = subgraph_view(graph, only_edge_type='dep')
-        if node is None:
-            node = next(nx.topological_sort(traversal_graph))  # get top node
-        yield node
-        while True:
-            try:
-                # store state here so we can revert to later
-                # so make `where_next` an iterator so we can keep trying
-                successor = where_next(node, backwards_graph, traversal_graph, dep_graph, dag)
-            except ValueError:
-                return  # no more to do
-            yield successor
-            if graph.edges[(node, successor)]['type'] == 'wrt':
-                graph.remove_edge(node, successor)
-            if not traversal_graph.out_degree(node):
-                to_remove = list(dangling_branch(node, traversal_graph))
-                graph.remove_nodes_from(to_remove)
-            node = successor
-
-    def node_dependencies(graph, node):
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        return {n for n in graph.nodes if nx.has_path(dag, n, node)} - {node}
-
-    def verify_traversal(graph, traversal_order):
-        edges = list(zip(traversal_order[:-1], traversal_order[1:]))
-        if any(graph.edges[e]['type'] == 'dep' for e in edges):
-            raise ParserError(f"Some dep edges where traversed. This is a bug")
-        semi_dag = subgraph_view(graph, excluded_edge_type='dep')
-        if set(semi_dag.edges) != set(edges):
-            raise ParserError(f"Not all edges were traversed. This is a bug")
-        done = set()
-        for n in traversal_order:
-            if n not in done:
-                if not all(dep in done for dep in node_dependencies(graph, n)):
-                    raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug")
-                done.add(n)
-
-
-    def traverse2(graph, start=None, end=None):
-        graph = graph.copy()
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-        dep_graph = subgraph_view(graph, only_edge_type='dep')
-        naive_ordering = list(nx.topological_sort(dag))
-        if start is None:
-            start = naive_ordering[0]  # get top node
-        if end is None:
-            end = naive_ordering[-1]
-        path = nx.shortest_path(traversal_graph, start, end)
-        n = path.pop(0)
-        yield n
-        while n != end:
-            try:
-                successor = next(backwards_graph.successors(n))
-                if not path:
-                    graph.remove_edge(n, successor)
-                n = successor
-            except StopIteration:
-                if not path:
-                    path = nx.shortest_path(traversal_graph, n, end)[1:]
-                n = path.pop(0)
-            yield n
-            branches = dependencies_of_branches(graph, n)
-            if branches:
-                path, deps = branches[0]
-
-
-    class DeadEndException(Exception):
-        pass
-
-    def traverse3(graph, start=None, end=None, done=None, indent=''):
-        """
-        traverse the traversal_graph with backtracking
-        """
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-        # semi_traversal = subgraph_view(graph, excluded_edge_type='dep')   # can go through wrt and traversals
-        dep_graph = subgraph_view(graph, only_edge_type='dep')
-        if start is None or end is None:
-            naive_ordering = list(nx.topological_sort(dag))
-            if start is None:
-                start = naive_ordering[0]  # get top node
-            if end is None:
-                end = naive_ordering[-1]
-        ordering = [start]
-        node = start
-        done = set() if done is None else done  # stores wrt edges and visited nodes
-        while True:
-            i = graph.nodes[node]['i']
-            dependencies = dep_graph.predecessors(node)
-            if not all(dep in done for dep in dependencies):
-                raise DeadEndException
-            options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
-            if not options:
-                options = list(traversal_graph.successors(node))   # where to go next?
-            if not options:
-                # if you cant go anywhere and you're not done, then this recursive path is bad
-                if node != end:
-                    raise DeadEndException
-                else:
-                    return ordering
-            elif len(options) == 1:
-                # if there is only one option, go there... obviously
-                edge = (node, options[0])
-                if edge in done:
-                    # recursive path is bad if you have to go over the same wrt edge more than once
-                    raise DeadEndException
-                elif graph.edges[edge]['type'] == 'wrt':
-                    done.add(edge)
-                done.add(node)
-                node = options[0]
-                ordering.append(node)
-            else:
-                # open up recursive paths from each available option
-                # this is such a greedy algorithm
-                for option in options:
-                    try:
-                        new_done = done.copy()
-                        o = [graph.nodes[n]['i'] for n in ordering]
-                        op = graph.nodes[option]['i']
-                        print(f'{indent}{o} -> attempt {op}')
-                        ordering += traverse3(graph, option, end, new_done, indent+'\t')
-                        done.update(new_done)
-                        node = ordering[-1]
-                        break
-                    except DeadEndException:
-                        pass  # try another option
-                else:
-                    raise DeadEndException  # all options exhausted, entire recursive path is bad
-
 
     ordering = []
     import time
     start_time = time.perf_counter()
-    for n in traverse3(G.G.copy()):
+    for n in G.traverse():
         end_time = time.perf_counter()
         print(G.G.nodes[n]["i"])
         ordering.append(n)
