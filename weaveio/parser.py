@@ -760,20 +760,46 @@ if __name__ == '__main__':
             sort = nx.topological_sort(nx.dfs_tree(dag, shared))
             next(sort)
             return next(sort)
-            # potential_nodes = list(traversal_graph.successors(shared))
-            # if len(potential_nodes) == 1:
-            #     return potential_nodes[0]
-            # ancestors = nx.ancestors(traversal_graph, shared) | {shared}
-            # deps = {}
-            # for n in potential_nodes:
-            #     dep_list = set()
-            #     descendants = set(nx.descendants(traversal_graph, n))
-            #     for d in descendants:
-            #         dep_list |= set(dep_graph.predecessors(d))
-            #     dep_list -= ancestors
-            #     dep_list -= descendants
-            #     deps[n] = dep_list
-            # return min(potential_nodes, key=lambda n: len(deps[n]))
+
+    def dependencies_of_branches(graph, node):
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        aggregations = list(backwards_graph.predecessors(node))
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        if not aggregations:
+            return []
+        ancestors = nx.ancestors(dag, node)
+        ancestors.add(node)
+        branches = []
+        for aggregation in aggregations:
+            path = nx.shortest_path(traversal_graph, node, aggregation)
+            deps = {d for n in path for d in subgraph_view(dag, path_to=n).nodes} - ancestors
+            deps -= set(path)
+            branches.append((path[1:], deps))
+        branches.sort(key=lambda b: len(b[1]))
+        return branches
+
+    def dependencies_of_forks(graph, node):
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        successors = list(node.successors(node))
+        if not successors:
+            return []
+        ancestors = nx.ancestors(dag, node)
+        ancestors.add(node)
+        branches = []
+        for successor in successors:
+            tree = nx.dfs_tree(traversal_graph, node)
+            deps = {d for n in tree for d in subgraph_view(dag, path_to=n).nodes} - ancestors
+            deps -= set(tree.nodes)
+            branches.append(deps)
+        branches.sort(key=lambda b: len(b[1]))
+        return branches
+
+
+
+
 
     def dangling_branch(node, traversal_graph):
         for ancestor in nx.dfs_tree(traversal_graph.reverse(), node):
@@ -793,6 +819,8 @@ if __name__ == '__main__':
         yield node
         while True:
             try:
+                # store state here so we can revert to later
+                # so make `where_next` an iterator so we can keep trying
                 successor = where_next(node, backwards_graph, traversal_graph, dep_graph, dag)
             except ValueError:
                 return  # no more to do
@@ -804,21 +832,111 @@ if __name__ == '__main__':
                 graph.remove_nodes_from(to_remove)
             node = successor
 
+    def node_dependencies(graph, node):
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        return {n for n in graph.nodes if nx.has_path(dag, n, node)} - {node}
+
     def verify_traversal(graph, traversal_order):
         edges = list(zip(traversal_order[:-1], traversal_order[1:]))
         if any(graph.edges[e]['type'] == 'dep' for e in edges):
             raise ParserError(f"Some dep edges where traversed. This is a bug")
         semi_dag = subgraph_view(graph, excluded_edge_type='dep')
         if set(semi_dag.edges) != set(edges):
-            raise ParserError(f"Not all edges were traversed.")
+            raise ParserError(f"Not all edges were traversed. This is a bug")
+        done = set()
+        for n in traversal_order:
+            if n not in done:
+                if not all(dep in done for dep in node_dependencies(graph, n)):
+                    raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug")
+                done.add(n)
 
 
+    def traverse2(graph, start=None, end=None):
+        graph = graph.copy()
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        dep_graph = subgraph_view(graph, only_edge_type='dep')
+        naive_ordering = list(nx.topological_sort(dag))
+        if start is None:
+            start = naive_ordering[0]  # get top node
+        if end is None:
+            end = naive_ordering[-1]
+        path = nx.shortest_path(traversal_graph, start, end)
+        n = path.pop(0)
+        yield n
+        while n != end:
+            try:
+                successor = next(backwards_graph.successors(n))
+                if not path:
+                    graph.remove_edge(n, successor)
+                n = successor
+            except StopIteration:
+                if not path:
+                    path = nx.shortest_path(traversal_graph, n, end)[1:]
+                n = path.pop(0)
+            yield n
+            branches = dependencies_of_branches(graph, n)
+            if branches:
+                path, deps = branches[0]
 
 
+    class DeadEndException(Exception):
+        pass
 
-    # begin = get_node_i(G.G, 0)
-    ordering = list(traverse(G.G))
-    print([G.G.nodes[n]["i"] for n in ordering])
+    def traverse3(graph, start=None, end=None, done=None):
+        """
+        traverse the traversal_graph with backtracking
+        """
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        semi_traversal = subgraph_view(graph, excluded_edge_type='dep')
+        dep_graph = subgraph_view(graph, only_edge_type='dep')
+        if start is None or end is None:
+            naive_ordering = list(nx.topological_sort(dag))
+            if start is None:
+                start = naive_ordering[0]  # get top node
+            if end is None:
+                end = naive_ordering[-1]
+        ordering = [start]
+        node = start
+        done = set() if done is None else done
+        while True:
+            dependencies = dep_graph.predecessors(node)
+            if not all(dep in done for dep in dependencies):
+                raise DeadEndException
+            options = list(semi_traversal.successors(node))  # can go through wrt and traversals
+            if not options:
+                if node != end:
+                    raise DeadEndException
+                else:
+                    return ordering
+            elif len(options) == 1:
+                edge = (node, options[0])
+                if edge in done:
+                    raise DeadEndException
+                elif graph.edges[edge]['type'] == 'wrt':
+                    done.add(edge)
+                done.add(node)
+                node = options[0]
+                ordering.append(node)
+            else:
+                for option in options:
+                    try:
+                        new_done = done.copy()
+                        ordering += traverse3(graph, option, end, new_done)
+                        done.update(new_done)
+                        node = ordering[-1]
+                        break
+                    except DeadEndException:
+                        pass
+                else:
+                    raise ParserError(f"There is no valid path from {node} to {end}")
+
+
+    ordering = []
+    for n in traverse3(G.G.copy()):
+        print(G.G.nodes[n]["i"])
+        ordering.append(n)
     verify_traversal(G.G, ordering)
 
 
