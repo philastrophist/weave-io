@@ -1,4 +1,5 @@
-from typing import List, Tuple
+from collections import namedtuple, defaultdict, Counter
+from typing import List, Tuple, Set
 
 import graphviz
 import networkx as nx
@@ -302,6 +303,67 @@ def verify(graph):
             if not (nops ^ nfilters):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
 
+Store = namedtuple('Store', ['which', 'reference'])
+Load = namedtuple('Load', ['reference', 'which'])
+
+
+def get_longest_pattern(sequence):
+    """
+    returns the longest pattern in a sequence, its index, and the indices of its repetitions
+    """
+    counter = defaultdict(set)
+    for length in range(2, len(sequence)):
+        for i in range(len(sequence)):
+            seq = tuple(sequence[i:i+length])
+            if not any(x in seq[:z] for z, x in enumerate(seq)):
+                counter[seq].add(i)
+    mins = {k: min(v) for k,v in counter.items() if len(v) > 1}
+    if not mins:
+        raise ValueError(f"No repeating patterns")
+    max_len = max(map(len, mins))
+    pattern = []
+    where = len(sequence) + 1
+    for k, v in mins.items():
+        if len(k) == max_len and v < where:
+            pattern = k
+            where = v
+    return pattern, where, sorted([i for i in counter[pattern] if i != where])
+
+
+
+def find_and_replace_repetition_edges(traversal_order):
+    """
+    To avoid repeating effort, paths that are repeated should be replaced by a `load`
+    Given a list of nodes, identify repeating edges and add save/load edges in their place
+    """
+    new = traversal_order.copy()
+    pattern, first, others = get_longest_pattern(new)
+    n = 0
+    for o in others:
+        new.insert(o, Load(pattern[0], pattern[-1]))
+        del new[o-n+1:o-n+1+len(pattern)]
+        n += len(pattern) - 1
+    first_instance_end = first + len(pattern)
+    new.insert(first_instance_end, Store(pattern[-1], pattern[0]))
+    load = Load(pattern[0], pattern[-1])
+    if new[first_instance_end+1] != load:
+        new.insert(first_instance_end+1, load)
+    return new
+
+
+def verify_saves(traversal_order, original_traversal_order):
+    unwrap = [o.which if isinstance(o, Load) else [o] for o in traversal_order if not isinstance(o, Store)]
+    unwrap = [b for a in unwrap for b in a]
+    if original_traversal_order != unwrap:
+        raise ParserError(f"Saved/Loaded query does not equal the original repetitive query. This is a bug")
+    for i, o in enumerate(traversal_order):
+        if isinstance(o, (Store, Load)):
+            if not all(w in traversal_order[:i] for w in o.which):
+                raise ParserError(f"Cannot store/load {o.which} before they are traversed. This is a bug")
+
+
+
+
 
 class QueryGraph:
     """
@@ -379,13 +441,13 @@ if __name__ == '__main__':
     # result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
     # 2
-    # obs = G.add_traversal(['OB'])  # obs = data.obs
-    # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
-    # red_runs = G.add_filter(runs, [], 'run.camera==red')
-    # red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
-    # spec = G.add_traversal(['spec'], runs)
-    # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
-    # result = G.add_traversal(['l2'], spec)
+    obs = G.add_traversal(['OB'])  # obs = data.obs
+    runs = G.add_traversal(['run'], obs)  # runs = obs.runs
+    red_runs = G.add_filter(runs, [], 'run.camera==red')
+    red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
+    spec = G.add_traversal(['spec'], runs)
+    spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
+    result = G.add_traversal(['l2'], spec)
 
     # # 3
     # # obs = data.obs
@@ -421,23 +483,23 @@ if __name__ == '__main__':
     # result = G.add_filter(obs, [op], '')
 
 
-    ## 4
-    obs = G.add_traversal(['ob'])  # obs
-    exps = G.add_traversal(['exp'], obs)  # obs.exps
-    runs = G.add_traversal(['run'], exps)  # obs.exps.runs
-    l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
-    snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
-    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
-
-    exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
-    run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
-    l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
-
-    # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
-    l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
-    result = G.add_traversal(['l2'], l1s)
+    # ## 4
+    # obs = G.add_traversal(['ob'])  # obs
+    # exps = G.add_traversal(['exp'], obs)  # obs.exps
+    # runs = G.add_traversal(['run'], exps)  # obs.exps.runs
+    # l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
+    # snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
+    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    #
+    # exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
+    # run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
+    # l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+    #
+    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    # condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
+    # l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
+    # result = G.add_traversal(['l2'], l1s)
 
 
 
@@ -462,28 +524,3 @@ if __name__ == '__main__':
     print(end_time - start_time)
 
 
-
-    # edge_graph = nx.line_graph(subgraph_view(G.G, excluded_edge_type='dep')).copy()
-    # start = [n for n in edge_graph.nodes if edge_graph.in_degree(n) == 0][0]
-    # end = [n for n in edge_graph.nodes if edge_graph.out_degree(n) == 0][0]
-    # edge_graph.add_edge(end, start)
-    # ordering = nx.topological_sort(G.G)
-    #
-    # plot_graph(edge_graph).render('parser-edge')
-    # edges = list(nx.dfs_edges(edge_graph))
-    #
-    # for a, b in edges[::2]:
-    #     assert a[1] == b[0]
-    #     print(a, b)
-
-
-    # todo: save states first
-    # todo: visit each edge once
-    # todo: travelling salesman on edge_graph
-    # graph = subgraph_view(G.G, path_to=result).copy()
-    # verify(graph)
-    # statements = []
-    # for statement_data in traverse_query_graph(graph, result, G.start):
-    #     statements.append(statement_data)
-    #     print(statement_data[0]['i'], statement_data[1]['i'], statement_data[2]['type'])
-    # statements
