@@ -337,7 +337,10 @@ def find_and_replace_repetition_edges(traversal_order):
     Given a list of nodes, identify repeating edges and add save/load edges in their place
     """
     new = traversal_order.copy()
-    pattern, first, others = get_longest_pattern(new)
+    try:
+        pattern, first, others = get_longest_pattern(new)
+    except ValueError:
+        return new
     n = 0
     for o in others:
         new.insert(o, Load(pattern[0], pattern[-1]))
