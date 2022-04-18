@@ -303,20 +303,23 @@ def verify(graph):
             if not (nops ^ nfilters):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
 
-Store = namedtuple('Store', ['which', 'reference'])
-Load = namedtuple('Load', ['reference', 'which'])
+Store = namedtuple('Store', ['state', 'aggs', 'reference', 'chain'])
+Aggregation = namedtuple('Aggregation', ['edge', 'reference'])
+Load = namedtuple('Load', ['reference', 'state', 'store'])
 
 
-def get_longest_pattern(sequence):
+
+def get_longest_pattern(sequence, min_length=1):
     """
     returns the longest pattern in a sequence, its index, and the indices of its repetitions
     """
     counter = defaultdict(set)
-    for length in range(2, len(sequence)):
+    for length in range(min_length, len(sequence)):
         for i in range(len(sequence)):
             seq = tuple(sequence[i:i+length])
-            if not any(x in seq[:z] for z, x in enumerate(seq)):
-                counter[seq].add(i)
+            if not any(isinstance(x, (Store, Load)) for x in seq):
+                if not any(x in seq[:z] for z, x in enumerate(seq)):
+                    counter[seq].add(i)
     mins = {k: min(v) for k,v in counter.items() if len(v) > 1}
     if not mins:
         raise ValueError(f"No repeating patterns")
@@ -331,38 +334,69 @@ def get_longest_pattern(sequence):
 
 
 
-def find_and_replace_repetition_edges(traversal_order):
+def find_and_replace_repetition_edges(traversal_edges_order: List[Tuple]):
     """
     To avoid repeating effort, paths that are repeated should be replaced by a `load`
     Given a list of nodes, identify repeating edges and add save/load edges in their place
     """
-    new = traversal_order.copy()
+    new = traversal_edges_order.copy()
     try:
-        pattern, first, others = get_longest_pattern(new)
+        pattern, first, others = get_longest_pattern(new, min_length=1)
     except ValueError:
         return new
+    store = Store([pattern[-1][-1]], [], pattern[0][0], pattern)
+    load = Load(pattern[0][0], [pattern[-1][-1]], store)
     n = 0
     for o in others:
-        new.insert(o, Load(pattern[0], pattern[-1]))
+        new.insert(o, load)
         del new[o-n+1:o-n+1+len(pattern)]
         n += len(pattern) - 1
     first_instance_end = first + len(pattern)
-    new.insert(first_instance_end, Store(pattern[-1], pattern[0]))
-    load = Load(pattern[0], pattern[-1])
-    if new[first_instance_end+1] != load:
-        new.insert(first_instance_end+1, load)
+    new.insert(first_instance_end, store)
+    next_one = new[first_instance_end+1]
+    if next_one != load:
+        if next_one[0] not in load.state and next_one[1] != load.reference:
+            new.insert(first_instance_end+1, load)
+        else:
+            store.aggs.append(new[first_instance_end+1])
+            del new[first_instance_end+1]
     return new
 
+def insert_load_saves(traversal_order: List[str]):
+    traversal_edges_order = list(zip(traversal_order[:-1], traversal_order[1:]))
+    while True:
+        new_traversal_edges_order = find_and_replace_repetition_edges(traversal_edges_order)
+        if new_traversal_edges_order == traversal_edges_order:
+            break
+        traversal_edges_order = new_traversal_edges_order
 
-def verify_saves(traversal_order, original_traversal_order):
-    unwrap = [o.which if isinstance(o, Load) else [o] for o in traversal_order if not isinstance(o, Store)]
-    unwrap = [b for a in unwrap for b in a]
-    if original_traversal_order != unwrap:
+    return traversal_edges_order
+
+def verify_saves(traversal_edges_order, original_traversal_order):
+    unwrapped = []
+    for i, o in enumerate(traversal_edges_order):
+        if isinstance(o, Store):
+            for a in o.aggs:
+                unwrapped.append(a)
+        elif isinstance(o, Load):
+            # if o.store != traversal_edges_order[i-1]:
+            for edge in o.store.chain:
+                unwrapped.append(edge)
+        else:
+            unwrapped.append(o)
+    unwrapped = [a[0] for a, b in zip(unwrapped[:-1], unwrapped[1:]) if a != b] + [*unwrapped[-1]]
+
+
+    if original_traversal_order != unwrapped:
         raise ParserError(f"Saved/Loaded query does not equal the original repetitive query. This is a bug")
-    for i, o in enumerate(traversal_order):
-        if isinstance(o, (Store, Load)):
-            if not all(w in traversal_order[:i] for w in o.which):
-                raise ParserError(f"Cannot store/load {o.which} before they are traversed. This is a bug")
+    for i, o in enumerate(traversal_edges_order):
+        if isinstance(o, Load):
+            if o.store not in traversal_edges_order[:i]:
+                raise ParserError(f"Cannot load {o} before it is stored. This is a bug")
+        if isinstance(o, Store):
+            s = set([o.reference, *o.state]) | {x for ch in o.chain for x in ch}
+            if not all(any(n in before for before in traversal_edges_order[:i]) for n in s):
+                raise ParserError(f"Cannot store {o} before it is traversed. This is a bug")
 
 
 
@@ -514,16 +548,18 @@ if __name__ == '__main__':
     dep_graph = subgraph_view(G.G, only_edge_type='dep')
     plot_graph(traversal_graph).render('parser-traversal')
 
-
-
-    ordering = []
-    import time
-    start_time = time.perf_counter()
-    for n in G.traverse():
-        end_time = time.perf_counter()
-        print(G.G.nodes[n]["i"])
-        ordering.append(n)
-    verify_traversal(G.G, ordering)
-    print(end_time - start_time)
-
-
+    traversal_order = [1, 2, 3, 4, 1, 2, 3, 4, 5, 3, 4, 6, 7]
+    ordering = insert_load_saves(traversal_order)
+    verify_saves(ordering, traversal_order)
+    #
+    # ordering = []
+    # import time
+    # start_time = time.perf_counter()
+    # for n in G.traverse():
+    #     end_time = time.perf_counter()
+    #     print(G.G.nodes[n]["i"])
+    #     ordering.append(n)
+    # verify_traversal(G.G, ordering)
+    # print(end_time - start_time)
+    #
+    #
