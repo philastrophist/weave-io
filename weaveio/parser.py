@@ -349,17 +349,17 @@ def find_and_replace_repetition_edges(traversal_edges_order: List[Tuple]):
     n = 0
     for o in others:
         new.insert(o, load)
-        del new[o-n+1:o-n+1+len(pattern)]
+        del new[o-n+1:o-n+1+len(pattern)]  # todo: this is wrong
         n += len(pattern) - 1
     first_instance_end = first + len(pattern)
     new.insert(first_instance_end, store)
     next_one = new[first_instance_end+1]
-    if next_one != load:
-        if next_one[0] not in load.state and next_one[1] != load.reference:
-            new.insert(first_instance_end+1, load)
-        else:
-            store.aggs.append(new[first_instance_end+1])
-            del new[first_instance_end+1]
+    next_one_is_repeated_aggregate = next_one[0] not in load.state and next_one[1] != load.reference
+    if next_one_is_repeated_aggregate:
+        store.aggs.append(new[first_instance_end + 1])
+        del new[first_instance_end + 1]
+    elif next_one != load:
+        new.insert(first_instance_end+1, load)  # if we wont duplicate ourselves
     return new
 
 def insert_load_saves(traversal_order: List[str]):
@@ -379,24 +379,21 @@ def verify_saves(traversal_edges_order, original_traversal_order):
             for a in o.aggs:
                 unwrapped.append(a)
         elif isinstance(o, Load):
-            # if o.store != traversal_edges_order[i-1]:
             for edge in o.store.chain:
                 unwrapped.append(edge)
         else:
             unwrapped.append(o)
     unwrapped = [a[0] for a, b in zip(unwrapped[:-1], unwrapped[1:]) if a != b] + [*unwrapped[-1]]
-
-
-    if original_traversal_order != unwrapped:
-        raise ParserError(f"Saved/Loaded query does not equal the original repetitive query. This is a bug")
     for i, o in enumerate(traversal_edges_order):
         if isinstance(o, Load):
             if o.store not in traversal_edges_order[:i]:
                 raise ParserError(f"Cannot load {o} before it is stored. This is a bug")
         if isinstance(o, Store):
-            s = set([o.reference, *o.state]) | {x for ch in o.chain for x in ch}
+            s = {o.reference, *o.state} | {x for ch in list(o.chain)+o.aggs for x in ch}
             if not all(any(n in before for before in traversal_edges_order[:i]) for n in s):
                 raise ParserError(f"Cannot store {o} before it is traversed. This is a bug")
+    if original_traversal_order != unwrapped:
+        raise ParserError(f"Saved/Loaded query does not equal the original repetitive query. This is a bug")
 
 
 
@@ -477,14 +474,14 @@ if __name__ == '__main__':
     # agg_spectra = G.add_aggregation(spectra, wrt=obs, operation='any(spectra.snr > 0)')
     # result = G.add_filter(l2, [agg_spectra], 'l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]')
 
-    # 2
-    obs = G.add_traversal(['OB'])  # obs = data.obs
-    runs = G.add_traversal(['run'], obs)  # runs = obs.runs
-    red_runs = G.add_filter(runs, [], 'run.camera==red')
-    red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
-    spec = G.add_traversal(['spec'], runs)
-    spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
-    result = G.add_traversal(['l2'], spec)
+    # # 2
+    # obs = G.add_traversal(['OB'])  # obs = data.obs
+    # runs = G.add_traversal(['run'], obs)  # runs = obs.runs
+    # red_runs = G.add_filter(runs, [], 'run.camera==red')
+    # red_snr = G.add_aggregation(G.add_operation(red_runs, [], 'run.snr'), obs, 'mean(run.camera==red, wrt=obs)')
+    # spec = G.add_traversal(['spec'], runs)
+    # spec = G.add_filter(spec, [red_snr], 'spec[spec.snr > red_snr]')
+    # result = G.add_traversal(['l2'], spec)
 
     # # 3
     # # obs = data.obs
@@ -520,23 +517,23 @@ if __name__ == '__main__':
     # result = G.add_filter(obs, [op], '')
 
 
-    # ## 4
-    # obs = G.add_traversal(['ob'])  # obs
-    # exps = G.add_traversal(['exp'], obs)  # obs.exps
-    # runs = G.add_traversal(['run'], exps)  # obs.exps.runs
-    # l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
-    # snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
-    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
-    #
-    # exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
-    # run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
-    # l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
-    #
-    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    # condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
-    # l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
-    # result = G.add_traversal(['l2'], l1s)
+    # 4
+    obs = G.add_traversal(['ob'])  # obs
+    exps = G.add_traversal(['exp'], obs)  # obs.exps
+    runs = G.add_traversal(['run'], exps)  # obs.exps.runs
+    l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
+    snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
+    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+
+    exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
+    run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
+    l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+
+    # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
+    l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
+    result = G.add_traversal(['l2'], l1s)
 
 
 
@@ -548,18 +545,26 @@ if __name__ == '__main__':
     dep_graph = subgraph_view(G.G, only_edge_type='dep')
     plot_graph(traversal_graph).render('parser-traversal')
 
-    traversal_order = [1, 2, 3, 4, 1, 2, 3, 4, 5, 3, 4, 6, 7]
-    ordering = insert_load_saves(traversal_order)
-    verify_saves(ordering, traversal_order)
-    #
-    # ordering = []
-    # import time
-    # start_time = time.perf_counter()
-    # for n in G.traverse():
-    #     end_time = time.perf_counter()
-    #     print(G.G.nodes[n]["i"])
-    #     ordering.append(n)
-    # verify_traversal(G.G, ordering)
-    # print(end_time - start_time)
-    #
-    #
+
+    ordering = []
+    import time
+    start_time = time.perf_counter()
+    for n in G.traverse():
+        end_time = time.perf_counter()
+        print(G.G.nodes[n]["i"])
+        ordering.append(n)
+    verify_traversal(G.G, ordering)
+    print(end_time - start_time)
+
+    # ordering = [1, 2, 3, 4, 1, 2, 3, 4, 5, 3, 4, 6, 7]
+    ordering = [G.G.nodes[o]['i'] for o in ordering]
+    edge_ordering = insert_load_saves(ordering)
+    for o in edge_ordering:
+        if isinstance(o, Store):
+            print(f"Store: {o.state} -> {o.reference}")
+        elif isinstance(o, Load):
+            print(f"Load: {o.state} -> {o.reference}")
+        else:
+            print(f"Trav: {o[0]} -> {o[1]}")
+
+    verify_saves(edge_ordering, ordering)
