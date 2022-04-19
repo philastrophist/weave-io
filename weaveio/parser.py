@@ -1,5 +1,5 @@
-from collections import namedtuple, defaultdict, Counter
-from typing import List, Tuple, Set
+from collections import namedtuple, defaultdict, Counter, OrderedDict
+from typing import List, Tuple, Set, Dict
 
 import graphviz
 import networkx as nx
@@ -308,29 +308,67 @@ Aggregation = namedtuple('Aggregation', ['edge', 'reference'])
 Load = namedtuple('Load', ['reference', 'state', 'store'])
 
 
+def merge_overlapping_sequences(sequences):
+    sequences.sort(key=len)
+    keep = []
+    for i, seq in enumerate(sequences):
+        matching = {i for i, s in enumerate(sequences) if all(x in s for x in seq)}
+        matching.remove(i)
+        if not matching:
+            keep.append(seq)
+    return keep
 
-def get_longest_pattern(sequence, min_length=1):
+
+
+
+def get_patterns(sequence, banned=(Store, Load)) -> Dict[int,List[Tuple[Tuple, List[int]]]]:
     """
-    returns the longest pattern in a sequence, its index, and the indices of its repetitions
+    finds returns repeated patterns
+    :returns:
+        final index of the first use of each pattern Dict[last_index,pattern]
+        other indexes of other uses of each pattern Dict[first_index, pattern]
+    the last_index is where the save/load should occur (do shortest patterns first)
+    the first_index is where the load should occur)
     """
+    min_length = 1
     counter = defaultdict(set)
     for length in range(min_length, len(sequence)):
         for i in range(len(sequence)):
             seq = tuple(sequence[i:i+length])
-            if not any(isinstance(x, (Store, Load)) for x in seq):
+            if not any(isinstance(x, banned) for x in seq):
                 if not any(x in seq[:z] for z, x in enumerate(seq)):
                     counter[seq].add(i)
-    mins = {k: min(v) for k,v in counter.items() if len(v) > 1}
-    if not mins:
-        raise ValueError(f"No repeating patterns")
-    max_len = max(map(len, mins))
-    pattern = []
-    where = len(sequence) + 1
-    for k, v in mins.items():
-        if len(k) == max_len and v < where:
-            pattern = k
-            where = v
-    return pattern, where, sorted([i for i in counter[pattern] if i != where])
+    counter = {k: v for k, v in counter.items() if len(v) > 1}
+    earliest = {k: min(v) for k, v in counter.items()}
+    for seq, index in earliest.items():
+        counter[seq].remove(index)
+    others = defaultdict(list)
+    for k, vs in counter.items():
+        for v in vs:
+            others[v].append(k)
+    others = dict(others)
+    for index, seqs in others.items():
+        merged_seqs = merge_overlapping_sequences(seqs)
+        assert len(merged_seqs) == 1, f"a path starting at {index} can only go to one place"
+        others[index] = merged_seqs[0]
+    _others = defaultdict(list)
+    for k, v in others.items():
+        _others[v].append(k)
+
+    earliest = {seq: i for seq, i in earliest.items() if seq in others.values()}  # only if used later
+    first_use_last_index = defaultdict(list)
+    for seq, i in earliest.items():
+        first_use_last_index[i+len(seq)].append(seq)
+    grouped = {}
+    for first_use_last_i, patterns in first_use_last_index.items():
+        patterns.sort(key=len)
+        grouped[first_use_last_i] = [(pattern, _others[pattern]) for pattern in patterns]
+    # {first_use_last_index: [(pattern, other_first_indexes), ...]}
+    g = OrderedDict()
+    for k in sorted(grouped.keys()):
+        g[k] = grouped[k]
+    return g
+
 
 
 
@@ -341,60 +379,100 @@ def find_and_replace_repetition_edges(traversal_edges_order: List[Tuple]):
     """
     new = traversal_edges_order.copy()
     try:
-        pattern, first, others = get_longest_pattern(new, min_length=1)
+        patterns = get_patterns(new)  # type: OrderedDict
     except ValueError:
         return new
-    store = Store([pattern[-1][-1]], [], pattern[0][0], pattern)
-    load = Load(pattern[0][0], [pattern[-1][-1]], store)
-    n = 0
-    for o in others:
-        new.insert(o, load)
-        del new[o-n+1:o-n+1+len(pattern)]  # todo: this is wrong
-        n += len(pattern) - 1
-    first_instance_end = first + len(pattern)
-    new.insert(first_instance_end, store)
-    next_one = new[first_instance_end+1]
-    next_one_is_repeated_aggregate = next_one[0] not in load.state and next_one[1] != load.reference
-    if next_one_is_repeated_aggregate:
-        store.aggs.append(new[first_instance_end + 1])
-        del new[first_instance_end + 1]
-    elif next_one != load:
-        new.insert(first_instance_end+1, load)  # if we wont duplicate ourselves
+    iadd = 0
+    for first_use_last_index, others in patterns.items():
+        for pattern, other_use_first_indices in others:
+            start, end = pattern[0][0], pattern[-1][-1]
+            store = Store([end], [], start, pattern)
+            load = Load(start, [end], store)
+            for other_use_first_index in other_use_first_indices:
+                new[other_use_first_index+iadd] = load
+                for i in range(other_use_first_index+iadd+1, other_use_first_index+len(pattern)+iadd):
+                    new[i] = None
+            new.insert(first_use_last_index+iadd, store)
+            new.insert(first_use_last_index+iadd+1, load)
+            iadd += 2
+    new = [n for n in new if n is not None]
+    i = 0
+    while i < len(new)-2:
+        if new[i] == new[i+1]:
+            del new[i+1]
+            i = -1
+        if i < len(new)-3:
+            if isinstance(new[i], Store) and isinstance(new[i+1], Load) and not isinstance(new[i+2], (Store, Load)):
+                if new[i+1].store == new[i] and new[i+2][0] in new[i+1].state and new[i+2][1] == new[i+1].reference:
+                    new[i].aggs.append(new[i+2])
+                    del new[i+1]
+                    del new[i+1]
+                    i = -1
+        i += 1
     return new
 
 def insert_load_saves(traversal_order: List[str]):
     traversal_edges_order = list(zip(traversal_order[:-1], traversal_order[1:]))
-    while True:
-        new_traversal_edges_order = find_and_replace_repetition_edges(traversal_edges_order)
-        if new_traversal_edges_order == traversal_edges_order:
-            break
-        traversal_edges_order = new_traversal_edges_order
+    new_traversal_edges_order = find_and_replace_repetition_edges(traversal_edges_order)
+    return new_traversal_edges_order
 
-    return traversal_edges_order
+def collapse_chains_of_loading(traversal_edges_order):
+    """
+    looks for consecutive chains of Loads
+    flattens them
+    inserts the appropriate Store
+    removes unused
+    """
+    new = traversal_edges_order.copy()
+    i = 0
+    while i < len(new)-1:
+        a, b = new[i], new[i+1]
+        if isinstance(a, Load) and isinstance(b, Load):
+            if a.state[0] == b.reference:
+                load = Load(a.reference, b.state, a.store)
+                new[i] = load
+                del new[i+1]
+        i += 1
+    return [n for n in new if n is not None]
+
 
 def verify_saves(traversal_edges_order, original_traversal_order):
+    original_traversal_edges_order = list(zip(original_traversal_order[:-1], original_traversal_order[1:]))
     unwrapped = []
     for i, o in enumerate(traversal_edges_order):
         if isinstance(o, Store):
-            for a in o.aggs:
-                unwrapped.append(a)
+            if o.aggs:
+                for a in o.aggs:
+                    unwrapped.append(a)
         elif isinstance(o, Load):
+            if traversal_edges_order[i-1] == o.store:
+                if not traversal_edges_order[i-1].aggs:
+                    continue # only append stuff if its not just saving/loading
             for edge in o.store.chain:
                 unwrapped.append(edge)
         else:
             unwrapped.append(o)
-    unwrapped = [a[0] for a, b in zip(unwrapped[:-1], unwrapped[1:]) if a != b] + [*unwrapped[-1]]
+    previous = None
     for i, o in enumerate(traversal_edges_order):
         if isinstance(o, Load):
+            a = o.reference
+            b = o.state[0]
             if o.store not in traversal_edges_order[:i]:
                 raise ParserError(f"Cannot load {o} before it is stored. This is a bug")
-        if isinstance(o, Store):
+        elif isinstance(o, Store):
+            a = o.state[0]
+            b = o.reference
             s = {o.reference, *o.state} | {x for ch in list(o.chain)+o.aggs for x in ch}
             if not all(any(n in before for before in traversal_edges_order[:i]) for n in s):
                 raise ParserError(f"Cannot store {o} before it is traversed. This is a bug")
-    if original_traversal_order != unwrapped:
+        else:
+            a, b = o
+        if previous is not None:
+            if previous[1] != a:
+                raise ParserError(f"Cannot traverse from {previous} to {o}")
+        previous = a, b
+    if original_traversal_edges_order != unwrapped:
         raise ParserError(f"Saved/Loaded query does not equal the original repetitive query. This is a bug")
-
 
 
 
@@ -442,11 +520,7 @@ class QueryGraph:
     def add_filter(self, parent, dependencies, operation):
         return add_filter(self.G, parent, dependencies, operation)
 
-    def optimise(self):
-        # TODO: combine get-attribute statements etc...
-        pass
-
-    def traverse(self, result_node=None):
+    def traverse_query(self, result_node=None):
         if result_node is not None:
             graph = nx.subgraph_view(G.G, path_to=result_node)
         else:
@@ -516,7 +590,7 @@ if __name__ == '__main__':
     #
     # result = G.add_filter(obs, [op], '')
 
-
+    #
     # 4
     obs = G.add_traversal(['ob'])  # obs
     exps = G.add_traversal(['exp'], obs)  # obs.exps
@@ -549,7 +623,7 @@ if __name__ == '__main__':
     ordering = []
     import time
     start_time = time.perf_counter()
-    for n in G.traverse():
+    for n in G.traverse_query():
         end_time = time.perf_counter()
         print(G.G.nodes[n]["i"])
         ordering.append(n)
@@ -563,8 +637,10 @@ if __name__ == '__main__':
         if isinstance(o, Store):
             print(f"Store: {o.state} -> {o.reference}")
         elif isinstance(o, Load):
-            print(f"Load: {o.state} -> {o.reference}")
+            print(f"Load: {o.reference} --> {o.state}")
         else:
             print(f"Trav: {o[0]} -> {o[1]}")
-
     verify_saves(edge_ordering, ordering)
+    # edge_ordering = collapse_chains_of_loading(edge_ordering)
+    for e in edge_ordering:
+        print(e)
