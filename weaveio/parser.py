@@ -71,6 +71,12 @@ def add_operation(graph: HashedDiGraph, parent, dependencies, statement):
         graph.add_edge(d, n, type='dep', style='dotted')
     return n
 
+def add_return(graph: HashedDiGraph, index, columns, statement):
+    n = make_node(graph, index, 'return', statement, True)
+    for d in columns:
+        graph.add_edge(d, n, type='dep', style='dotted')
+    return n
+
 def subgraph_view(graph: HashedDiGraph, excluded_edge_type=None, only_edge_type=None,
                   only_nodes: List = None, excluded_nodes: List = None,
                   only_edges: List[Tuple] = None, excluded_edges: List[Tuple] = None,
@@ -247,6 +253,7 @@ def verify(graph):
         ndeps = sum(i == 'dep' for i in inputs)
         nops = sum(i == 'operation' for i in inputs)
         naggs = sum(i == 'aggr' for i in inputs)
+        nreturns = sum(i == 'return' for i in inputs)
         if naggs > 1:
             raise ParserError(f"Cannot aggregate more than one node at a time: {node}")
         elif naggs:
@@ -275,7 +282,7 @@ def verify(graph):
         if ndeps:
             if ntraversals or naggs:
                 raise ParserError(f"A traversal/aggregation cannot take any other inputs: {node}")
-            if not (nops ^ nfilters):
+            if not (nops ^ nfilters ^ nreturns):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
 
 Store = namedtuple('Store', ['state', 'aggs', 'reference', 'chain'])
@@ -648,6 +655,17 @@ class Aggregate(Statement):
         return f"WITH {variables}, {agg_string} as {self.output}"
 
 
+class Return(Statement):
+    def __init__(self, index_variable, column_variables, graph: 'QueryGraph'):
+        super().__init__([index_variable]+column_variables, graph)
+        self.index_variable = index_variable
+        self.column_variables = column_variables
+
+    def make_cypher(self) -> Optional[str]:
+        cols = ', '.join(self.column_variables)
+        return f"RETURN {cols}"
+
+
 class QueryGraph:
     """
     Rules of adding nodes/edges:
@@ -784,24 +802,53 @@ class QueryGraph:
         statement = CopyAndFilter(self.G.nodes[parent_node]['variables'][0], predicate, self)
         return self.retrieve(statement, add_filter, self.G, parent_node, [predicate_node], statement)
 
+    def add_results(self, index_node, *column_nodes):
+        # fold back column data into the index node
+        column_nodes = [self.fold_single(d, index_node, raise_error=False) for d in column_nodes] # fold back when combining
+        deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
+        statement = Return(self.G.nodes[index_node]['variables'][0], deps, self)
+        return self.retrieve(statement, add_return, self.G, index_node, column_nodes, statement)
+
+
     def restricted(self, result_node=None):
         if result_node is None:
-            return nx.subgraph_view(G.G)
-        return subgraph_view(G.G, path_to=result_node)
+            return nx.subgraph_view(self.G)
+        return subgraph_view(self.G, path_to=result_node)
 
     def traverse_query(self, result_node=None):
         graph = self.restricted(result_node)
         verify(graph)
         return traverse(graph)
 
+    def cypher_lines(self, result):
+        ordering = []
+        import time
+        start_time = time.perf_counter()
+        for n in self.traverse_query(result):
+            ordering.append(n)
+        verify_traversal(self.G, ordering)
+        statements = []
+        for e in zip(ordering[:-1], ordering[1:]):
+            try:
+                statement = self.G.edges[e]['statement'].make_cypher()
+                if statement is not None:
+                    statements.append(statement)
+            except KeyError:
+                pass
+        end_time = time.perf_counter()
+        timed = end_time - start_time
+        return statements, timed
+
+
+
 if __name__ == '__main__':
     G = QueryGraph()
 
-    # # # 0
-    # obs = G.add_start_node('OB')  # obs = data.obs
-    # runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
-    # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum') # runs.spectra
-    # result = spectra
+    # # 0
+    obs = G.add_start_node('OB')  # obs = data.obs
+    runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
+    spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum') # runs.spectra
+    result = G.add_results(spectra, G.add_getitem(spectra, 'snr'))
 
     # # 1
     # obs = G.add_start_node('OB')
@@ -828,7 +875,9 @@ if __name__ == '__main__':
     # snr = G.add_getitem(spec, 'snr')
     # compare = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
     # spec = G.add_filter(spec, compare)
-    # result = G.add_traversal(spec, '-->', 'L2')
+    # l2 = G.add_traversal(spec, '-->', 'L2')
+    # snr = G.add_getitem(l2, 'snr')
+    # result = G.add_results(l2, snr)
 
     # # 3
     # # obs = data.obs
@@ -863,25 +912,25 @@ if __name__ == '__main__':
     # x_and_y_and_z = G.add_combining_operation('{0} and {1}', '&', x_and_y, z)
     # result = G.add_filter(obs, x_and_y_and_z)
 
-
-    # 4
-    obs = G.add_start_node('OB')  # obs
-    exps = G.add_traversal(obs, '-->', 'Exposure')  # obs.exps
-    runs = G.add_traversal(exps, '-->', 'Run')  # obs.exps.runs
-    l1s = G.add_traversal(runs, '-->', 'L1')  # obs.exps.runs.l1s
-    snr = G.add_getitem(l1s, 'snr')  # obs.exps.runs.l1s.snr
-    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
-
-    exp_above_1 = G.add_scalar_operation(avg_snr_per_exp, '{0} > 1', '>1')  # x > 1
-    run_above_1 = G.add_scalar_operation(avg_snr_per_run, '{0} > 1', '> 1')  # y > 1
-    l1_above_1 = G.add_scalar_operation(snr, '{0} > 1', '> 1')  # obs.exps.runs.l1s.snr > 1
-
-    # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    l1_and_run = G.add_combining_operation('{0} and {1}', '&', l1_above_1, run_above_1)
-    condition = G.add_combining_operation('{0} and {1}', '&', l1_and_run, exp_above_1)
-    l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
-    result = G.add_traversal(l1s, '-->', 'L2')
+    #
+    # # 4
+    # obs = G.add_start_node('OB')  # obs
+    # exps = G.add_traversal(obs, '-->', 'Exposure')  # obs.exps
+    # runs = G.add_traversal(exps, '-->', 'Run')  # obs.exps.runs
+    # l1s = G.add_traversal(runs, '-->', 'L1')  # obs.exps.runs.l1s
+    # snr = G.add_getitem(l1s, 'snr')  # obs.exps.runs.l1s.snr
+    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    #
+    # exp_above_1 = G.add_scalar_operation(avg_snr_per_exp, '{0} > 1', '>1')  # x > 1
+    # run_above_1 = G.add_scalar_operation(avg_snr_per_run, '{0} > 1', '> 1')  # y > 1
+    # l1_above_1 = G.add_scalar_operation(snr, '{0} > 1', '> 1')  # obs.exps.runs.l1s.snr > 1
+    #
+    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    # l1_and_run = G.add_combining_operation('{0} and {1}', '&', l1_above_1, run_above_1)
+    # condition = G.add_combining_operation('{0} and {1}', '&', l1_and_run, exp_above_1)
+    # l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
+    # result = G.add_traversal(l1s, '-->', 'L2')
 
     #
     # obs = G.add_start_node('OB')  # obs
