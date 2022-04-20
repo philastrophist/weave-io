@@ -797,10 +797,14 @@ class QueryGraph:
         op_format_string = f'{op_name}(x in collect({{0}}) where toBoolean(x))'
         return self.add_generic_aggregation(parent, wrt_node, op_format_string, op_name)
 
-    def add_filter(self, parent_node, predicate_node):
+    def add_filter(self, parent_node, predicate_node, direct=False):
         predicate_node = self.fold_single(predicate_node, parent_node, raise_error=False)
         predicate = self.G.nodes[predicate_node]['variables'][0]
-        statement = CopyAndFilter(self.G.nodes[parent_node]['variables'][0], predicate, self)
+        if direct:
+            FilterClass = DirectFilter
+        else:
+            FilterClass = CopyAndFilter
+        statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
         return self.retrieve(statement, add_filter, self.G, parent_node, [predicate_node], statement)
 
     def add_results(self, index_node, *column_nodes):
@@ -815,10 +819,6 @@ class QueryGraph:
         varname = self.get_variable_name(name)
         self.parameters[varname] = value
         return varname
-
-
-
-
 
     def restricted(self, result_node=None):
         if result_node is None:

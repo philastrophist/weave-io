@@ -1,4 +1,17 @@
+"""
+Queries are a little different
+Each time you iterate along, you dont add to the graph straight away.
+This gives the Query time to modify the meaning of statements:
+without waiting,
+    ob.runs[1234] would be [traverse(ob), traverse(run), CopyAndFilter(id=1234)]
+with waiting,
+    ob.runs[1234] would be [traverse(ob), FilteredMatch(run, id=1234, optional=True)]
+    much better!
+it treats two chained expressions as one action
+"""
+from typing import List
 from .parser import QueryGraph
+
 
 class BaseQuery:
     def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
@@ -18,7 +31,6 @@ class BaseQuery:
                 self._index = previous
             else:
                 self._index = previous._index
-
 
     @property
     def _cypher(self):
@@ -84,7 +96,7 @@ class ObjectQuery(BaseQuery):
         n = self._G.add_traversal(self._node, path, obj, single)
         return ObjectQuery._spawn(self, n)
 
-    def _filter_by_object_index(self, index):
+    def _traverse_by_object_index(self, obj, index):
         """
         obj['obj_id']
         filter, id, shrinks, destructive
@@ -93,9 +105,19 @@ class ObjectQuery(BaseQuery):
         e.g. `obs[1234]` filters to the single ob with obid=1234
         """
         name = self._G.add_parameter(index)
-        op = self._G.add_scalar_operation(self._node, f'{{0}}.id = {name}', 'index')
-        n = self._G.add_filter(self._node, op)
+        path, single = self._get_path_to_object(obj)
+        travel = self._G.add_traversal(self._node, path, obj, single)
+        i = self._G.add_getitem(travel, 'id')
+        eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n)
+
+    def _filter_by_object_indexes(self, indexes: List):
+        path, single = self._get_path_to_object(obj)
+        name = self._G.add_parameter(indexes)
+        self._G.add_traversal(self.node, )
+
+
 
     def _select_attribute(self, attr):
         """
