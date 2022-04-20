@@ -768,16 +768,16 @@ if __name__ == '__main__':
     # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum') # runs.spectra
     # result = spectra
 
-    #1
+    # # 1
     # obs = G.add_start_node('OB')
     # runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
     # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum')  # runs.spectra
     # l2 = G.add_traversal(runs, '-->', 'L2')  # runs.l2
     # runid = G.add_getitem(runs, 'runid')
-    # runid2 = G.add_scalar_operation(runs, [runid], '{1} * 2 > 0', '2>0')  # runs.runid * 2 > 0
+    # runid2 = G.add_scalar_operation(runid, '{0} * 2 > 0', '2>0')  # runs.runid * 2 > 0
     # agg = G.add_predicate_aggregation(runid2, obs, 'all')
     # spectra = G.add_filter(spectra, agg)
-    # snr_above0 = G.add_scalar_operation(G.add_getitem(spectra, 'snr'), [], '{0}>0', '>')
+    # snr_above0 = G.add_scalar_operation(G.add_getitem(spectra, 'snr'), '{0}>0', '>')
     # agg_spectra = G.add_predicate_aggregation(snr_above0, obs, 'any')
     # result = G.add_filter(l2, agg_spectra)  # l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]
 
@@ -785,67 +785,68 @@ if __name__ == '__main__':
     # obs = G.add_start_node('OB')  # obs = data.obs
     # runs = G.add_traversal(obs, '-->(:Exposure)-->', 'Run')  # runs = obs.runs
     # camera = G.add_getitem(G.add_traversal(runs, '<--', 'ArmConfig', single=True), 'camera')
-    # is_red = G.add_scalar_operation(camera, [], '{0} = "red"', '==')
+    # is_red = G.add_scalar_operation(camera, '{0} = "red"', '==')
     # red_runs = G.add_filter(runs, is_red)
     # snr = G.add_getitem(red_runs, 'snr')
     # red_snr = G.add_aggregation(snr, obs, 'avg')  #  'mean(run.camera==red, wrt=obs)'
     # spec = G.add_traversal(runs, '-->(:Observation)-->(:RawSpectrum)-->', 'L1SingleSpectrum')
     # snr = G.add_getitem(spec, 'snr')
-    # compare = G.add_scalar_operation(snr, [red_snr], '{0} > {1}', '>')
+    # compare = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
     # spec = G.add_filter(spec, compare)
     # result = G.add_traversal(spec, '-->', 'L2')
 
-    # 3
-    # obs = data.obs
-    # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
-    # z = all(obs.targets.ra > 0, wrt=obs)
-    # result = obs[x & y & z]
-    obs = G.add_start_node('OB')  # obs = data.obs
-    l2s = G.add_traversal(obs, '-->', 'l2')  # l2s = obs.l2s
-    has = G.add_traversal(l2s, '-->', 'ha', single=True)  # l2s = obs.l2s.ha
-    above_2 = G.add_scalar_operation(has, '{0} > 2', '>')  # l2s > 2
-    hb = G.add_traversal(G.add_filter(l2s, above_2), '-->', 'hb', single=True)
-    hb_above_0 = G.add_scalar_operation(hb, '{0} > 0', '>0')
-    x = G.add_predicate_aggregation(hb_above_0, obs, 'all')
-
-    runs = G.add_traversal(obs, '-->', 'runs')
-    l1s = G.add_traversal(runs, '-->', 'l1')
-    camera = G.add_traversal(l1s, '-->', 'camera')
-    is_red = G.add_scalar_operation(camera, '{0}= "red"', '=red')
-    red_l1s = G.add_filter(l1s, is_red)
-    red_snrs = G.add_scalar_operation(G.add_getitem(red_l1s, 'snr'), '{0}> 0', '>0')
-    all_red_snrs = G.add_predicate_aggregation(red_snrs, runs, 'all')
-    red_runs = G.add_filter(runs, all_red_snrs)
-    red_l1s = G.add_traversal(red_runs, '-->', 'l1')
-    y = G.add_scalar_operation(G.add_aggregation(G.add_getitem(red_l1s, 'snr'), obs, 'avg'), '{0}>1', '>1')
-
-    targets = G.add_traversal(obs, '-->', 'target')
-    z = G.add_predicate_aggregation(G.add_scalar_operation(G.add_getitem(targets, 'ra'), '{0}>0', '>0'), obs, 'all')
-
-    # TODO: need to somehow make this happen in the syntax
-    x_and_y = G.add_combining_operation('{0} and {1}', '&', x, y)
-    x_and_y_and_z = G.add_combining_operation('{0} and {1}', '&', x_and_y, z)
-    result = G.add_filter(obs, x_and_y_and_z)
-
+    # # 3
+    # # obs = data.obs
+    # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
+    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
+    # # z = all(obs.targets.ra > 0, wrt=obs)
+    # # result = obs[x & y & z]
+    # obs = G.add_start_node('OB')  # obs = data.obs
+    # l2s = G.add_traversal(obs, '-->', 'l2')  # l2s = obs.l2s
+    # has = G.add_traversal(l2s, '-->', 'ha', single=True)  # l2s = obs.l2s.ha
+    # above_2 = G.add_scalar_operation(has, '{0} > 2', '>')  # l2s > 2
+    # hb = G.add_traversal(G.add_filter(l2s, above_2), '-->', 'hb', single=True)
+    # hb_above_0 = G.add_scalar_operation(hb, '{0} > 0', '>0')
+    # x = G.add_predicate_aggregation(hb_above_0, obs, 'all')
     #
-    # # 4
-    # obs = G.add_traversal(['ob'])  # obs
-    # exps = G.add_traversal(['exp'], obs)  # obs.exps
-    # runs = G.add_traversal(['run'], exps)  # obs.exps.runs
-    # l1s = G.add_traversal(['l1'], runs)  # obs.exps.runs.l1s
-    # snr = G.add_operation(l1s, [], 'snr')  # obs.exps.runs.l1s.snr
-    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    # runs = G.add_traversal(obs, '-->', 'runs')
+    # l1s = G.add_traversal(runs, '-->', 'l1')
+    # camera = G.add_traversal(l1s, '-->', 'camera')
+    # is_red = G.add_scalar_operation(camera, '{0}= "red"', '=red')
+    # red_l1s = G.add_filter(l1s, is_red)
+    # red_snrs = G.add_scalar_operation(G.add_getitem(red_l1s, 'snr'), '{0}> 0', '>0')
+    # all_red_snrs = G.add_predicate_aggregation(red_snrs, runs, 'all')
+    # red_runs = G.add_filter(runs, all_red_snrs)
+    # red_l1s = G.add_traversal(red_runs, '-->', 'l1')
+    # y = G.add_scalar_operation(G.add_aggregation(G.add_getitem(red_l1s, 'snr'), obs, 'avg'), '{0}>1', '>1')
     #
-    # exp_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_exp, [], '> 1'), exps, 'single')  # x > 1
-    # run_above_1 = G.add_aggregation(G.add_operation(avg_snr_per_run, [], '> 1'), runs, 'single')  # y > 1
-    # l1_above_1 = G.add_aggregation(G.add_operation(snr, [], '> 1'), l1s, 'single')  # obs.exps.runs.l1s.snr > 1
+    # targets = G.add_traversal(obs, '-->', 'target')
+    # z = G.add_predicate_aggregation(G.add_scalar_operation(G.add_getitem(targets, 'ra'), '{0}>0', '>0'), obs, 'all')
     #
-    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    # condition = G.add_aggregation(G.add_operation(l1s, [l1_above_1, run_above_1, exp_above_1], '&'), l1s, 'single')  # chosen the lowest
-    # l1s = G.add_filter(l1s, [condition], '')  # obs.exps.runs.l1s[cond]
-    # result = G.add_traversal(['l2'], l1s)
+    # # TODO: need to somehow make this happen in the syntax
+    # x_and_y = G.add_combining_operation('{0} and {1}', '&', x, y)
+    # x_and_y_and_z = G.add_combining_operation('{0} and {1}', '&', x_and_y, z)
+    # result = G.add_filter(obs, x_and_y_and_z)
+
+
+    # 4
+    obs = G.add_start_node('OB')  # obs
+    exps = G.add_traversal(obs, '-->', 'Exposure')  # obs.exps
+    runs = G.add_traversal(exps, '-->', 'Run')  # obs.exps.runs
+    l1s = G.add_traversal(runs, '-->', 'L1')  # obs.exps.runs.l1s
+    snr = G.add_getitem(l1s, 'snr')  # obs.exps.runs.l1s.snr
+    avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+
+    exp_above_1 = G.add_scalar_operation(avg_snr_per_exp, '{0} > 1', '>1')  # x > 1
+    run_above_1 = G.add_scalar_operation(avg_snr_per_run, '{0} > 1', '> 1')  # y > 1
+    l1_above_1 = G.add_scalar_operation(snr, '{0} > 1', '> 1')  # obs.exps.runs.l1s.snr > 1
+
+    # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    l1_and_run = G.add_combining_operation('{0} and {1}', '&', l1_above_1, run_above_1)
+    condition = G.add_combining_operation('{0} and {1}', '&', l1_and_run, exp_above_1)
+    l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
+    result = G.add_traversal(l1s, '-->', 'L2')
 
 
 
