@@ -505,19 +505,6 @@ class Statement:
     def make_cypher(self) -> Optional[str]:
         raise NotImplementedError
 
-    @property
-    def above_state(self):
-        """
-        All the accessible variables above this one including output variables
-        """
-        # get all node variables above
-        if self.edge is None:
-            return []
-        state = []
-        for node in nx.ancestors(self.graph.G, self.edge[0]):
-            state += self.graph.G.nodes[node]['variables']
-        return state
-
     def __repr__(self):
         r = self.make_cypher()
         if r is None:
@@ -668,14 +655,19 @@ class QueryGraph:
         self.traversal_G = subgraph_view(self.G, excluded_edge_type='dep')
 
     def latest_shared_ancestor(self, *nodes):
-        return sorted(set.intersection(*[self.above_state(n) | {n} for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
+        return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
 
     @property
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
 
-    def above_state(self, node):
-        return nx.descendants(self.above_graph, node)
+    def above_state(self, node, no_wrt=False):
+        states = nx.descendants(self.above_graph, node)
+        states.add(node)
+        if not no_wrt:
+            for n in states.copy():
+                states |= set(self.backwards_G.predecessors(n))
+        return states
 
     def get_variable_name(self, name):
         name = name.lower()
@@ -705,20 +697,25 @@ class QueryGraph:
             wrt = next(self.traversal_G.predecessors(parent_node))
         return add_aggregation(self.G, parent_node, wrt, statement)
 
-    def add_operation(self, parent_node, dependency_nodes, op_format_string, op_name):
+    def add_scalar_operation(self, parent_node, op_format_string, op_name):
+        if any(d['type'] == 'aggr' for a, b, d in self.G.in_edges(parent_node, data=True)):
+            wrt = next(self.backwards_G.successors(parent_node))
+            return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
+        statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self)
+        return add_operation(self.G, parent_node, [], statement)
+
+    def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None):
         """
         Operations should be inline (no variables) for as long as possible.
         This is so they can be used in match where statements
         """
-        if len(dependency_nodes):
-            wrt = self.latest_shared_ancestor(parent_node, *dependency_nodes)
-        else:
-            wrt = None
-        dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in dependency_nodes]  # fold back when combining
+        # if this is combiner operation, then we do everything with respect to the nearest ancestor
+        if wrt is None:
+            wrt = self.latest_shared_ancestor(*nodes)
+        dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in nodes]  # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
-        statement = Operation(self.G.nodes[parent_node]['variables'][0], deps,
-                              op_format_string, op_name, self)
-        return add_operation(self.G, parent_node, dependency_nodes, statement)
+        statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
+        return add_operation(self.G, wrt, dependency_nodes, statement)
 
     def add_getitem(self, parent_node, item):
         statement = GetItem(self.G.nodes[parent_node]['variables'][0], item, self)
@@ -733,7 +730,6 @@ class QueryGraph:
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
         parent_node = self.assign_to_variable(parent_node, only_if_op=True)  # put it in a variable so it can be aggregated
         above = self.above_state(wrt_node)
-        above.add(wrt_node)
         to_conserve = [self.assign_to_variable(c, only_if_op=True) for c in above]
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0],
                               [self.G.nodes[c]['variables'][0] for c in to_conserve if self.G.nodes[c]['variables']],
@@ -778,10 +774,10 @@ if __name__ == '__main__':
     # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum')  # runs.spectra
     # l2 = G.add_traversal(runs, '-->', 'L2')  # runs.l2
     # runid = G.add_getitem(runs, 'runid')
-    # runid2 = G.add_operation(runs, [runid], '{1} * 2 > 0', '2>0')  # runs.runid * 2 > 0
+    # runid2 = G.add_scalar_operation(runs, [runid], '{1} * 2 > 0', '2>0')  # runs.runid * 2 > 0
     # agg = G.add_predicate_aggregation(runid2, obs, 'all')
     # spectra = G.add_filter(spectra, agg)
-    # snr_above0 = G.add_operation(G.add_getitem(spectra, 'snr'), [], '{0}>0', '>')
+    # snr_above0 = G.add_scalar_operation(G.add_getitem(spectra, 'snr'), [], '{0}>0', '>')
     # agg_spectra = G.add_predicate_aggregation(snr_above0, obs, 'any')
     # result = G.add_filter(l2, agg_spectra)  # l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]
 
@@ -789,13 +785,13 @@ if __name__ == '__main__':
     # obs = G.add_start_node('OB')  # obs = data.obs
     # runs = G.add_traversal(obs, '-->(:Exposure)-->', 'Run')  # runs = obs.runs
     # camera = G.add_getitem(G.add_traversal(runs, '<--', 'ArmConfig', single=True), 'camera')
-    # is_red = G.add_operation(camera, [], '{0} = "red"', '==')
+    # is_red = G.add_scalar_operation(camera, [], '{0} = "red"', '==')
     # red_runs = G.add_filter(runs, is_red)
     # snr = G.add_getitem(red_runs, 'snr')
     # red_snr = G.add_aggregation(snr, obs, 'avg')  #  'mean(run.camera==red, wrt=obs)'
     # spec = G.add_traversal(runs, '-->(:Observation)-->(:RawSpectrum)-->', 'L1SingleSpectrum')
     # snr = G.add_getitem(spec, 'snr')
-    # compare = G.add_operation(snr, [red_snr], '{0} > {1}', '>')
+    # compare = G.add_scalar_operation(snr, [red_snr], '{0} > {1}', '>')
     # spec = G.add_filter(spec, compare)
     # result = G.add_traversal(spec, '-->', 'L2')
 
@@ -808,28 +804,28 @@ if __name__ == '__main__':
     obs = G.add_start_node('OB')  # obs = data.obs
     l2s = G.add_traversal(obs, '-->', 'l2')  # l2s = obs.l2s
     has = G.add_traversal(l2s, '-->', 'ha', single=True)  # l2s = obs.l2s.ha
-    above_2 = G.add_operation(has, [], '{0} > 2', '>')  # l2s > 2
+    above_2 = G.add_scalar_operation(has, '{0} > 2', '>')  # l2s > 2
     hb = G.add_traversal(G.add_filter(l2s, above_2), '-->', 'hb', single=True)
-    hb_above_0 = G.add_operation(hb, [], '{0} > 0', '>0')
+    hb_above_0 = G.add_scalar_operation(hb, '{0} > 0', '>0')
     x = G.add_predicate_aggregation(hb_above_0, obs, 'all')
 
     runs = G.add_traversal(obs, '-->', 'runs')
     l1s = G.add_traversal(runs, '-->', 'l1')
     camera = G.add_traversal(l1s, '-->', 'camera')
-    is_red = G.add_operation(camera, [], '{0}= "red"', '=red')
+    is_red = G.add_scalar_operation(camera, '{0}= "red"', '=red')
     red_l1s = G.add_filter(l1s, is_red)
-    red_snrs = G.add_operation(G.add_getitem(red_l1s, 'snr'), [], '{0}> 0', '>0')
+    red_snrs = G.add_scalar_operation(G.add_getitem(red_l1s, 'snr'), '{0}> 0', '>0')
     all_red_snrs = G.add_predicate_aggregation(red_snrs, runs, 'all')
     red_runs = G.add_filter(runs, all_red_snrs)
     red_l1s = G.add_traversal(red_runs, '-->', 'l1')
-    y = G.add_aggregation(G.add_getitem(red_l1s, 'snr'), obs, 'avg')
+    y = G.add_scalar_operation(G.add_aggregation(G.add_getitem(red_l1s, 'snr'), obs, 'avg'), '{0}>1', '>1')
 
     targets = G.add_traversal(obs, '-->', 'target')
-    z = G.add_predicate_aggregation(G.add_operation(G.add_getitem(targets, 'ra'), [], '{0}>0', '>0'), obs, 'all')
+    z = G.add_predicate_aggregation(G.add_scalar_operation(G.add_getitem(targets, 'ra'), '{0}>0', '>0'), obs, 'all')
 
     # TODO: need to somehow make this happen in the syntax
-    x_and_y = G.add_operation(x, [y], '{0} and {1}', '&')
-    x_and_y_and_z = G.add_operation(x_and_y, [z], '{0} and {1}', '&')
+    x_and_y = G.add_combining_operation('{0} and {1}', '&', x, y)
+    x_and_y_and_z = G.add_combining_operation('{0} and {1}', '&', x_and_y, z)
     result = G.add_filter(obs, x_and_y_and_z)
 
     #
@@ -888,7 +884,7 @@ if __name__ == '__main__':
         try:
             statement = G.G.edges[e]['statement'].make_cypher()
             if statement is not None:
-                print(e, statement)
+                print(statement)
         except KeyError:
             pass
 
