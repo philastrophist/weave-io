@@ -1,6 +1,32 @@
-from .parser import QueryGraph
+from parser import QueryGraph
 
-class Query:
+class BaseQuery:
+    def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
+        if G is None:
+            self.G = QueryGraph()
+        else:
+            self.G = G
+        if node is None:
+            self.node = self.G.start
+        else:
+            self.node = node
+        self.previous = previous
+        self._cypher = None
+
+    @property
+    def cypher(self):
+        if self._cypher is None:
+            self._cypher = self.G.cypher_lines(self.node)
+        return self._cypher
+
+    @classmethod
+    def spawn(cls, parent, node):
+        return cls(parent.G, node, parent)
+
+
+    def _get_path_to_object(self, obj):
+        return '-->', False
+
     def _slice(self):
         """
         obj[slice]
@@ -21,9 +47,13 @@ class Query:
         """
         raise NotImplementedError
 
+class Query(BaseQuery):
+    def _start_at_object(self, obj):
+        n = self.G.add_start_node(obj)
+        return ObjectQuery.spawn(self, n)
 
 
-class ObjectQuery(Query):
+class ObjectQuery(BaseQuery):
     def _traverse_to_generic_object(self):
         """
         obj.generic_obj['specific_type_name']
@@ -36,13 +66,15 @@ class ObjectQuery(Query):
         """
         raise NotImplementedError
 
-    def _traverse_to_specific_object(self):
+    def _traverse_to_specific_object(self, obj):
         """
         obj.obj
         traversal, expands
         e.g. `ob.runs`  reads "for each ob, get its runs"
         """
-        raise NotImplementedError
+        path, single = self._get_path_to_object(obj)
+        n = self.G.add_traversal(self.node, path, obj, single)
+        return ObjectQuery.spawn(self, n)
 
     def _filter_by_object_index(self):
         """
@@ -89,7 +121,7 @@ class ObjectQuery(Query):
 
 
 
-class AttributeQuery(Query):
+class AttributeQuery(BaseQuery):
     def _perform_arithmetic(self):
         """
         arithmetics
@@ -117,10 +149,10 @@ class AttributeQuery(Query):
         raise NotImplementedError
 
 
-class ListAttributeQuery(Query):
+class ListAttributeQuery(BaseQuery):
     pass
 
 
 if __name__ == '__main__':
     q = Query()
-    q.ob
+    print(q._start_at_object('OB')._traverse_to_specific_object('Run').cypher)
