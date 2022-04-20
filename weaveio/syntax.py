@@ -9,10 +9,13 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from typing import List, overload
+from typing import List, overload, Callable
 from typing_extensions import SupportsIndex
 
 from .parser import QueryGraph
+
+__all__ = ['sum', 'min', 'max', 'std', 'all', 'any', 'count', 'abs', 'floor', 'ceil', 'round',
+           'random', 'sign', 'log', 'log10', 'exp', 'sqrt', 'string', 'lower', 'upper']
 
 
 class BaseQuery:
@@ -285,15 +288,6 @@ class AttributeQuery(BaseQuery):
     def __neg__(self):
         return self._perform_arithmetic('-{{0}}', 'neg')
 
-    def __str__(self):
-        return self._basic_scalar_function('toString')
-
-    def __int__(self):
-        return self._basic_scalar_function('toInteger')
-
-    def __float__(self):
-        return self._basic_scalar_function('toFloat')
-
     def __abs__(self):
         return self._basic_scalar_function('abs')
 
@@ -313,6 +307,84 @@ class AttributeQuery(BaseQuery):
         return self._G.cypher_lines(r), self._G.parameters
 
 
-
 class ListAttributeQuery(BaseQuery):
     pass
+
+
+def _convert(x, remove_infs: bool = True, convert_to_float: bool = False):
+    if convert_to_float:
+        x = f'toFloat({x})'
+    if remove_infs:
+        x = f"CASE WHEN {x} > apoc.math.maxLong() THEN null ELSE {x} END"
+    return x
+
+def _template_operator(string_op, name, python_func, item, convert_to_float=True, remove_infs=True, *args, **kwargs):
+    if not isinstance(item, AttributeQuery):
+        return python_func(item, *args, **kwargs)
+    # TODO: convert
+    return item._perform_arithmetic(string_op, name)
+
+def _template_aggregator(string_op, name, python_func: Callable, item: 'Dissociated', wrt: BaseQuery = None,
+                        allow_hiers=False, remove_infs: bool = True, convert_to_float: bool = False,
+                         args=None, kwargs=None):
+    if not isinstance(item, AttributeQuery):
+        return python_func(item, *args, **kwargs)
+    # TODO: convert
+    return item._aggregate(string_op, name, wrt, )
+
+import numpy as np
+def sign(item, *args, **kwargs):
+    return _template_operator('sign({x})', 'sign', np.sign, item, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def exp(item, *args, **kwargs):
+    return _template_operator('exp({x})', 'exp', np.exp, item, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def log(item, *args, **kwargs):
+    return _template_operator('log({x})', 'log', np.log, item, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def log10(item, *args, **kwargs):
+    return _template_operator('log10({x})', 'log10', np.log10, item, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def sqrt(item, *args, **kwargs):
+    return _template_operator('sqrt({x})', 'sqrt', np.sqrt, item, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+
+python_any = any
+python_all = all
+python_max = max
+python_min = min
+python_sum = sum
+
+
+def sum(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('sum({0})', 'sum', python_sum, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def max(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('max({0})', 'max', python_max, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def min(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('min({0})', 'min', python_min, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
+
+
+def all(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('all(i in collect({0}) where i)', 'all', python_all, item, wrt, args=args, kwargs=kwargs)
+
+
+def any(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('any(i in collect({0}) where i)', 'any', python_any, item, wrt, args=args, kwargs=kwargs)
+
+
+def count(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('count({0})', 'count', len, item, wrt, allow_hiers=True, args=args, kwargs=kwargs)
+
+
+def std(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('stDev({0})', 'std', np.std, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
+
