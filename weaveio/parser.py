@@ -694,6 +694,7 @@ class QueryGraph:
         self.dag_G = subgraph_view(self.G, excluded_edge_type='wrt')
         self.backwards_G = subgraph_view(self.G, only_edge_type='wrt')
         self.traversal_G = subgraph_view(self.G, excluded_edge_type='dep')
+        self.parameters = {}
 
     @property
     def statements(self):
@@ -809,6 +810,15 @@ class QueryGraph:
         statement = Return(self.G.nodes[index_node]['variables'][0], deps, self)
         return self.retrieve(statement, add_return, self.G, index_node, column_nodes, statement)
 
+    def add_parameter(self, value, name=None):
+        name = f'${name}' if name is not None else '$'
+        varname = self.get_variable_name(name)
+        self.parameters[varname] = value
+        return varname
+
+
+
+
 
     def restricted(self, result_node=None):
         if result_node is None:
@@ -837,7 +847,7 @@ class QueryGraph:
                 pass
         end_time = time.perf_counter()
         timed = end_time - start_time
-        return statements, timed
+        return statements
 
 
 

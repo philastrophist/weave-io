@@ -1,27 +1,34 @@
-from parser import QueryGraph
+from .parser import QueryGraph
 
 class BaseQuery:
     def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
         if G is None:
-            self.G = QueryGraph()
+            self._G = QueryGraph()
         else:
-            self.G = G
+            self._G = G
         if node is None:
-            self.node = self.G.start
+            self._node = self._G.start
         else:
-            self.node = node
-        self.previous = previous
-        self._cypher = None
+            self._node = node
+        self._previous = previous
+        self.__cypher = None
+        self._index = None
+        if previous is not None:
+            if isinstance(previous, ObjectQuery):
+                self._index = previous
+            else:
+                self._index = previous._index
+
 
     @property
-    def cypher(self):
-        if self._cypher is None:
-            self._cypher = self.G.cypher_lines(self.node)
-        return self._cypher
+    def _cypher(self):
+        if self.__cypher is None:
+            self.__cypher = self._G.cypher_lines(self._node)
+        return self.__cypher
 
     @classmethod
-    def spawn(cls, parent, node):
-        return cls(parent.G, node, parent)
+    def _spawn(cls, parent, node):
+        return cls(parent._G, node, parent)
 
 
     def _get_path_to_object(self, obj):
@@ -47,10 +54,11 @@ class BaseQuery:
         """
         raise NotImplementedError
 
+
 class Query(BaseQuery):
     def _start_at_object(self, obj):
-        n = self.G.add_start_node(obj)
-        return ObjectQuery.spawn(self, n)
+        n = self._G.add_start_node(obj)
+        return ObjectQuery._spawn(self, n)
 
 
 class ObjectQuery(BaseQuery):
@@ -73,10 +81,10 @@ class ObjectQuery(BaseQuery):
         e.g. `ob.runs`  reads "for each ob, get its runs"
         """
         path, single = self._get_path_to_object(obj)
-        n = self.G.add_traversal(self.node, path, obj, single)
-        return ObjectQuery.spawn(self, n)
+        n = self._G.add_traversal(self._node, path, obj, single)
+        return ObjectQuery._spawn(self, n)
 
-    def _filter_by_object_index(self):
+    def _filter_by_object_index(self, index):
         """
         obj['obj_id']
         filter, id, shrinks, destructive
@@ -84,12 +92,12 @@ class ObjectQuery(BaseQuery):
         if the object with this id is not in the hierarchy, then null is returned
         e.g. `obs[1234]` filters to the single ob with obid=1234
         """
-        raise NotImplementedError
+        name = self._G.add_parameter(index)
+        op = self._G.add_scalar_operation(self._node, f'{{0}}.id = {name}', 'index')
+        n = self._G.add_filter(self._node, op)
+        return ObjectQuery._spawn(self, n)
 
-    def _traverse_to_attribute(self):
-        raise NotImplementedError
-
-    def _select_attribute(self):
+    def _select_attribute(self, attr):
         """
         # obj['factor'], obj.factor
         fetches an attribute from the object and cuts off any other functions after that
@@ -98,7 +106,8 @@ class ObjectQuery(BaseQuery):
              `run.mjd` returns the mjd by a run's exposure (still only one mjd per run though)
              `run.cnames` returns the cname of each target in a run (this is a list per run)
         """
-        raise NotImplementedError
+        n = self._G.add_getitem(self._node, attr)
+        return AttributeQuery._spawn(self, n)
 
     def _traverse_to_relative_object(self):
         """
@@ -122,6 +131,10 @@ class ObjectQuery(BaseQuery):
 
 
 class AttributeQuery(BaseQuery):
+    def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
+        super().__init__(G, node, previous)
+
+
     def _perform_arithmetic(self):
         """
         arithmetics
@@ -148,11 +161,11 @@ class AttributeQuery(BaseQuery):
         """
         raise NotImplementedError
 
+    def _compile(self):
+        r = self._G.add_results(self._index._node, self._node)
+        return self._G.cypher_lines(r), self._G.parameters
+
+
 
 class ListAttributeQuery(BaseQuery):
     pass
-
-
-if __name__ == '__main__':
-    q = Query()
-    print(q._start_at_object('OB')._traverse_to_specific_object('Run').cypher)
