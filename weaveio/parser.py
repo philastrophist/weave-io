@@ -1,4 +1,5 @@
 from collections import namedtuple, defaultdict, OrderedDict
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import List, Tuple, Dict, Optional
 
@@ -482,11 +483,25 @@ def get_above_state_traversal_graph(graph: HashedDiGraph):
 
 
 class Statement:
+    default_ids = ['inputs', '__class__']
+    ids = []
+
     def __init__(self, input_variables, graph: 'QueryGraph'):
         self.inputs = input_variables
         self.output_variables = []
         self._edge = None
         self.graph = graph
+
+    def __eq__(self, o: object) -> bool:
+        if not isinstance(o, self.__class__):
+            return False
+        return hash(self) == hash(o)
+
+    def __hash__(self):
+        ids = self.ids + self.default_ids
+        obs = (getattr(self, i) for i in ids)
+        obs = map(lambda x: tuple(x) if isinstance(x, list) else x, obs)
+        return hash(tuple(map(hash, obs)))
 
     @property
     def edge(self):
@@ -513,6 +528,8 @@ class Statement:
 
 
 class StartingMatch(Statement):
+    ids = ['to_node_type']
+
     def __init__(self, to_node_type, graph):
         super(StartingMatch, self).__init__([], graph)
         self.to_node_type = to_node_type
@@ -523,6 +540,8 @@ class StartingMatch(Statement):
 
 
 class Traversal(Statement):
+    ids = ['to_node_type', 'path', 'from_variable']
+
     def __init__(self, from_variable, to_node_type, path, graph):
         super().__init__([from_variable], graph)
         self.from_variable = from_variable
@@ -532,6 +551,7 @@ class Traversal(Statement):
 
     def make_cypher(self) -> str:
         return f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
+
 
 class NullStatement(Statement):
     def __init__(self, input_variables, graph: 'QueryGraph'):
@@ -543,6 +563,7 @@ class NullStatement(Statement):
 
 
 class Operation(Statement):
+    ids = ['op_string', 'op_name']
     def __init__(self, input_variable, dependency_variables, op_string, op_name, graph: 'QueryGraph'):
         super().__init__([input_variable]+dependency_variables, graph)
         self.op_string = op_string
@@ -555,8 +576,11 @@ class Operation(Statement):
 
 
 class GetItem(Operation):
+    ids = ['name']
+
     def __init__(self, input_variable, name, graph: 'QueryGraph'):
         super().__init__(input_variable, [], f'{{}}.{name}', f'.{name}', graph)
+        self.name = name
 
 
 class AssignToVariable(Statement):
@@ -596,14 +620,20 @@ class CopyAndFilter(Filter):
 
 
 class Slice(Statement):
-    def __init__(self, input_variables, graph: 'QueryGraph'):
-        super().__init__(input_variables, graph)
+    ids = ['slc']
+
+    def __init__(self, input_variable, slc, graph: 'QueryGraph'):
+        super().__init__([input_variable], graph)
+        self.slc = slc
 
     def make_cypher(self) -> str:
         raise NotImplementedError
 
 
 class Aggregate(Statement):
+    ids = ['agg_func', 'name', 'input']
+    default_ids = ['__class__']
+
     def __init__(self, input, conserve, agg_func: str, name, graph: 'QueryGraph'):
         super().__init__([input]+conserve, graph)
         self.agg_func = agg_func
@@ -616,13 +646,6 @@ class Aggregate(Statement):
         variables = ', '.join(self.conserve)
         agg_string = self.agg_func.format(self.input)
         return f"WITH {variables}, {agg_string} as {self.output}"
-
-
-class Storer(Statement):
-
-    def make_cypher(self) -> str:
-        return f"WITH {self.state}"
-
 
 
 class QueryGraph:
@@ -654,6 +677,18 @@ class QueryGraph:
         self.backwards_G = subgraph_view(self.G, only_edge_type='wrt')
         self.traversal_G = subgraph_view(self.G, excluded_edge_type='dep')
 
+    @property
+    def statements(self):
+        return {d['statement']: (a, b) for a, b, d in G.G.edges(data=True) if 'statement' in d}
+
+    def retrieve(self, statement, function, *args, **kwargs):
+        # edge = self.statements.get(statement, None)
+        # if edge is not None:
+        #     print(edge, statement)
+        #     return edge[1]
+        # TODO: fix this
+        return function(*args, **kwargs)
+
     def latest_shared_ancestor(self, *nodes):
         return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
 
@@ -681,11 +716,11 @@ class QueryGraph:
     def add_start_node(self, node_type):
         parent_node = self.start
         statement = StartingMatch(node_type, self)
-        return add_traversal(self.G, parent_node, statement)
+        return self.retrieve(statement, add_traversal, self.G, parent_node, statement)
 
     def add_traversal(self, parent_node, path: str, end_node_type: str, single=False):
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, self)
-        return add_traversal(self.G, parent_node, statement, single=single)
+        return self.retrieve(statement, add_traversal, self.G, parent_node, statement, single=single)
 
     def fold_single(self, parent_node, wrt=None, raise_error=True):
         if not any(d.get('single', False) for a, b, d in self.G.in_edges(parent_node, data=True)):
@@ -695,14 +730,14 @@ class QueryGraph:
         statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
         if wrt is None:
             wrt = next(self.traversal_G.predecessors(parent_node))
-        return add_aggregation(self.G, parent_node, wrt, statement)
+        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name):
         if any(d['type'] == 'aggr' for a, b, d in self.G.in_edges(parent_node, data=True)):
             wrt = next(self.backwards_G.successors(parent_node))
             return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
         statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self)
-        return add_operation(self.G, parent_node, [], statement)
+        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement)
 
     def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None):
         """
@@ -715,16 +750,16 @@ class QueryGraph:
         dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in nodes]  # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
         statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
-        return add_operation(self.G, wrt, dependency_nodes, statement)
+        return self.retrieve(statement, add_operation, self.G, wrt, dependency_nodes, statement)
 
     def add_getitem(self, parent_node, item):
         statement = GetItem(self.G.nodes[parent_node]['variables'][0], item, self)
-        return add_operation(self.G, parent_node, [], statement)
+        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement)
 
     def assign_to_variable(self, parent_node, only_if_op=False):
         if only_if_op and any(d['type'] == 'operation' for a, b, d in self.G.in_edges(parent_node, data=True)):
             stmt = AssignToVariable(self.G.nodes[parent_node]['variables'][0], self)
-            return add_operation(self.G, parent_node, [], stmt)
+            return self.retrieve(stmt, add_operation, self.G, parent_node, [], stmt)
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
@@ -734,7 +769,7 @@ class QueryGraph:
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0],
                               [self.G.nodes[c]['variables'][0] for c in to_conserve if self.G.nodes[c]['variables']],
                               op_format_string, op_name, self)
-        return add_aggregation(self.G, parent_node, wrt_node, statement)
+        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt_node, statement)
 
     def add_aggregation(self, parent_node, wrt_node, op):
         return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op)
@@ -747,7 +782,7 @@ class QueryGraph:
         predicate_node = self.fold_single(predicate_node, parent_node, raise_error=False)
         predicate = self.G.nodes[predicate_node]['variables'][0]
         statement = CopyAndFilter(self.G.nodes[parent_node]['variables'][0], predicate, self)
-        return add_filter(self.G, parent_node, [predicate_node], statement)
+        return self.retrieve(statement, add_filter, self.G, parent_node, [predicate_node], statement)
 
     def restricted(self, result_node=None):
         if result_node is None:
@@ -848,6 +883,24 @@ if __name__ == '__main__':
     l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
     result = G.add_traversal(l1s, '-->', 'L2')
 
+    #
+    # obs = G.add_start_node('OB')  # obs
+    # exps = G.add_traversal(obs, '-->', 'Exposure')  # obs.exps
+    # runs = G.add_traversal(exps, '-->', 'Run')  # obs.exps.runs
+    # l1s = G.add_traversal(runs, '-->', 'L1')  # obs.exps.runs.l1s
+    # snr = G.add_getitem(l1s, 'snr')  # obs.exps.runs.l1s.snr
+    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
+    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
+    #
+    # exp_above_1 = G.add_scalar_operation(avg_snr_per_exp, '{0} > 1', '>1')  # x > 1
+    # run_above_1 = G.add_scalar_operation(avg_snr_per_run, '{0} > 1', '> 1')  # y > 1
+    # l1_above_1 = G.add_scalar_operation(snr, '{0} > 1', '> 1')  # obs.exps.runs.l1s.snr > 1
+    #
+    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
+    # l1_and_run = G.add_combining_operation('{0} and {1}', '&', l1_above_1, run_above_1)
+    # condition = G.add_combining_operation('{0} and {1}', '&', l1_and_run, exp_above_1)
+    # l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
+    # result = G.add_traversal(l1s, '-->', 'L2')
 
 
     # used to use networkx 2.4
