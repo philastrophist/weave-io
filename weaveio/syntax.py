@@ -9,12 +9,14 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from typing import List
+from typing import List, overload
+from typing_extensions import SupportsIndex
+
 from .parser import QueryGraph
 
 
 class BaseQuery:
-    def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
+    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None) -> None:
         if G is None:
             self._G = QueryGraph()
         else:
@@ -42,11 +44,10 @@ class BaseQuery:
     def _spawn(cls, parent, node):
         return cls(parent._G, node, parent)
 
-
     def _get_path_to_object(self, obj):
         return '-->', False
 
-    def _slice(self):
+    def _slice(self, slc):
         """
         obj[slice]
         filter, shrinks, destructive
@@ -56,7 +57,7 @@ class BaseQuery:
         """
         raise NotImplementedError
 
-    def _filter_by_mask(self):
+    def _filter_by_mask(self, mask):
         """
         obj[boolean_filter]
         filter, shrinks, destructive
@@ -64,16 +65,32 @@ class BaseQuery:
         e.g. `ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red']` gives only the red stacks
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
-        raise NotImplementedError
+        n = self._G.add_filter(self._node, mask._node, direct=False)
+        return self.__class__._spawn(self, n)
 
 
 class Query(BaseQuery):
-    def _start_at_object(self, obj):
+    def _traverse_to_specific_object(self, obj):
         n = self._G.add_start_node(obj)
-        return ObjectQuery._spawn(self, n)
+        return ObjectQuery._spawn(self, n, obj)
 
+    def _traverse_by_object_index(self, obj, index):
+        name = self._G.add_parameter(index)
+        travel = self._G.add_start_node(obj)
+        i = self._G.add_getitem(travel, 'id')
+        eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        n = self._G.add_filter(travel, eq, direct=True)
+        return ObjectQuery._spawn(self, n, obj)
 
 class ObjectQuery(BaseQuery):
+    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj = None) -> None:
+        super().__init__(G, node, previous)
+        self._obj = obj
+
+    @classmethod
+    def _spawn(cls, parent, node, obj):
+        return cls(parent._G, node, parent, obj)
+
     def _traverse_to_generic_object(self):
         """
         obj.generic_obj['specific_type_name']
@@ -94,7 +111,7 @@ class ObjectQuery(BaseQuery):
         """
         path, single = self._get_path_to_object(obj)
         n = self._G.add_traversal(self._node, path, obj, single)
-        return ObjectQuery._spawn(self, n)
+        return ObjectQuery._spawn(self, n, obj)
 
     def _traverse_by_object_index(self, obj, index):
         """
@@ -110,14 +127,17 @@ class ObjectQuery(BaseQuery):
         i = self._G.add_getitem(travel, 'id')
         eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n)
+        return ObjectQuery._spawn(self, n, obj)
 
-    def _filter_by_object_indexes(self, indexes: List):
-        path, single = self._get_path_to_object(obj)
+    def _traverse_by_object_indexes(self, obj, indexes: List):
+        raise NotImplementedError
+        indexes = list(indexes)
         name = self._G.add_parameter(indexes)
-        self._G.add_traversal(self.node, )
-
-
+        path, single = self._get_path_to_object(obj)
+        travel = self._G.add_traversal(self._node, path, obj, True, name)
+        i = self._G.add_getitem(travel, 'id')
+        n = self._G.add_filter(travel, eq, direct=True)
+        return ObjectQuery._spawn(self, n, obj)
 
     def _select_attribute(self, attr):
         """
@@ -150,14 +170,36 @@ class ObjectQuery(BaseQuery):
         """
         raise NotImplementedError
 
+    def __getitem__(self, item):
+        """
+        item can be an id, a factor name, a list of those, a slice, or a boolean_mask
+        """
+        if isinstance(item, (tuple, list)):
+            if not all(isinstance(i, (str, float, int)) for i in item):
+                raise TypeError(f"Cannot index by non str/float/int values")
+            if any(self._get_object_of(i, raise_error=False) for i in item):
+                return self._select_attributes(item)
+            else:
+                # go back and be better
+                return self._previous._traverse_by_object_indexes(self._obj, item)
+        elif isinstance(item, slice):
+            return self._slice(item)
+        elif isinstance(item, AttributeQuery):
+            return self._filter_by_mask(item)  # a boolean_mask
+        else:
+            try:
+                obj = self._get_object_of(item)  # if factor
+                return self._traverse_to_specific_object(obj)._select_attribute(item)
+            except ValueError:
+                # index
+                return self._previous._traverse_by_object_index(self._obj, item)
 
 
 class AttributeQuery(BaseQuery):
     def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
         super().__init__(G, node, previous)
 
-
-    def _perform_arithmetic(self):
+    def _perform_arithmetic(self, op_string, op_name, other=None):
         """
         arithmetics
         [+, -, /, *, >, <, ==, !=, <=, >=]
@@ -170,7 +212,90 @@ class AttributeQuery(BaseQuery):
         e.g. sum(ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red'].snr, wrt=ob) > ob.l1stackedspectra.snr is allowed since there is a shared parent,
              we take ob.l1stackedspectra as the hierarchy level in order to continue
         """
-        raise NotImplementedError
+        if isinstance(other, Query):
+            n = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
+        elif isinstance(other, ObjectQuery):
+            raise TypeError(f"Cannot do arithmetic directly on objects")
+        else:
+            n = self._G.add_scalar_operation(self._node, op_string, op_name)
+        return AttributeQuery._spawn(self, n)
+
+    def _basic_scalar_function(self, name):
+        return self._perform_arithmetic(f'{name}({{0}})', name)
+
+    def _basic_math_operator(self, operator, other, switch=False):
+        if not isinstance(other, AttributeQuery):
+            other = self._G.add_parameter(other, 'add')
+            string_op = f'{other} {operator} {{0}}' if switch else f'{{0}} {operator} {other}'
+        else:
+            string_op = f'{{1}} {operator} {{0}}' if switch else f'{{0}} {operator} {{1}}'
+        return self._perform_arithmetic(string_op, operator, other)
+
+    def __add__(self, other):
+        return self._basic_math_operator('+', other)
+
+    def __radd__(self, other):
+        return self._basic_math_operator('+', other, switch=True)
+
+    def __mul__(self, other):
+        return self._basic_math_operator('*', other)
+
+    def __rmul__(self, other):
+        return self._basic_math_operator('*', other, switch=True)
+
+    def __sub__(self, other):
+        return self._basic_math_operator('-', other)
+
+    def __rsub__(self, other):
+        return self._basic_math_operator('-', other, switch=True)
+
+    def __truediv__(self, other):
+        return self._basic_math_operator('/', other)
+
+    def __rtruediv__(self, other):
+        return self._basic_math_operator('/', other, switch=True)
+
+    def __eq__(self, other):
+        return self._basic_math_operator('=', other)
+
+    def __ne__(self, other):
+        return self._basic_math_operator('<>', other)
+
+    def __lt__(self, other):
+        return self._basic_math_operator('<', other)
+
+    def __le__(self, other):
+        return self._basic_math_operator('<=', other)
+
+    def __gt__(self, other):
+        return self._basic_math_operator('>', other)
+
+    def __ge__(self, other):
+        return self._basic_math_operator('>=', other)
+
+    def __ceil__(self):
+        return self._basic_scalar_function('ceil')
+
+    def __floor__(self):
+        return self._basic_scalar_function('floor')
+
+    def __round__(self, ndigits: int):
+        raise self._perform_arithmetic(f'round({{0}}, {ndigits}', f'round{ndigits}')
+
+    def __neg__(self):
+        return self._perform_arithmetic('-{{0}}', 'neg')
+
+    def __str__(self):
+        return self._basic_scalar_function('toString')
+
+    def __int__(self):
+        return self._basic_scalar_function('toInteger')
+
+    def __float__(self):
+        return self._basic_scalar_function('toFloat')
+
+    def __abs__(self):
+        return self._basic_scalar_function('abs')
 
     def _aggregate(self):
         """

@@ -77,6 +77,9 @@ def add_return(graph: HashedDiGraph, index, columns, statement):
         graph.add_edge(d, n, type='dep', style='dotted')
     return n
 
+def add_unwind(graph: HashedDiGraph, parent, statement):
+    return make_node(graph, parent, 'traversal', statement, single=False)
+
 def subgraph_view(graph: HashedDiGraph, excluded_edge_type=None, only_edge_type=None,
                   only_nodes: List = None, excluded_nodes: List = None,
                   only_edges: List[Tuple] = None, excluded_edges: List[Tuple] = None,
@@ -547,17 +550,25 @@ class StartingMatch(Statement):
 
 
 class Traversal(Statement):
-    ids = ['to_node_type', 'path', 'from_variable']
+    ids = ['to_node_type', 'path', 'from_variable', 'to_unwind']
 
-    def __init__(self, from_variable, to_node_type, path, graph):
+    def __init__(self, from_variable, to_node_type, path, unwind, graph):
         super().__init__([from_variable], graph)
         self.from_variable = from_variable
         self.to_node_type = to_node_type
         self.path = path
         self.to_node = self.make_variable(to_node_type)
+        if unwind is not None:
+            self.to_unwind = unwind
+            self.unwound = self.make_variable(unwind)
+        else:
+            self.to_unwind = None
 
     def make_cypher(self) -> str:
-        return f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
+        r = f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
+        if self.to_unwind is not None:
+            r = f'UNWIND {self.unwind} as {self.unwound} {r}'
+        return r
 
 
 class NullStatement(Statement):
@@ -666,6 +677,18 @@ class Return(Statement):
         return f"RETURN {cols}"
 
 
+class Unwind(Statement):
+    ids = ['parameter']
+
+    def __init__(self, wrt, parameter, name, graph: 'QueryGraph'):
+        super().__init__([wrt], graph)
+        self.parameter = parameter
+        self.output = self.make_variable(name)
+
+    def make_cypher(self) -> Optional[str]:
+        return f"UNWIND {self.parameter} as {self.output}"
+
+
 class QueryGraph:
     """
     Rules of adding nodes/edges:
@@ -737,8 +760,8 @@ class QueryGraph:
         statement = StartingMatch(node_type, self)
         return self.retrieve(statement, add_traversal, self.G, parent_node, statement)
 
-    def add_traversal(self, parent_node, path: str, end_node_type: str, single=False):
-        statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, self)
+    def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwind=None):
+        statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwind, self)
         return self.retrieve(statement, add_traversal, self.G, parent_node, statement, single=single)
 
     def fold_single(self, parent_node, wrt=None, raise_error=True):
@@ -807,6 +830,10 @@ class QueryGraph:
         statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
         return self.retrieve(statement, add_filter, self.G, parent_node, [predicate_node], statement)
 
+    def add_unwind_parameter(self, wrt_node, to_unwind):
+        statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
+        return self.retrieve(statement, add_unwind, self.G, wrt_node, statement)
+
     def add_results(self, index_node, *column_nodes):
         # fold back column data into the index node
         column_nodes = [self.fold_single(d, index_node, raise_error=False) for d in column_nodes] # fold back when combining
@@ -854,11 +881,11 @@ class QueryGraph:
 if __name__ == '__main__':
     G = QueryGraph()
 
-    # # 0
-    obs = G.add_start_node('OB')  # obs = data.obs
-    runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
-    spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum') # runs.spectra
-    result = G.add_results(spectra, G.add_getitem(spectra, 'snr'))
+    # # # 0
+    # obs = G.add_start_node('OB')  # obs = data.obs
+    # runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
+    # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum') # runs.spectra
+    # result = G.add_results(spectra, G.add_getitem(spectra, 'snr'))
 
     # # 1
     # obs = G.add_start_node('OB')
@@ -873,21 +900,21 @@ if __name__ == '__main__':
     # agg_spectra = G.add_predicate_aggregation(snr_above0, obs, 'any')
     # result = G.add_filter(l2, agg_spectra)  # l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]
 
-    # # 2
-    # obs = G.add_start_node('OB')  # obs = data.obs
-    # runs = G.add_traversal(obs, '-->(:Exposure)-->', 'Run')  # runs = obs.runs
-    # camera = G.add_getitem(G.add_traversal(runs, '<--', 'ArmConfig', single=True), 'camera')
-    # is_red = G.add_scalar_operation(camera, '{0} = "red"', '==')
-    # red_runs = G.add_filter(runs, is_red)
-    # snr = G.add_getitem(red_runs, 'snr')
-    # red_snr = G.add_aggregation(snr, obs, 'avg')  #  'mean(run.camera==red, wrt=obs)'
-    # spec = G.add_traversal(runs, '-->(:Observation)-->(:RawSpectrum)-->', 'L1SingleSpectrum')
-    # snr = G.add_getitem(spec, 'snr')
-    # compare = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
-    # spec = G.add_filter(spec, compare)
-    # l2 = G.add_traversal(spec, '-->', 'L2')
-    # snr = G.add_getitem(l2, 'snr')
-    # result = G.add_results(l2, snr)
+    # 2
+    obs = G.add_start_node('OB')  # obs = data.obs
+    runs = G.add_traversal(obs, '-->(:Exposure)-->', 'Run')  # runs = obs.runs
+    camera = G.add_getitem(G.add_traversal(runs, '<--', 'ArmConfig', single=True), 'camera')
+    is_red = G.add_scalar_operation(camera, '{0} = "red"', '==')
+    red_runs = G.add_filter(runs, is_red)
+    snr = G.add_getitem(red_runs, 'snr')
+    red_snr = G.add_aggregation(snr, obs, 'avg')  #  'mean(run.camera==red, wrt=obs)'
+    spec = G.add_traversal(runs, '-->(:Observation)-->(:RawSpectrum)-->', 'L1SingleSpectrum')
+    snr = G.add_getitem(spec, 'snr')
+    compare = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
+    spec = G.add_filter(spec, compare)
+    l2 = G.add_traversal(spec, '-->', 'L2')
+    snr = G.add_getitem(l2, 'snr')
+    result = G.add_results(l2, snr)
 
     # # 3
     # # obs = data.obs
