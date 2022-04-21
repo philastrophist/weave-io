@@ -670,15 +670,15 @@ class Aggregate(Statement):
 
 class Return(Statement):
     def __init__(self, column_variables, index_variable, graph: 'QueryGraph'):
-        ins = column_variables
+        super().__init__(column_variables, graph)
         if index_variable is not None:
-            ins.append(index_variable)
-        super().__init__(ins, graph)
+            self.inputs.append(index_variable)
         self.index_variable = index_variable
         self.column_variables = column_variables
 
     def make_cypher(self) -> Optional[str]:
-        cols = ', '.join(self.column_variables)
+        cols = self.column_variables if self.index_variable is None else self.column_variables[:-1]
+        cols = ', '.join(cols)
         return f"RETURN {cols}"
 
 
