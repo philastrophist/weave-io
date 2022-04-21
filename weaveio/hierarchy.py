@@ -95,8 +95,12 @@ class Multiple:
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}] id={self.relation_idname})>"
 
     def __hash__(self):
+        if isinstance(self.node, str):
+            hsh = hash(self.node)
+        else:
+            hsh = hash(self.node.__name__)
         return hash(self.__class__) ^ hash(self.minnumber) ^ hash(self.maxnumber) ^\
-        hash(''.join(self.constrain)) ^ hash(self.relation_idname)
+        hash(''.join(self.constrain)) ^ hash(self.relation_idname) ^ hsh
 
     def __eq__(self, other):
         return hash(self) == hash(other)

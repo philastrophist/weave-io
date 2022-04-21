@@ -9,18 +9,20 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from typing import List, TYPE_CHECKING
+from typing import List, TYPE_CHECKING, Tuple, Union
 from .parser import QueryGraph
 if TYPE_CHECKING:
     from weaveio.data import Data
+
 
 class AmbiguousPathError(Exception):
     pass
 
 
 class BaseQuery:
-    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None,
-                 obj: str = None, start=None, index=None) -> None:
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
+                 obj: str = None, start=None, index=None, single=False) -> None:
+        self._single = single
         self._data = data
         if G is None:
             self._G = QueryGraph()
@@ -33,18 +35,21 @@ class BaseQuery:
         self._previous = previous
         self.__cypher = None
         self._index = index
-        self._obj = None
+        self._obj = obj
         if previous is not None:
             if self._index is None:
                 if isinstance(previous, ObjectQuery):
                     self._index = previous
                 elif self._index != 'start':
                     self._index = previous._index
-            self._obj = previous._obj if obj is None else obj
+            if obj is None:
+                self._obj = previous._obj
         if start is None:
             self._start = self
         else:
             self._start = start
+        if self._obj is not None:
+            self._obj = self._normalise_object(self._obj)[0]
 
     def _get_object_of(self, maybe_attribute: str):
         if not self._data.is_factor_name(maybe_attribute):
@@ -65,7 +70,6 @@ class BaseQuery:
             singular = False
         return h.__name__, singular
 
-
     @property
     def _cypher(self):
         if self.__cypher is None:
@@ -80,20 +84,11 @@ class BaseQuery:
         return self._G.export(fname, self._node)
 
     @classmethod
-    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index=None):
-        return cls(parent._data, parent._G, node, parent, obj, parent._start, index)
+    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index=None, single=False):
+        return cls(parent._data, parent._G, node, parent, obj, parent._start, index, single)
 
-    def _get_arrows(self, obj):
-        h1, _ = self._normalise_object(self._obj)
-        h2, is_singular = self._normalise_object(obj)
-        return self._data._find_hierarchy_path(self._data.class_hierarchies[h1], self._data.class_hierarchies[h2], False), is_singular
-
-    def _get_path_to_object(self, obj, want_single):
-        path, single = self._get_arrows(obj)
-        if want_single and not single:
-            raise CardinalityError(f"Requested a single {obj} from {self._obj} but that path yields multiple such objects."
-                                   f" Please use the plural name instead")
-        return path, single
+    def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool]:
+        return self._data.path_to_hierarchy(self._obj, obj, want_single)
 
     def _slice(self, slc):
         """
@@ -114,7 +109,7 @@ class BaseQuery:
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
         n = self._G.add_filter(self._node, mask._node, direct=False)
-        return self.__class__._spawn(self, n)
+        return self.__class__._spawn(self, n, single=self._single)
 
     def _aggregate(self, wrt, string_op, predicate=False):
         if wrt is None:
@@ -123,7 +118,7 @@ class BaseQuery:
             n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
         else:
             n = self._G.add_aggregation(self._node, wrt._node, string_op)
-        return self.__class__._spawn(self, n, wrt._obj, wrt._index)
+        return AttributeQuery._spawn(self, n, wrt._obj, wrt._index)
 
 
 class CardinalityError(Exception):
@@ -151,7 +146,7 @@ class ObjectQuery(BaseQuery):
         """
         path, single = self._get_path_to_object(obj, want_single)
         n = self._G.add_traversal(self._node, path, obj, single)
-        return ObjectQuery._spawn(self, n, obj)
+        return ObjectQuery._spawn(self, n, obj, single=want_single)
 
     def _traverse_by_object_index(self, obj, index):
         """
@@ -162,24 +157,17 @@ class ObjectQuery(BaseQuery):
         e.g. `obs[1234]` filters to the single ob with obid=1234
         """
         name = self._G.add_parameter(index)
-        path, single = self._get_path_to_object(obj)
+        path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
         eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj)
+        return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         raise NotImplementedError
-        indexes = list(indexes)
-        name = self._G.add_parameter(indexes)
-        path, single = self._get_path_to_object(obj)
-        travel = self._G.add_traversal(self._node, path, obj, True, name)
-        i = self._G.add_getitem(travel, 'id')
-        n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj)
 
-    def _select_attribute(self, attr):
+    def _select_attribute(self, attr, want_single):
         """
         # obj['factor'], obj.factor
         fetches an attribute from the object and cuts off any other functions after that
@@ -189,7 +177,7 @@ class ObjectQuery(BaseQuery):
              `run.cnames` returns the cname of each target in a run (this is a list per run)
         """
         n = self._G.add_getitem(self._node, attr)
-        return AttributeQuery._spawn(self, n)
+        return AttributeQuery._spawn(self, n, single=want_single)
 
     def _make_table(self, *items):
         """
@@ -198,7 +186,8 @@ class ObjectQuery(BaseQuery):
         obj['factora', obj.obj.factorb]
         """
         attrs = [item.__getitem__(item) if not isinstance(item, AttributeQuery) else item for item in items]
-        return self._G.add_results_table(self._index._node, *[attr._node for attr in attrs])
+        n = self._G.add_results_table(self._index._node, *[attr._node for attr in attrs])
+        return TableQuery._spawn(self, n)
 
     def _traverse_to_relative_object(self):
         """
@@ -235,17 +224,20 @@ class ObjectQuery(BaseQuery):
             return self._slice(item)
         elif isinstance(item, AttributeQuery):
             return self._filter_by_mask(item)  # a boolean_mask
+        elif not isinstance(item, str):
+            return self._previous._traverse_by_object_index(self._obj, item)
         else:
             try:
                 obj, single = self._get_object_of(item)  # if factor
-                return self._traverse_to_specific_object(obj, single)._select_attribute(item)
+                if obj == self._obj:
+                    return self._select_attribute(item, single)
+                return self._traverse_to_specific_object(obj, single)._select_attribute(item, single)
             except (KeyError, ValueError):
-                pass
-            try:
-                obj, single = self._normalise_object(item)
-                return self._traverse_to_specific_object(obj, single)
-            except ValueError:
-                return self._previous._traverse_by_object_index(self._obj, item)
+                try:
+                    obj, single = self._normalise_object(item)
+                    return self._traverse_to_specific_object(obj, single)
+                except ValueError:
+                    return self._previous._traverse_by_object_index(self._obj, item)
 
     def __getattr__(self, item):
         return self.__getitem__(item)
@@ -256,16 +248,20 @@ class Query(BaseQuery):
         super().__init__(data, G, node, previous, obj, start, 'start')
 
     def _traverse_to_specific_object(self, obj):
+        obj, single = self._normalise_object(obj)
+        if single:
+            raise CardinalityError(f"Cannot start query with a single object `{obj}`")
         n = self._G.add_start_node(obj)
-        return ObjectQuery._spawn(self, n, obj)
+        return ObjectQuery._spawn(self, n, obj, single=False)
 
     def _traverse_by_object_index(self, obj, index):
+        obj, single = self._normalise_object(obj)
         name = self._G.add_parameter(index)
         travel = self._G.add_start_node(obj)
         i = self._G.add_getitem(travel, 'id')
         eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj)
+        return ObjectQuery._spawn(self, n, obj, single=True)
 
     def __getitem__(self, item):
         return self.__getattr__(item)
@@ -273,9 +269,8 @@ class Query(BaseQuery):
     def __getattr__(self, item):
         try:
             obj, single = self._get_object_of(item)  # if factor
-            return self._traverse_to_specific_object(obj, single)._select_attribute(item)
+            return self._traverse_to_specific_object(obj)._select_attribute(item, single)
         except (KeyError, ValueError):
-            # traverse to object
             return self._traverse_to_specific_object(item)
 
 

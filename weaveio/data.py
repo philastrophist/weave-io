@@ -1,33 +1,38 @@
 import logging
 import re
 import time
-from collections import deque
+from collections import defaultdict
 from functools import reduce
 from itertools import product
 from operator import and_
 from pathlib import Path
 from typing import Union, List, Tuple, Type, Dict, Set
-from warnings import warn
 
 import networkx as nx
 import pandas as pd
 import py2neo
-from py2neo import ClientError, DatabaseError, Relationship, Node, Subgraph
+from networkx import NetworkXNoPath
+from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
-from weaveio.basequery.actions import TraversalPath
-from weaveio.basequery.common import AmbiguousPathError
-from weaveio.basequery.handler import Handler, defaultdict
-from weaveio.basequery.tree import BranchHandler
-from weaveio.file import File, HDU
-from weaveio.graph import Graph
-from weaveio.readquery import Query
-from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One, collect
-from weaveio.utilities import make_plural, make_singular
-from weaveio.writequery import Unwind, merge_node, match_node, match_pattern_node, match_relationship
+from .file import File, HDU
+from .graph import Graph
+from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional
+from .readquery import Query
+from .utilities import make_plural, make_singular
+from .writequery import Unwind
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
+
+def get_all_class_bases(cls: Type[Graphable]) -> List[Type[Graphable]]:
+    new = []
+    for b in cls.__bases__:
+        if b is Graphable or not issubclass(b, Graphable):
+            continue
+        new.append(b)
+        new += get_all_class_bases(b)
+    return new
 
 def process_neo4j_error(data: 'Data', file: File, msg):
     matches = CONSTRAINT_FAILURE.findall(msg)
@@ -111,42 +116,100 @@ def shared_base_class(*classes):
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
+def add_relation_graph_edge(graph, parent, child):
+    if isinstance(parent, Multiple):
+        parent.instantate_node()
+        parent = parent.node
+    if isinstance(child, Multiple):
+        child.instantate_node()
+    if isinstance(child, One2One):
+        graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
+    elif isinstance(child, Optional):
+        graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
+    elif isinstance(child, Multiple):
+        graph.add_edge(parent, child.node, singular=False, optional=child.minnumber == 0, relation=child)
+    else:
+        graph.add_edge(parent, child, singular=True, optional=False, relation=Multiple(child, 1, 1))
+
+
+def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
+    graph = nx.DiGraph()
+    for h in hierarchies:
+        if h not in graph.nodes:
+            if isinstance(h, Multiple):
+                h.instantate_node()
+                h = h.node
+        graph.add_node(h)
+        for child in h.children:
+            add_relation_graph_edge(graph, h, child)
+        for parent in h.parents:
+            add_relation_graph_edge(graph, parent, h)
+    return graph
+
+def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hierarchy]]:
+    if done is None:
+        done = []
+    hierarchies = set()
+    todo = set(hier.parents + hier.children + hier.produces)
+    for new in todo:
+        if isinstance(new, Multiple):
+            new.instantate_node()
+            h = new.node
+        else:
+            h = new
+        if h not in done and h is not hier:
+            hierarchies.update(hierarchies_from_hierarchy(h, done))
+            done.append(h)
+    hierarchies.add(hier)
+    return hierarchies
+
+def hierarchies_from_hierarchies(*hiers: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
+    return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
+
+def make_arrows(path, forward=True, type=None):
+    arrow = '' if type is None else f'-[:{type}]-'
+    if forward:
+        arrow = f"-{arrow}->"
+    else:
+        arrow = f"<-{arrow}-"
+    return "{}{}{}".format(arrow, arrow.join(map('(:{})'.format, [p.__name__ for p in path[1:-1]])), arrow)
+
+def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular) -> Tuple[str, bool]:
+    """
+    Find path from one obj to another obj with the constraint that the path is singular or not
+    raises NetworkXNoPath if there is no path with that constraint
+    """
+    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])  # type: nx.DiGraph
+    try:
+        if singular:
+            return make_arrows(nx.shortest_path(singles, from_obj, to_obj)), True
+        else:
+            try:
+                # singular path, but will be plural later
+                return make_arrows(nx.shortest_path(singles, from_obj, to_obj)), True
+            except NetworkXNoPath:
+                pass
+            try:
+                return make_arrows(nx.shortest_path(singles, to_obj, from_obj)[::-1]), True
+            except NetworkXNoPath:
+                pass
+            try:
+                return make_arrows(nx.shortest_path(g, from_obj, to_obj)), False
+            except NetworkXNoPath:
+                return make_arrows(nx.shortest_path(singles, to_obj, from_obj)[::-1]), False
+    except NetworkXNoPath:
+        raise NetworkXNoPath(f"A single={singular} link between {from_obj} and {to_obj} doesn't make sense. "
+                             f"Go via a another object.")
+
 
 class Data:
     filetypes = []
-
-    @staticmethod
-    def hierarchies_from_filetype(*filetype: Type[File]) -> Set[Type[Hierarchy]]:
-        hierarchies = set()
-        all_hierarchies = set(get_all_subclasses(Hierarchy))
-        todo = set(filetype)
-        while todo:
-            thing = todo.pop()
-            if isinstance(thing, Multiple):
-                thing = thing.node
-            if thing in hierarchies:
-                continue  # if already done
-            if thing.is_template:
-                if not issubclass(thing, File):
-                    todo.update(get_all_subclasses(thing))
-                continue  # but dont add it directly yet
-            todo.update(thing.produces)
-            todo.update(thing.hdus.values())
-            todo.update(thing.parents)
-            bases = get_all_class_bases(thing)
-            bases.append(thing)
-            todo.update([i for i in all_hierarchies if any(b.singular_name in i.belongs_to for b in bases) and not i.is_template])  # children
-            hierarchies.add(thing)
-            hierarchies.update(get_all_class_bases(thing))
-        return hierarchies
-
 
     def __init__(self, rootdir: Union[Path, str] = '/beegfs/car/weave/weaveio/',
                  host: str = '127.0.0.1', port=7687, write=False, dbname='neo4j',
                  password='weavepassword', user='weaveuser', verbose=False):
         if verbose:
             logging.basicConfig(level=logging.INFO)
-        self.branch_handler = BranchHandler()
         self.query = Query(self)
         self.host = host
         self.port = port
@@ -160,11 +223,9 @@ class Data:
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
             fs = self.filetypes[:i+1]
-            self.relation_graphs.append(self.make_relation_graph(self.hierarchies_from_filetype(*fs), fs))
-        self.relation_graph = self.relation_graphs[-1]
-        self.traversal_graph = self.make_traversal_graph()
-        self.hierarchies = list(self.relation_graph.nodes)
-        self.hierarchies += list({template for h in self.hierarchies for template in get_all_class_bases(h) if template.is_template})
+            self.relation_graphs.append(make_relation_graph(hierarchies_from_hierarchies(*fs)))
+        self.hierarchies = {h for g in self.relation_graphs for h in g.nodes}
+
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -180,6 +241,27 @@ class Data:
         self.singular_factors = {f.lower() : f.lower() for f in self.factors}
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
+
+
+    def path_to_hierarchy(self, from_obj, to_obj, singular):
+        """
+        Find path from one obj to another obj with the constraint that the path is singular or not
+        raises NetworkXNoPath if there is no path with that constraint
+        """
+        a, b = map(self.singular_name, [from_obj, to_obj])
+        for i, g in enumerate(self.relation_graphs):
+            try:
+                return path_to_hierarchy(g, self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
+            except NetworkXNoPath:
+                if i == len(self.relation_graphs)-1:
+                    if not singular:
+                        to = f"multiple `{self.plural_name(b)}`"
+                    else:
+                        to = f"only one `{self.singular_name(b)}`"
+                    from_ = self.singular_name(a.lower())
+                    raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
+                                        f"This may be because it doesn't make sense for `{from_}` to have {to}. "
+                                        f"Try checking the cardinalty of your query.")
 
 
     def write(self, collision_manager='track&flag'):
@@ -200,70 +282,6 @@ class Data:
                 d['user'] = self.user
             self._graph = Graph(host=self.host, port=self.port, name=self.dbname, write=self.write, **d)
         return self._graph
-
-    def make_traversal_graph(self):
-        graph = self.relation_graph.reverse(copy=True)
-        return graph
-
-    def make_relation_graph(self, hierarchies, filetypes):
-        reference = hierarchies
-        hierarchies = hierarchies.copy()
-        graph = nx.DiGraph()
-        while hierarchies:
-            hierarchy = hierarchies.pop()
-            if hierarchy.is_template:
-                continue
-            graph.add_node(hierarchy)
-            for parent in set(hierarchy.parents + hierarchy.produces):
-                multiplicity = isinstance(parent, Multiple) and not isinstance(parent, One2One)
-                is_one2one = isinstance(parent, One2One)
-                if multiplicity:
-                    if parent.maxnumber == parent.minnumber:
-                        number = parent.maxnumber
-                        numberlabel = f'={number}'
-                    else:
-                        number = None
-                        if (parent.minnumber is None or parent.minnumber == 0) and parent.maxnumber is None:
-                            numberlabel = 'any'
-                        elif (parent.minnumber is None or parent.minnumber == 0) and parent.maxnumber is not None:
-                            numberlabel = f'<= {parent.maxnumber}'
-                        elif (parent.minnumber is not None and parent.minnumber > 0) and parent.maxnumber is None:
-                            numberlabel = f'>={parent.minnumber}'
-                        else:
-                            numberlabel = f'{parent.minnumber} - {parent.maxnumber}'
-                else:
-                    number = 1
-                    numberlabel = f'={number}'
-                if isinstance(parent, Multiple):
-                    parent = parent.node
-                reverse = parent in hierarchy.produces
-                data = dict(multiplicity=multiplicity, number=number, label=numberlabel)
-                if parent.is_template:
-                    to_do = set(get_all_subclasses(parent))
-                    data['oneway'] = True
-                    data['label'] += ' (oneway)'
-                else:
-                    to_do = {parent}
-                for p in to_do:
-                    if p not in reference:
-                        continue
-                    if reverse:
-                        graph.add_edge(hierarchy, p, **data, real=True)
-                        if is_one2one:
-                            graph.add_edge(p, hierarchy, **data, real=False)
-                    else:
-                        graph.add_edge(p, hierarchy, **data, real=True)
-                        if is_one2one:
-                            graph.add_edge(hierarchy, p, **data, real=False)
-                        elif p.singular_name in hierarchy.belongs_to or any(s.singular_name in hierarchy.belongs_to for s in  get_all_subclasses(p)):
-                            graph.add_edge(hierarchy, p, multiplicity=True, number=None, label='any', real=False)
-        bunch = [i for i in filetypes]
-        for filetype in filetypes:
-            bunch += list(nx.ancestors(graph, filetype))
-            bunch += list(nx.descendants(graph, filetype))
-        temp = nx.DiGraph(nx.subgraph(graph, bunch))
-        view = nx.subgraph_view(temp, lambda n: not n.is_template)
-        return nx.DiGraph(view)
 
     def make_constraints_cypher(self):
         return {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
@@ -469,173 +487,6 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
-    def find_factor_paths(self, starting_point: Type[Hierarchy], factor_name: str,
-                          plural: bool) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], str]:
-        """
-        1. Identify all hierarchies that contain the factor under plural constraint
-        2. Get paths to those hierarchies with the plural constraint
-        3. Discard the hierarchies which don't have paths
-        4.
-        """
-        if factor_name in starting_point.products_and_factors:
-            return {starting_point: set()}, starting_point, factor_name
-        if factor_name in self.singular_hierarchies:  # if its really a hierarchy name treat it as an idname
-            hier = self.singular_hierarchies[factor_name]
-            logging.info(f"Turned '{factor_name}' into '{hier.__name__.lower()}.{hier.idname}'")
-            factor_name = hier.idname
-            possible = {hier}
-        else:
-            parts = factor_name.split('.')
-            if len(parts) > 1:
-                hier, factor_name = parts[-2:]
-                possible = {self.singular_hierarchies[hier]}
-            else:
-                possible = {c for c in get_all_subclasses(Hierarchy) if factor_name in c.products_and_factors and not c.is_template}
-        pathset = set()
-        for p in possible:
-            try:
-                paths, ends, _, _ = self.find_hierarchy_paths(starting_point, p, plural)
-                for path, end in zip(paths, ends):
-                    pathset.add((path, end))
-            except nx.NetworkXNoPath:
-                pass
-        if len(pathset) == 0:
-            raise nx.NetworkXNoPath(f'There are no paths from a `{starting_point.singular_name}` to `{factor_name}`. '
-                                    f'This might be because `{factor_name}` is plural relative to `{starting_point.singular_name}`. '
-                                    f'Try using `{make_plural(factor_name)}` instead')
-        paths, ends = zip(*pathset)
-        if not plural and len(paths) > 1:
-            lengths = map(len, paths)
-            min_length = min(lengths)
-            paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
-            if len(paths) > 1:
-                raise AmbiguousPathError(f"There is more than one '{factor_name}' with the same distance away from '{starting_point.__name__.lower()}'")
-        shared = shared_base_class(*ends)
-        if factor_name not in shared.products_and_factors:
-            raise AmbiguousPathError(f"{starting_point.__name__.lower()}.{factor_name} refers to multiple objects ({ends}) which have no consistent shared parent")
-        pathdict = defaultdict(set)
-        for e, p in zip(ends, paths):
-            pathdict[e].add(p)
-        return pathdict, shared, factor_name
-
-    @staticmethod
-    def shortest_path_without_oneway_violation(graph: nx.Graph, a, b, cutoff=50):
-        """Iterate over shortest paths until one without reusing a one-way path is found"""
-        for count, path in enumerate(nx.shortest_simple_paths(graph, a, b)):
-            if count == cutoff:
-                raise nx.NetworkXNoPath(f'No viable path between {a} and {b} (exploration timed out)')
-            oneway_node = None
-            for x, y in zip(path[:-1], path[1:]):
-                oneway = graph.edges[(x, y)].get('oneway', False)  # is it oneway?
-                if oneway:
-                    if x == oneway_node:  # violated
-                        break
-                    else:
-                        oneway_node = y
-            else:
-                return path
-        else:
-            raise nx.NetworkXNoPath(f'No viable path between {a} and {b}')
-
-    def multiplicity_of_edge(self, a, b, graph=None):
-        if graph is None:
-            graph = self.relation_graph
-        try:
-            if not graph.edges[b, a]['multiplicity']:
-                return False
-        except KeyError:
-            pass
-        return True
-
-
-    def _find_restricted_path(self, graph: nx.DiGraph, a: Type[Hierarchy], b: Type[Hierarchy],
-                              plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
-        try:
-            travel_path = self.shortest_path_without_oneway_violation(graph, a, b)
-        except nx.NetworkXNoPath:
-            path = self.shortest_path_without_oneway_violation(graph, b, a)
-            travel_path = path[::-1]
-        if any(self.multiplicity_of_edge(a, b, graph) for a, b in zip(travel_path[:-1], travel_path[1:])) and not plural:
-            raise nx.NetworkXNoPath
-        multiplicity = []
-        number = []
-        _direction = []
-        one_way = []
-        for x, y in zip(travel_path[:-1], travel_path[1:]):
-            try:
-                edge = graph.edges[(y, x)]
-            except KeyError:
-                multiplicity.append(True)
-                number.append(None)
-                one_way.append(False)
-            else:
-                multiplicity.append(edge['multiplicity'])
-                number.append(edge['number'])
-                one_way.append(edge.get('oneway', False))
-        direction = []
-        # now reverse the arrow direction if that direction is not real
-        for x, y in zip(travel_path[:-1], travel_path[1:]):
-            try:
-                real = graph.edges[(x, y)].get('real', False)
-            except KeyError:
-                real = not graph.edges[(y, x)].get('real', False)
-            arrow = '->' if real else '<-'
-            direction.append(arrow)
-        total_path = []
-        for i, node in enumerate(travel_path[1:]):
-            total_path.append(direction[i])
-            total_path.append(node.__name__)
-        return TraversalPath(*total_path), one_way, graph
-
-    def _find_hierarchy_path(self, a: Type[Hierarchy], b: Type[Hierarchy], plural: bool) -> Tuple[TraversalPath, List[bool], nx.DiGraph]:
-        for i, graph in enumerate(self.relation_graphs):
-            try:
-                return self._find_restricted_path(graph, a, b, plural)
-            except (nx.NetworkXNoPath, nx.NodeNotFound, KeyError) as e:
-                continue
-        raise nx.NetworkXNoPath(f"The is no path between `{a.singular_name}` and `{b.singular_name}`. "
-                                f"This might be because `{b.singular_name}` is plural relative to `{a.singular_name}`. "
-                                f"Try using `{b.plural_name}`")
-
-    def find_hierarchy_paths(self, a: Type[Hierarchy], b: Type[Hierarchy],
-                             plural: bool) -> Tuple[List[TraversalPath], List[Type[Hierarchy]], Type[Hierarchy], Type[Hierarchy]]:
-        if a.is_template:
-            a = [i for i in get_all_subclasses(a) if not i.is_template]
-        else:
-            a = [a]
-        if b.is_template:
-            b = [i for i in get_all_subclasses(b) if not i.is_template]
-        else:
-            b = [b]
-        paths = set()
-        for ai, bi in product(a, b):
-            try:
-                path, oneways, graph = self._find_hierarchy_path(ai, bi, plural)
-                if sum(oneways) and len(oneways) > 1:  # if >1 there are more paths, if 1 then you are directly connected (so dont explore)
-                    if sum(oneways) > 1:
-                        raise NotImplementedError(f"Resolving paths with more than 1 oneway is not yet implemented: {path.repr_path}")
-                    elif oneways[-1] != True:
-                        raise NotImplementedError(f"Resolving paths with the oneway not at the end is not yet implemented: {path.repr_path}")
-                    else:
-                        just_before = set(nx.descendants(graph, ai)) & set(graph.predecessors(bi))
-                        for before in just_before:
-                            path, _, _ = self._find_restricted_path(graph, ai, before, plural)
-                            paths.add((TraversalPath(*path._path, '->', bi.__name__), bi))
-                else:
-                    paths.add((path, bi))
-            except nx.NetworkXNoPath:
-                pass
-        if len(paths) == 0:
-            raise nx.NetworkXNoPath(f'There are no paths from {a} to {b} with the constraint of plural={plural}')
-        paths, ends = zip(*paths)
-        if not plural and len(paths) > 1:
-            lengths = map(len, paths)
-            min_length = min(lengths)
-            paths, ends = zip(*[(p, e) for p, e in zip(paths, ends) if len(p) == min_length])
-            if len(paths) > 1:
-                raise AmbiguousPathError(f"There is more than one {b} with the same distance away from {a}")
-        return list(paths), list(ends), shared_base_class(*a), shared_base_class(*ends)
-
     def is_factor_name(self, name):
         try:
             name = self.singular_name(name)
@@ -662,7 +513,7 @@ class Data:
         return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
 
     def singular_name(self, name):
-        pattern = name.split('.')
+        pattern = name.lower().split('.')
         return '.'.join([make_singular(p) for p in pattern])
 
     def is_valid_name(self, name):
@@ -688,8 +539,6 @@ class Data:
         if len(pattern) == 1:
             return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
         return all(self.is_singular_name(n) for n in pattern)
-
-
 
     def __getitem__(self, address):
         return self.query.__getitem__(address)
