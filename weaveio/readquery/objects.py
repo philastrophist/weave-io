@@ -14,7 +14,8 @@ from .parser import QueryGraph
 
 
 class BaseQuery:
-    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None) -> None:
+    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None,
+                 obj: str = None, start=None, index=None) -> None:
         if G is None:
             self._G = QueryGraph()
         else:
@@ -25,14 +26,19 @@ class BaseQuery:
             self._node = node
         self._previous = previous
         self.__cypher = None
-        self._index = None
+        self._index = index
         self._obj = None
         if previous is not None:
-            if isinstance(previous, ObjectQuery):
-                self._index = previous
-            else:
-                self._index = previous._index
+            if self._index is None:
+                if isinstance(previous, ObjectQuery):
+                    self._index = previous
+                elif self._index != 'start':
+                    self._index = previous._index
             self._obj = previous._obj if obj is None else obj
+        if start is None:
+            self._start = self
+        else:
+            self._start = start
 
 
     @property
@@ -49,8 +55,8 @@ class BaseQuery:
         return self._G.export(fname, self._node)
 
     @classmethod
-    def _spawn(cls, parent, node, obj=None):
-        return cls(parent._G, node, parent, obj)
+    def _spawn(cls, parent, node, obj=None, index=None):
+        return cls(parent._G, node, parent, obj, parent._start, index)
 
     def _get_path_to_object(self, obj):
         return '-->', False
@@ -77,11 +83,13 @@ class BaseQuery:
         return self.__class__._spawn(self, n)
 
     def _aggregate(self, wrt, string_op, predicate=False):
+        if wrt is None:
+            wrt = self._start
         if predicate:
             n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
         else:
             n = self._G.add_aggregation(self._node, wrt._node, string_op)
-        return self.__class__._spawn(self, n, wrt._obj)
+        return self.__class__._spawn(self, n, wrt._obj, wrt._index)
 
 
 class ObjectQuery(BaseQuery):
@@ -145,6 +153,15 @@ class ObjectQuery(BaseQuery):
         n = self._G.add_getitem(self._node, attr)
         return AttributeQuery._spawn(self, n)
 
+    def _make_table(self, *items):
+        """
+        obj['factor_string', AttributeQuery]
+        obj['factora', 'factorb']
+        obj['factora', obj.obj.factorb]
+        """
+        attrs = [item.__getitem__(item) if not isinstance(item, AttributeQuery) else item for item in items]
+        return self._G.add_results_table(self._index._node, *[attr._node for attr in attrs])
+
     def _traverse_to_relative_object(self):
         """
         obj.relative_path
@@ -190,6 +207,9 @@ class ObjectQuery(BaseQuery):
 
 
 class Query(BaseQuery):
+    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
+        super().__init__(G, node, previous, obj, start, 'start')
+
     def _traverse_to_specific_object(self, obj):
         n = self._G.add_start_node(obj)
         return ObjectQuery._spawn(self, n, obj)
@@ -315,7 +335,10 @@ class AttributeQuery(BaseQuery):
         return self._basic_scalar_function('abs')
 
     def _compile(self):
-        r = self._G.add_results(self._index._node, self._node)
+        if self._index == 'start':
+            r = self._G.add_scalar_results_row(self._node)
+        else:
+            r = self._G.add_results_table(self._index._node, self._node)
         return self._G.cypher_lines(r), self._G.parameters
 
 

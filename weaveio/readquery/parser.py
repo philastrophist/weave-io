@@ -663,14 +663,17 @@ class Aggregate(Statement):
         self.output = self.make_variable(name)
 
     def make_cypher(self) -> str:
-        variables = ', '.join(set(self.conserve))
+        variables = ', '.join(set(self.conserve)) + ', ' if self.conserve else ''
         agg_string = self.agg_func.format(self.input)
-        return f"WITH {variables}, {agg_string} as {self.output}"
+        return f"WITH {variables}{agg_string} as {self.output}"
 
 
 class Return(Statement):
-    def __init__(self, index_variable, column_variables, graph: 'QueryGraph'):
-        super().__init__([index_variable]+column_variables, graph)
+    def __init__(self, column_variables, index_variable, graph: 'QueryGraph'):
+        ins = column_variables
+        if index_variable is not None:
+            ins.append(index_variable)
+        super().__init__(ins, graph)
         self.index_variable = index_variable
         self.column_variables = column_variables
 
@@ -807,17 +810,11 @@ class QueryGraph:
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
-        # parent_node = self.assign_to_variable(parent_node, only_if_op=True)  # put it in a variable so it can be aggregated
         above = self.above_state(wrt_node)
         to_conserve = []
         for c in above:
-            # v = self.assign_to_variable(c, only_if_op=True)
-            # if not nx.has_path(self.G, v, wrt_node):
-            #     shared = self.latest_shared_ancestor(v, wrt_node)
-            #     v = self.fold_single(v, wrt=shared, raise_error=True)
             if not any(d.get('single', False) for a, b, d in self.G.in_edges(c, data=True)):
                 to_conserve.append(c)
-
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0],
                               [self.G.nodes[c]['variables'][0] for c in to_conserve if self.G.nodes[c]['variables']],
                               op_format_string, op_name, self)
@@ -845,12 +842,18 @@ class QueryGraph:
         statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
         return self.retrieve(statement, add_unwind, self.G, wrt_node, statement)
 
-    def add_results(self, index_node, *column_nodes):
+    def add_results_table(self, index_node, *column_nodes):
         # fold back column data into the index node
         column_nodes = [self.fold_single(d, index_node, raise_error=False) for d in column_nodes] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
-        statement = Return(self.G.nodes[index_node]['variables'][0], deps, self)
+        statement = Return(deps, self.G.nodes[index_node]['variables'][0], self)
         return self.retrieve(statement, add_return, self.G, index_node, column_nodes, statement)
+
+    def add_scalar_results_row(self, *column_nodes):
+        """data already folded back"""
+        deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
+        statement = Return(deps, None, self)
+        return self.retrieve(statement, add_return, self.G, self.start, column_nodes, statement)
 
     def add_parameter(self, value, name=None):
         name = f'${name}' if name is not None else '$'
@@ -873,11 +876,9 @@ class QueryGraph:
         return verify_traversal(graph, ordering)
 
     def cypher_lines(self, result):
-        ordering = []
         import time
         start_time = time.perf_counter()
-        for n in self.traverse_query(result):
-            ordering.append(n)
+        ordering = self.traverse_query(result)
         self.verify_traversal(result, ordering)
         statements = []
         for e in zip(ordering[:-1], ordering[1:]):
