@@ -9,13 +9,19 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from typing import List
+from typing import List, TYPE_CHECKING
 from .parser import QueryGraph
+if TYPE_CHECKING:
+    from weaveio.data import Data
+
+class AmbiguousPathError(Exception):
+    pass
 
 
 class BaseQuery:
-    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None,
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None,
                  obj: str = None, start=None, index=None) -> None:
+        self._data = data
         if G is None:
             self._G = QueryGraph()
         else:
@@ -40,6 +46,25 @@ class BaseQuery:
         else:
             self._start = start
 
+    def _get_object_of(self, maybe_attribute: str):
+        if not self._data.is_factor_name(maybe_attribute):
+            raise ValueError(f"{maybe_attribute} is not a valid attribute name")
+        hs = {h.__name__ for h in self._data.factor_hierarchies[maybe_attribute]}
+        if len(hs) > 1:
+            raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
+                                     f" Please be specific e.g. `{hs[0]}.{maybe_attribute}`")
+        return self._normalise_object(hs.pop())
+
+    def _normalise_object(self, obj: str):
+        obj = obj.lower()
+        try:
+            h = self._data.singular_hierarchies[obj]
+            singular = True
+        except KeyError:
+            h = self._data.plural_hierarchies[obj]
+            singular = False
+        return h.__name__, singular
+
 
     @property
     def _cypher(self):
@@ -55,11 +80,20 @@ class BaseQuery:
         return self._G.export(fname, self._node)
 
     @classmethod
-    def _spawn(cls, parent, node, obj=None, index=None):
-        return cls(parent._G, node, parent, obj, parent._start, index)
+    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index=None):
+        return cls(parent._data, parent._G, node, parent, obj, parent._start, index)
 
-    def _get_path_to_object(self, obj):
-        return '-->', False
+    def _get_arrows(self, obj):
+        h1, _ = self._normalise_object(self._obj)
+        h2, is_singular = self._normalise_object(obj)
+        return self._data._find_hierarchy_path(self._data.class_hierarchies[h1], self._data.class_hierarchies[h2], False), is_singular
+
+    def _get_path_to_object(self, obj, want_single):
+        path, single = self._get_arrows(obj)
+        if want_single and not single:
+            raise CardinalityError(f"Requested a single {obj} from {self._obj} but that path yields multiple such objects."
+                                   f" Please use the plural name instead")
+        return path, single
 
     def _slice(self, slc):
         """
@@ -92,6 +126,10 @@ class BaseQuery:
         return self.__class__._spawn(self, n, wrt._obj, wrt._index)
 
 
+class CardinalityError(Exception):
+    pass
+
+
 class ObjectQuery(BaseQuery):
     def _traverse_to_generic_object(self):
         """
@@ -105,13 +143,13 @@ class ObjectQuery(BaseQuery):
         """
         raise NotImplementedError
 
-    def _traverse_to_specific_object(self, obj):
+    def _traverse_to_specific_object(self, obj, want_single):
         """
         obj.obj
         traversal, expands
         e.g. `ob.runs`  reads "for each ob, get its runs"
         """
-        path, single = self._get_path_to_object(obj)
+        path, single = self._get_path_to_object(obj, want_single)
         n = self._G.add_traversal(self._node, path, obj, single)
         return ObjectQuery._spawn(self, n, obj)
 
@@ -188,8 +226,8 @@ class ObjectQuery(BaseQuery):
         if isinstance(item, (tuple, list)):
             if not all(isinstance(i, (str, float, int)) for i in item):
                 raise TypeError(f"Cannot index by non str/float/int values")
-            if any(self._get_object_of(i, raise_error=False) for i in item):
-                return self._select_attributes(item)
+            if any(self._data.is_valid_name(i) for i in item):
+                return self._make_table(*item)
             else:
                 # go back and be better
                 return self._previous._traverse_by_object_indexes(self._obj, item)
@@ -199,16 +237,23 @@ class ObjectQuery(BaseQuery):
             return self._filter_by_mask(item)  # a boolean_mask
         else:
             try:
-                obj = self._get_object_of(item)  # if factor
-                return self._traverse_to_specific_object(obj)._select_attribute(item)
+                obj, single = self._get_object_of(item)  # if factor
+                return self._traverse_to_specific_object(obj, single)._select_attribute(item)
+            except (KeyError, ValueError):
+                pass
+            try:
+                obj, single = self._normalise_object(item)
+                return self._traverse_to_specific_object(obj, single)
             except ValueError:
-                # index
                 return self._previous._traverse_by_object_index(self._obj, item)
+
+    def __getattr__(self, item):
+        return self.__getitem__(item)
 
 
 class Query(BaseQuery):
-    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
-        super().__init__(G, node, previous, obj, start, 'start')
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
+        super().__init__(data, G, node, previous, obj, start, 'start')
 
     def _traverse_to_specific_object(self, obj):
         n = self._G.add_start_node(obj)
@@ -221,6 +266,17 @@ class Query(BaseQuery):
         eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj)
+
+    def __getitem__(self, item):
+        return self.__getattr__(item)
+
+    def __getattr__(self, item):
+        try:
+            obj, single = self._get_object_of(item)  # if factor
+            return self._traverse_to_specific_object(obj, single)._select_attribute(item)
+        except (KeyError, ValueError):
+            # traverse to object
+            return self._traverse_to_specific_object(item)
 
 
 class AttributeQuery(BaseQuery):

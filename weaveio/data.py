@@ -21,6 +21,7 @@ from weaveio.basequery.tree import BranchHandler
 from weaveio.file import File, HDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
+from weaveio.readquery import Query
 from weaveio.utilities import make_plural, make_singular
 from weaveio.writequery import Unwind
 
@@ -156,7 +157,7 @@ class Data:
         if verbose:
             logging.basicConfig(level=logging.INFO)
         self.branch_handler = BranchHandler()
-        self.handler = Handler(self)
+        self.query = Query(self)
         self.host = host
         self.port = port
         self.write_allowed = write
@@ -682,13 +683,11 @@ class Data:
             return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
         return all(self.is_singular_name(n) for n in pattern)
 
-
-
     def __getitem__(self, address):
-        return self.handler.begin_with_heterogeneous().__getitem__(address)
+        return self.query.__getitem__(address)
 
     def __getattr__(self, item):
-        return self.handler.begin_with_heterogeneous().__getattr__(item)
+        return self.query.__getattr__(item)
 
     def plot_relations(self, i=-1, show_hdus=True, fname='relations.pdf', include=None):
         from networkx.drawing.nx_agraph import to_agraph
