@@ -2,8 +2,9 @@ from pathlib import Path
 import logging
 
 from .opr3 import Data
-from .helper import attributes, objects, explain
-from .basequery.dissociated import *
+# from .helper import attributes, objects, explain
+# from .basequery.dissociated import *
+# from .readquery import *
 
 from .__version__ import __version__
 

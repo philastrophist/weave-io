@@ -9,17 +9,12 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from typing import List, overload, Callable
-from typing_extensions import SupportsIndex
-
+from typing import List
 from .parser import QueryGraph
-
-__all__ = ['sum', 'min', 'max', 'std', 'all', 'any', 'count', 'abs', 'floor', 'ceil', 'round',
-           'random', 'sign', 'log', 'log10', 'exp', 'sqrt', 'string', 'lower', 'upper']
 
 
 class BaseQuery:
-    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None) -> None:
+    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None) -> None:
         if G is None:
             self._G = QueryGraph()
         else:
@@ -31,11 +26,14 @@ class BaseQuery:
         self._previous = previous
         self.__cypher = None
         self._index = None
+        self._obj = None
         if previous is not None:
             if isinstance(previous, ObjectQuery):
                 self._index = previous
             else:
                 self._index = previous._index
+            self._obj = previous._obj if obj is None else obj
+
 
     @property
     def _cypher(self):
@@ -43,9 +41,16 @@ class BaseQuery:
             self.__cypher = self._G.cypher_lines(self._node)
         return self.__cypher
 
+    @property
+    def _result_graph(self):
+        return self._G.restricted(self._node)
+
+    def _plot_graph(self, fname):
+        return self._G.export(fname, self._node)
+
     @classmethod
-    def _spawn(cls, parent, node):
-        return cls(parent._G, node, parent)
+    def _spawn(cls, parent, node, obj=None):
+        return cls(parent._G, node, parent, obj)
 
     def _get_path_to_object(self, obj):
         return '-->', False
@@ -71,29 +76,15 @@ class BaseQuery:
         n = self._G.add_filter(self._node, mask._node, direct=False)
         return self.__class__._spawn(self, n)
 
+    def _aggregate(self, wrt, string_op, predicate=False):
+        if predicate:
+            n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
+        else:
+            n = self._G.add_aggregation(self._node, wrt._node, string_op)
+        return self.__class__._spawn(self, n, wrt._obj)
 
-class Query(BaseQuery):
-    def _traverse_to_specific_object(self, obj):
-        n = self._G.add_start_node(obj)
-        return ObjectQuery._spawn(self, n, obj)
-
-    def _traverse_by_object_index(self, obj, index):
-        name = self._G.add_parameter(index)
-        travel = self._G.add_start_node(obj)
-        i = self._G.add_getitem(travel, 'id')
-        eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
-        n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj)
 
 class ObjectQuery(BaseQuery):
-    def __init__(self, G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj = None) -> None:
-        super().__init__(G, node, previous)
-        self._obj = obj
-
-    @classmethod
-    def _spawn(cls, parent, node, obj):
-        return cls(parent._G, node, parent, obj)
-
     def _traverse_to_generic_object(self):
         """
         obj.generic_obj['specific_type_name']
@@ -198,10 +189,21 @@ class ObjectQuery(BaseQuery):
                 return self._previous._traverse_by_object_index(self._obj, item)
 
 
-class AttributeQuery(BaseQuery):
-    def __init__(self, G: QueryGraph = None, node=None, previous=None) -> None:
-        super().__init__(G, node, previous)
+class Query(BaseQuery):
+    def _traverse_to_specific_object(self, obj):
+        n = self._G.add_start_node(obj)
+        return ObjectQuery._spawn(self, n, obj)
 
+    def _traverse_by_object_index(self, obj, index):
+        name = self._G.add_parameter(index)
+        travel = self._G.add_start_node(obj)
+        i = self._G.add_getitem(travel, 'id')
+        eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        n = self._G.add_filter(travel, eq, direct=True)
+        return ObjectQuery._spawn(self, n, obj)
+
+
+class AttributeQuery(BaseQuery):
     def _perform_arithmetic(self, op_string, op_name, other=None):
         """
         arithmetics
@@ -215,7 +217,7 @@ class AttributeQuery(BaseQuery):
         e.g. sum(ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red'].snr, wrt=ob) > ob.l1stackedspectra.snr is allowed since there is a shared parent,
              we take ob.l1stackedspectra as the hierarchy level in order to continue
         """
-        if isinstance(other, Query):
+        if isinstance(other, BaseQuery):
             n = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
         elif isinstance(other, ObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
@@ -233,6 +235,27 @@ class AttributeQuery(BaseQuery):
         else:
             string_op = f'{{1}} {operator} {{0}}' if switch else f'{{0}} {operator} {{1}}'
         return self._perform_arithmetic(string_op, operator, other)
+
+    def __and__(self, other):
+        return self._basic_math_operator('and', other)
+
+    def __rand__(self, other):
+        return self._basic_math_operator('and', other, switch=True)
+
+    def __or__(self, other):
+        return self._basic_math_operator('or', other)
+
+    def __ror__(self, other):
+        return self._basic_math_operator('or', other, switch=True)
+
+    def __xor__(self, other):
+        return self._basic_math_operator('xor', other)
+
+    def __rxor__(self, other):
+        return self._basic_math_operator('xor', other, switch=True)
+
+    def __invert__(self):
+        return self._basic_scalar_function('not')
 
     def __add__(self, other):
         return self._basic_math_operator('+', other)
@@ -291,17 +314,6 @@ class AttributeQuery(BaseQuery):
     def __abs__(self):
         return self._basic_scalar_function('abs')
 
-    def _aggregate(self):
-        """
-        aggregation(factor, wrt=obj)
-        aggregation, destructive
-        shrinks to one level in the parentage
-        [sum, mean, max, any, all, etc...]
-        e.g. sum(obs.snrs, wrt=None)  will return the sum of all snrs ever
-        e.g. sum(obs.snrs, wrt=obs) will return the sum of all snrs 'per' ob (so rows are maintained for ob)
-        """
-        raise NotImplementedError
-
     def _compile(self):
         r = self._G.add_results(self._index._node, self._node)
         return self._G.cypher_lines(r), self._G.parameters
@@ -309,82 +321,3 @@ class AttributeQuery(BaseQuery):
 
 class ListAttributeQuery(BaseQuery):
     pass
-
-
-def _convert(x, remove_infs: bool = True, convert_to_float: bool = False):
-    if convert_to_float:
-        x = f'toFloat({x})'
-    if remove_infs:
-        x = f"CASE WHEN {x} > apoc.math.maxLong() THEN null ELSE {x} END"
-    return x
-
-def _template_operator(string_op, name, python_func, item, convert_to_float=True, remove_infs=True, *args, **kwargs):
-    if not isinstance(item, AttributeQuery):
-        return python_func(item, *args, **kwargs)
-    # TODO: convert
-    return item._perform_arithmetic(string_op, name)
-
-def _template_aggregator(string_op, name, python_func: Callable, item: 'Dissociated', wrt: BaseQuery = None,
-                        allow_hiers=False, remove_infs: bool = True, convert_to_float: bool = False,
-                         args=None, kwargs=None):
-    if not isinstance(item, AttributeQuery):
-        return python_func(item, *args, **kwargs)
-    # TODO: convert
-    return item._aggregate(string_op, name, wrt, )
-
-import numpy as np
-def sign(item, *args, **kwargs):
-    return _template_operator('sign({x})', 'sign', np.sign, item, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def exp(item, *args, **kwargs):
-    return _template_operator('exp({x})', 'exp', np.exp, item, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def log(item, *args, **kwargs):
-    return _template_operator('log({x})', 'log', np.log, item, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def log10(item, *args, **kwargs):
-    return _template_operator('log10({x})', 'log10', np.log10, item, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def sqrt(item, *args, **kwargs):
-    return _template_operator('sqrt({x})', 'sqrt', np.sqrt, item, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-
-python_any = any
-python_all = all
-python_max = max
-python_min = min
-python_sum = sum
-
-
-def sum(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('sum({0})', 'sum', python_sum, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def max(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('max({0})', 'max', python_max, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def min(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('min({0})', 'min', python_min, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
-
-
-def all(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('all(i in collect({0}) where i)', 'all', python_all, item, wrt, args=args, kwargs=kwargs)
-
-
-def any(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('any(i in collect({0}) where i)', 'any', python_any, item, wrt, args=args, kwargs=kwargs)
-
-
-def count(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('count({0})', 'count', len, item, wrt, allow_hiers=True, args=args, kwargs=kwargs)
-
-
-def std(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('stDev({0})', 'std', np.std, item, wrt, convert_to_float=True, args=args, kwargs=kwargs)
-

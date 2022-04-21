@@ -60,8 +60,8 @@ def add_filter(graph: HashedDiGraph, parent, dependencies, statement):
         graph.add_edge(d, n, type='dep', style='dotted')
     return n
 
-def add_aggregation(graph: HashedDiGraph, parent, wrt, statement, type='aggr'):
-    n = make_node(graph, parent, type, statement, False)
+def add_aggregation(graph: HashedDiGraph, parent, wrt, statement, type='aggr', single=False):
+    n = make_node(graph, parent, type, statement, single)
     graph.add_edge(n, wrt, type='wrt', style='dashed')
     return n
 
@@ -485,6 +485,8 @@ def get_above_state_traversal_graph(graph: HashedDiGraph):
     def allowed_traversal(a, b):
         if graph.edges[(a, b)]['type'] == 'wrt':
             return True
+        if graph.edges[(a, b)]['type'] == 'dep':
+            return False
         if wrt_graph.out_degree(b):
             return False  # can't traverse other edges if there is a wrt
         return True
@@ -661,7 +663,7 @@ class Aggregate(Statement):
         self.output = self.make_variable(name)
 
     def make_cypher(self) -> str:
-        variables = ', '.join(self.conserve)
+        variables = ', '.join(set(self.conserve))
         agg_string = self.agg_func.format(self.input)
         return f"WITH {variables}, {agg_string} as {self.output}"
 
@@ -714,9 +716,9 @@ class QueryGraph:
         self.G = HashedDiGraph()
         self.start = add_start(self.G, 'data')
         self.variable_names = defaultdict(int)
-        self.dag_G = subgraph_view(self.G, excluded_edge_type='wrt')
-        self.backwards_G = subgraph_view(self.G, only_edge_type='wrt')
-        self.traversal_G = subgraph_view(self.G, excluded_edge_type='dep')
+        self.dag_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'wrt')
+        self.backwards_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] == 'wrt')
+        self.traversal_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'dep')
         self.parameters = {}
 
     @property
@@ -772,7 +774,7 @@ class QueryGraph:
         statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
         if wrt is None:
             wrt = next(self.traversal_G.predecessors(parent_node))
-        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement)
+        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement, 'aggr', True)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name):
         if any(d['type'] == 'aggr' for a, b, d in self.G.in_edges(parent_node, data=True)):
@@ -799,15 +801,23 @@ class QueryGraph:
         return self.retrieve(statement, add_operation, self.G, parent_node, [], statement)
 
     def assign_to_variable(self, parent_node, only_if_op=False):
-        if only_if_op and any(d['type'] == 'operation' for a, b, d in self.G.in_edges(parent_node, data=True)):
+        if only_if_op and any(d['type'] in ['operation', 'aggr'] for a, b, d in self.G.in_edges(parent_node, data=True)):
             stmt = AssignToVariable(self.G.nodes[parent_node]['variables'][0], self)
             return self.retrieve(stmt, add_operation, self.G, parent_node, [], stmt)
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
-        parent_node = self.assign_to_variable(parent_node, only_if_op=True)  # put it in a variable so it can be aggregated
+        # parent_node = self.assign_to_variable(parent_node, only_if_op=True)  # put it in a variable so it can be aggregated
         above = self.above_state(wrt_node)
-        to_conserve = [self.assign_to_variable(c, only_if_op=True) for c in above]
+        to_conserve = []
+        for c in above:
+            # v = self.assign_to_variable(c, only_if_op=True)
+            # if not nx.has_path(self.G, v, wrt_node):
+            #     shared = self.latest_shared_ancestor(v, wrt_node)
+            #     v = self.fold_single(v, wrt=shared, raise_error=True)
+            if not any(d.get('single', False) for a, b, d in self.G.in_edges(c, data=True)):
+                to_conserve.append(c)
+
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0],
                               [self.G.nodes[c]['variables'][0] for c in to_conserve if self.G.nodes[c]['variables']],
                               op_format_string, op_name, self)
@@ -821,7 +831,8 @@ class QueryGraph:
         return self.add_generic_aggregation(parent, wrt_node, op_format_string, op_name)
 
     def add_filter(self, parent_node, predicate_node, direct=False):
-        predicate_node = self.fold_single(predicate_node, parent_node, raise_error=False)
+        wrt = self.latest_shared_ancestor(parent_node, predicate_node)
+        predicate_node = self.fold_single(predicate_node, wrt, raise_error=False)
         predicate = self.G.nodes[predicate_node]['variables'][0]
         if direct:
             FilterClass = DirectFilter
@@ -850,12 +861,16 @@ class QueryGraph:
     def restricted(self, result_node=None):
         if result_node is None:
             return nx.subgraph_view(self.G)
-        return subgraph_view(self.G, path_to=result_node)
+        return nx.subgraph_view(self.G, lambda n: nx.has_path(self.dag_G, n, result_node))
 
     def traverse_query(self, result_node=None):
         graph = self.restricted(result_node)
         verify(graph)
         return traverse(graph)
+
+    def verify_traversal(self, goal, ordering):
+        graph = self.restricted(goal)
+        return verify_traversal(graph, ordering)
 
     def cypher_lines(self, result):
         ordering = []
@@ -863,7 +878,7 @@ class QueryGraph:
         start_time = time.perf_counter()
         for n in self.traverse_query(result):
             ordering.append(n)
-        verify_traversal(self.G, ordering)
+        self.verify_traversal(result, ordering)
         statements = []
         for e in zip(ordering[:-1], ordering[1:]):
             try:
