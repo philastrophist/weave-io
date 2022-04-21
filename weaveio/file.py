@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Union, List, Tuple, Dict
 
@@ -12,6 +13,7 @@ class File(Hierarchy):
     is_template = True
     idname = 'fname'
     match_pattern = '*.file'
+    antimatch_pattern = '^$'
     hdus = {}
     produces = []
     recommended_batchsize = None
@@ -36,7 +38,12 @@ class File(Hierarchy):
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
         """Returns True if the given fname in a given directory can be read by this class of file hierarchy object"""
         fname = Path(fname)
-        return fname.match(cls.match_pattern)
+        return re.match(cls.match_pattern, fname.name, re.IGNORECASE) and not re.match(cls.antimatch_pattern, fname.name, re.IGNORECASE)
+
+    @classmethod
+    def match_files(cls,  directory: Union[Path, str], graph: Graph):
+        """Returns all matching files within a directory"""
+        return (f for f in Path(directory).rglob('*.fit*') if cls.match_file(directory, f, graph))
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None) -> 'File':
@@ -139,4 +146,4 @@ class SpectralBlockHDU(BinaryHDU):
 
 class SpectralRowableBlock(BinaryHDU):
     is_template = True
-    concatenation_constants = ['naxis1', 'crval1', 'cunit1', 'cd1_1']
+    concatenation_constants = ['naxis1', 'crval1', 'cd1_1']

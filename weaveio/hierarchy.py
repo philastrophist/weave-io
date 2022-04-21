@@ -1,13 +1,13 @@
 import inspect
 import logging
 from functools import wraps, partial
-from typing import Tuple, Dict, Type, Union, List, Optional
+from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
 from warnings import warn
 
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
-from .utilities import Varname, make_plural
+from .utilities import Varname, make_plural, int_or_none
 
 
 def _convert_types_to_node(x):
@@ -54,16 +54,34 @@ class RuleBreakingException(Exception):
     pass
 
 
+def all_subclasses(cls):
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in all_subclasses(c)])
+
+
 class Multiple:
     def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None):
         self.node = node
-        self.minnumber = minnumber
-        self.maxnumber = maxnumber
-        self.name = node.plural_name
-        self.singular_name = node.singular_name
-        self.plural_name = node.plural_name
-        self.idname = self.node.idname
+        self.minnumber = int_or_none(minnumber) or 0
+        self.maxnumber = int_or_none(maxnumber)
+        self.constrain = [] if constrain is None else constrain
         self.relation_idname = idname
+        if inspect.isclass(self.node):
+            if issubclass(self.node, Hierarchy):
+                self.instantate_node()
+
+    def instantate_node(self, include_hierarchies=None):
+        if not inspect.isclass(self.node):
+            if isinstance(self.node, str):
+                hierarchies = {i.__name__: i for i in all_subclasses(Hierarchy)}
+                if include_hierarchies is not None:
+                    for h in include_hierarchies:
+                        hierarchies[h.__name__] = h  # this overrides the default
+                self.node = hierarchies[self.node]
+        self.name = self.node.plural_name
+        self.singular_name = self.node.singular_name
+        self.plural_name = self.node.plural_name
+        self.idname = self.node.idname
         try:
             self.factors =  self.node.factors
         except AttributeError:
@@ -72,10 +90,22 @@ class Multiple:
             self.parents = self.node.parents
         except AttributeError:
             self.parents = []
-        self.constrain = [] if constrain is None else constrain
 
     def __repr__(self):
-        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}])>"
+        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}] id={self.relation_idname})>"
+
+    def __hash__(self):
+        return hash(self.__class__) ^ hash(self.minnumber) ^ hash(self.maxnumber) ^\
+        hash(''.join(self.constrain)) ^ hash(self.relation_idname)
+
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
+    @classmethod
+    def from_names(cls, hierarchy: Type['Hierarchy'], *singles: str, **multiples: Union[int, Tuple[_Optional[int], _Optional[int]]]) -> List['Multiple']:
+        single_list = [One2One(hierarchy, idname=name) for name in singles]
+        multiple_list = [Multiple(hierarchy, i, i) if isinstance(i, int) else Multiple(cls, *i) for k, i in multiples.items()]
+        return single_list + multiple_list
 
 
 class One2One(Multiple):
@@ -84,6 +114,14 @@ class One2One(Multiple):
 
     def __repr__(self):
         return f"<One2One({self.node})>"
+
+
+class Optional(Multiple):
+    def __init__(self, node, constrain=None, idname=None):
+        super(Optional, self).__init__(node, 0, 1, constrain, idname)
+
+    def __repr__(self):
+        return f"<Optional({self.node})>"
 
 
 class Indexed:
@@ -131,6 +169,11 @@ class GraphableMeta(type):
             raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
         nparents_in_id = 0
         parentnames = {}
+        for c in cls.children:
+            if isinstance(c, Multiple):
+                if c.node == 'self':
+                    c.node = name
+                    c.instantate_node()
         for i in cls.parents:
             if isinstance(i, One2One):
                 parentnames[i.singular_name] = (1, 1)
@@ -205,6 +248,7 @@ class Graphable(metaclass=GraphableMeta):
     plural_name = None
     singular_name = None
     parents = []
+    children = []
     uses_tables = False
     factors = []
     data = None
@@ -244,6 +288,7 @@ class Graphable(metaclass=GraphableMeta):
                 else:
                     raise RuleBreakingException(f"The parent list of a Hierarchy must contain "
                                                 f"only other Hierarchies or Multiple(Hierarchy)")
+
         return l
 
     def add_parent_data(self, data):
@@ -290,8 +335,11 @@ class Graphable(metaclass=GraphableMeta):
         return d
 
 
-    def __init__(self, do_not_create=False, **predecessors):
+    def __init__(self, predecessors, successors=None, do_not_create=False):
+        if successors is None:
+            successors = {}
         self.predecessors = predecessors
+        self.successors = successors
         self.data = None
         if do_not_create:
             return
@@ -345,6 +393,21 @@ class Graphable(metaclass=GraphableMeta):
         if len(version_parents):
             version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
             set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child, version_factors)
+        # now the children
+        for k, child_list in successors.items():
+            type = 'is_required_by'
+            if isinstance(child_list, Collection):
+                with unwind(child_list, enumerated=True) as (child, i):
+                    merge_relationship(self.node, child, type,
+                                       {'order': i}, {},
+                                       collision_manager=collision_manager)
+                collect(child)
+            else:
+                for child in child_list:
+                    props = {'order': 0}
+                    merge_relationship(self.node, child, type, {child.relation_idname: child.relation_identifier},
+                                       props, collision_manager=collision_manager)
+
 
     @classmethod
     def has_factor_identity(cls):
@@ -381,7 +444,7 @@ class Graphable(metaclass=GraphableMeta):
         return False
 
     @classmethod
-    def make_schema(cls) -> Optional[str]:
+    def make_schema(cls) -> _Optional[str]:
         name = cls.__name__
         if cls.idname is not None:
             prop = cls.idname
@@ -473,17 +536,27 @@ class Hierarchy(Graphable):
     factors = []
     is_template = True
 
-    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str]]:
+    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str], Dict[str, Type[Graphable]]]:
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
         parents = {p.singular_name if isinstance(p, (type, One2One)) else p.name: p for p in self.parents}
+        children = {getattr(p, 'idname', getattr(p, 'singular_name', p.name)): p for p in self.children}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
-        return specification, factors
+        specification.update(children)
+        return specification, factors, children
+
+    @classmethod
+    def instantate_nodes(cls, hierarchies=None):
+        for i in cls.parents + cls.factors + cls.children:
+            if isinstance(i, Multiple):
+                if isinstance(i.node, str):
+                    i.instantate_node(hierarchies)
 
     def __init__(self, do_not_create=False, tables=None, **kwargs):
+        self.instantate_nodes()
         self.uses_tables = False
         if tables is None:
             for value in kwargs.values():
@@ -494,7 +567,7 @@ class Hierarchy(Graphable):
         else:
             self.uses_tables = True
         self.identifier = kwargs.pop(self.idname, None)
-        self.specification, factors = self.make_specification()
+        self.specification, factors, children = self.make_specification()
         # add any data held in a neo4j unwind table
         for k, v in self.specification.items():
             if k not in kwargs:
@@ -503,6 +576,7 @@ class Hierarchy(Graphable):
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
+        successors = {}
         for name, nodetype in self.specification.items():
             if do_not_create:
                 value = kwargs.pop(name, None)
@@ -516,11 +590,14 @@ class Hierarchy(Graphable):
                             raise TypeError(f"{name} expects multiple elements")
             else:
                 value = [value]
-            if name not in factors:
+            if name in children:
+                successors[name] = value
+            elif name not in factors:
                 predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors
+        self.successors = successors
         if self.identifier_builder is not None:
             if self.identifier is not None:
                 raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
@@ -528,4 +605,4 @@ class Hierarchy(Graphable):
             if not do_not_create and self.identifier is None:
                 raise ValueError(f"Cannot assign an id of None to {self}")
             setattr(self, self.idname, self.identifier)
-        super(Hierarchy, self).__init__(do_not_create, **predecessors)
+        super(Hierarchy, self).__init__(predecessors, successors, do_not_create)

@@ -3,10 +3,14 @@ from pathlib import Path
 
 import os
 
+import pandas as pd
+
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One, Optional
 
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
+gandalf_line_data = pd.read_csv(HERE / 'expected_lines.csv', sep=' ')
+gandalf_index_data = pd.read_csv(HERE / 'expected_line_indices.csv', sep=' ')
 
 
 class Author(Hierarchy):
@@ -194,17 +198,6 @@ class ProgTemp(Hierarchy):
                    instrumentconfiguration=config)
 
 
-class OBSpec(Hierarchy):
-    """
-    When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
-    the information about when and how to observe.
-    When actually observing them, an "OB" is create with its own unique obid.
-    """
-    factors = ['obtitle']
-    parents = [ObsTemp, ProgTemp, Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
-    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
-
-
 class FibreTarget(Hierarchy):
     """
     A fibretarget is the combination of fibre and surveytarget which is created after submission when
@@ -213,9 +206,19 @@ class FibreTarget(Hierarchy):
     """
     factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
                'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
-    parents = [OBSpec, Fibre, SurveyTarget]
-    identifier_builder = ['obspec', 'fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
-    belongs_to = ['obspec', 'surveytarget']
+    parents = [Fibre, SurveyTarget]
+    identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
+
+
+class OBSpec(Hierarchy):
+    """
+    When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
+    the information about when and how to observe.
+    When actually observing them, an "OB" is create with its own unique obid.
+    """
+    factors = ['obtitle']
+    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
+    idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
 class OB(Hierarchy):
@@ -252,7 +255,8 @@ class Observation(Hierarchy):
     A container for actual observing conditions around a run
     """
     parents = [One2One(Run), CASU, Simulator, System]
-    factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres', 'tempb', 'tempe', 'skybrght', 'observer']
+    factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
+               'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
     products = {'primary': 'primary', 'guidinfo': 'guidinfo', 'metinfo': 'metinfo'}
     identifier_builder = ['run', 'mjdobs']
     version_on = ['run']
@@ -261,6 +265,7 @@ class Observation(Hierarchy):
     def from_header(cls, run, header):
         factors = {f: header.get(f) for f in cls.factors}
         factors['mjdobs'] = float(header['MJD-OBS'])
+        factors['obstype'] = header['obstype'].lower()
         casu = CASU(casuid=header.get('casuvers', header.get('casuid')))
         try:
             sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
@@ -301,6 +306,7 @@ class WavelengthHolder(Hierarchy):
 class L1SpectrumRow(Spectrum):
     plural_name = 'l1spectrumrows'
     is_template = True
+    children = [Optional('self', idname='adjunct')]
     products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
                 'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': Indexed('sensfunc')}
     factors = Spectrum.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i', 'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
@@ -383,61 +389,66 @@ class L2SuperTarget(L2):
     parents = [Multiple(L1SuperTargetSpectrum, 2, 3), APS, WeaveTarget]
 
 
-class L2SourcedData(Hierarchy):
-    is_template = True
+class L2Spectrum(Spectrum):
     factors = ['sourcefile', 'hduname', 'nrow']
     identifier_builder = ['sourcefile', 'hduname', 'nrow']
-    parents = [One2One(L2)]
     belongs_to = ['l2']
-
-
-class L2TableRow(L2SourcedData):
-    is_template = True
-
-
-class L2Spectrum(L2SourcedData):
-    is_template = True
+    parents = [L2]
     plural_name = 'l2spectra'
     products = {'flux': Indexed('*_spectra', 'flux'), 'ivar': Indexed('*_spectra', 'ivar'),
-                'model_ab': Indexed('*_spectra', 'model_ab'), 'model_em': Indexed('*_spectra', 'model_em'),
+                'model': Indexed('*_spectra', 'model'),
                 'lambda': Indexed('*_spectra', 'lambda')}
 
 
-class ClassificationTable(L2TableRow):
-    """
-    The APS-generated table of propagated model fluxes, redshifts, and galaxy/star/qso classifications
-    """
-    factors = L2TableRow.factors + ['class', 'subclass', 'z', 'z_err', 'auto_class_alls',
-                                    'auto_subclass_alls', 'z_alls', 'z_err_alls', 'rchi2diff',
-                                    'rchi2_alls', 'rchi2diff_alls', 'zwarning', 'zwarning_alls',
-                                    'sn_median_all', 'sn_medians', 'specflux_sloans',
-                                    'specflux_sloan_ivars', 'specflux_johnsons',
-                                    'specflux_johnson_ivars', 'specsynfluxes', 'specsynflux_ivars',
-                                    'specskyflux']
+class L2SpectrumLogLam(L2Spectrum):
+    products = {'flux': Indexed('*_spectra', 'flux'), 'err': Indexed('*_spectra', 'err'),
+                'model': Indexed('*_spectra', 'model'), 'goodpix': Indexed('*_spectra', 'goodpix'),
+                'loglambda': Indexed('*_spectra', 'loglam')}
 
 
-class GalaxyTable(L2TableRow):
-    """
-    The APS-generated table of galaxy spectrum properties generated by GANDALF.
-    """
-    with open(HERE / 'galaxy_table_columns.txt', 'r') as _f:
-        factors = L2TableRow.factors + [x.lower().strip() for x in _f.readlines() if len(x)]
+class GandalfL2Spectrum(L2SpectrumLogLam):
+    products = {
+        'flux': Indexed('*_spectra', 'flux'), 'err': Indexed('*_spectra', 'err'),
+        'flux_clean': Indexed('*_spectra', 'flux_clean'), 'model_clean': Indexed('*_spectra', 'model_clean'),
+        'emission': Indexed('*spectra', 'emission'),
+        'model': Indexed('*_spectra', 'model'), 'goodpix': Indexed('*_spectra', 'goodpix'),
+        'loglambda': Indexed('*_spectra', 'loglam')
+    }
 
 
-class ClassificationSpectrum(L2Spectrum):
-    """
-    The joint-arm model spectrum used in the classification of this spectrum
-    """
-    plural_name = 'classification_spectra'
-    products = {'flux': Indexed('class_spectra', 'flux'), 'ivar': Indexed('class_spectra', 'ivar'),
-                'model': Indexed('class_spectra', 'model'), 'lambda': Indexed('class_spectra', 'lambda')}
+class Fit(Hierarchy):
+    is_template = True
+    parents = [L2Spectrum, APS]
+    factors = ['version']
+    identifier_builder = ['version', 'l2spectrum']
 
 
-class GalaxySpectrum(L2Spectrum):
-    """
-    The joint-arm model spectrum used in the GANDALF fitting.
-    """
-    plural_name = 'galaxy_spectra'
-    products = {'flux': Indexed('galaxy_spectra', 'flux'), 'ivar': Indexed('galaxy_spectra', 'ivar'),
-                'model_ab': Indexed('galaxy_spectra', 'model_ab'), 'model_em': Indexed('galaxy_spectra', 'model_em'),
-                'lambda': Indexed('galaxy_spectra', 'lambda')}
+class Measurement(Hierarchy):
+    is_template = True
+    factors = ['value', 'error']
+
+
+class MCMCMeasurement(Measurement):
+    is_template = True
+    factors = ['value', 'mcmc_error', 'formal_error']
+
+
+class Line(Measurement):
+    idname = 'name'
+    factors = ['wvl', 'aon', 'vaccum']
+    children = Multiple.from_names(Measurement, 'flux', 'redshift', 'sigma', 'ebmv', 'amp')
+
+
+class SpectralIndex(Measurement):
+    idname = 'name'
+
+
+class Redrock(Fit):
+    plural_name = 'redrocks'
+    factors = Fit.factors + ['flag', 'class', 'subclass', 'snr', 'chi2', 'deltachi2', 'ncoeff', 'coeff',
+               'npixels', 'srvy_class']
+    children = Multiple.from_names(Measurement, 'best_redshift')
+
+
+import sys, inspect
+hierarchies = list(filter(lambda x: issubclass(x, Hierarchy), [obj for name, obj in inspect.getmembers(sys.modules[__name__]) if inspect.isclass(obj)]))

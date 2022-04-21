@@ -54,3 +54,9 @@ def hash_pandas_dataframe(df):
     for i in df.astype(str).values.ravel():
         digester.update(i)
     return digester.hexdigest()
+
+
+def int_or_none(x):
+    if x is None:
+        return None
+    return int(x)

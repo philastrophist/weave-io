@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from collections import deque
 from functools import reduce
 from itertools import product
 from operator import and_
@@ -11,7 +12,7 @@ from warnings import warn
 import networkx as nx
 import pandas as pd
 import py2neo
-from py2neo import ClientError, DatabaseError
+from py2neo import ClientError, DatabaseError, Relationship, Node, Subgraph
 from tqdm import tqdm
 
 from weaveio.basequery.actions import TraversalPath
@@ -20,10 +21,10 @@ from weaveio.basequery.handler import Handler, defaultdict
 from weaveio.basequery.tree import BranchHandler
 from weaveio.file import File, HDU
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One
 from weaveio.readquery import Query
+from weaveio.hierarchy import Multiple, Hierarchy, Graphable, One2One, collect
 from weaveio.utilities import make_plural, make_singular
-from weaveio.writequery import Unwind
+from weaveio.writequery import Unwind, merge_node, match_node, match_pattern_node, match_relationship
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
@@ -78,17 +79,6 @@ def get_all_subclasses(cls: Type[Graphable]) -> List[Type[Graphable]]:
         all_subclasses.append(subclass)
         all_subclasses.extend(get_all_subclasses(subclass))
     return all_subclasses
-
-
-def get_all_class_bases(cls: Type[Graphable]) -> List[Type[Graphable]]:
-    new = []
-    for b in cls.__bases__:
-        if b is Graphable or not issubclass(b, Graphable):
-            continue
-        new.append(b)
-        new += get_all_class_bases(b)
-    return new
-
 
 
 def find_children_of(parent):
@@ -315,7 +305,8 @@ class Data:
         return node_collisions, rel_collisions
 
     def read_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
-                   collision_manager='ignore', batch_size=None, halt_on_error=True) -> pd.DataFrame:
+                   collision_manager='ignore', batch_size=None, halt_on_error=True,
+                   dryrun=False, do_not_apply_constraints=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -324,7 +315,11 @@ class Data:
         :return
             statistics dataframe
         """
+        if not do_not_apply_constraints:
+            self.apply_constraints()
         batches = []
+        if len(paths) == 1 and isinstance(paths[0], (tuple, list)):
+            paths = paths[0]
         for path in paths:
             path = Path(path)
             matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir), self.graph)]
@@ -337,6 +332,8 @@ class Data:
         elapsed_times = []
         stats = []
         timestamps = []
+        if dryrun:
+            logging.info(f"Dryrun: will not write to database. However, reading is permitted")
         bar = tqdm(batches)
         for filetype, fname, slc in bar:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
@@ -348,25 +345,29 @@ class Data:
                     filetype.read(self.rootdir, fname, slc)
                 cypher, params = query.render_query()
                 start = time.time()
-                results = self.graph.execute(cypher, **params)
-                stats.append(results.stats())
-                timestamp = results.evaluate()
-                if timestamp is None:
-                    warn(f"This query terminated early due to an empty input table/data. "
-                         f"Adjust your `.read` method to allow for empty tables/data")
-                timestamps.append(timestamp)
+                if not dryrun:
+                    results = self.graph.execute(cypher, **params)
+                    stats.append(results.stats())
+                    timestamp = results.evaluate()
+                    if timestamp is None:
+                        logging.warning(f"This query terminated early due to an empty input table/data. "
+                             f"Adjust your `.read` method to allow for empty tables/data")
+                    timestamps.append(timestamp)
                 elapsed_times.append(time.time() - start)
             except (ClientError, DatabaseError, FileExistsError) as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:
                     raise e
                 print(e)
-        if len(batches):
+        if len(batches) and not dryrun:
             df = pd.DataFrame(stats)
             df['timestamp'] = timestamps
             df['elapsed_time'] = elapsed_times
             _, df['fname'], slcs = zip(*batches)
             df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
+        elif dryrun:
+            df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end'])
+            df['elapsed_time'] = elapsed_times
         else:
             df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
         return df.set_index(['fname', 'batch_start', 'batch_end'])
@@ -377,8 +378,11 @@ class Data:
             filetypes = self.filetypes
         else:
             filetypes = [f for f in self.filetypes if f.singular_name in filetype_names or f.plural_name in filetype_names]
+        if len(filetypes) == 0:
+            raise KeyError(f"Some or all of the filetype_names are not understood. "
+                           f"Allowed names are: {[i.singular_name for i in self.filetypes]}")
         for filetype in filetypes:
-            filelist += [i for i in self.rootdir.rglob(filetype.match_pattern)]
+            filelist += [i for i in filetype.match_files(self.rootdir, self.graph)]
         if skip_extant_files:
             extant_fnames = self.get_extant_files() if skip_extant_files else []
             filtered_filelist = [i for i in filelist if str(i.relative_to(self.rootdir)) not in extant_fnames]
@@ -389,9 +393,11 @@ class Data:
             print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
         return filtered_filelist
 
-    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False) -> pd.DataFrame:
+    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
+                        dryrun=False) -> pd.DataFrame:
         filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
-        return self.read_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error)
+        return self.read_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
+                                dryrun=dryrun)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
@@ -682,6 +688,8 @@ class Data:
         if len(pattern) == 1:
             return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
         return all(self.is_singular_name(n) for n in pattern)
+
+
 
     def __getitem__(self, address):
         return self.query.__getitem__(address)
