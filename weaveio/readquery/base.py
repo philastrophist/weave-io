@@ -7,15 +7,30 @@ if TYPE_CHECKING:
     from ..data import Data
 
 
+class AmbiguousPathError(Exception):
+    pass
+
+
+class CardinalityError(Exception):
+    pass
+
+
 class BaseQuery:
+    one_row = False
+    one_column = False
+
     def __repr__(self):
         return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any]]:
-        raise NotImplementedError(f"{self.__class__} cannot be compiled")
+    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+        """
+        returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
+        """
+        return self._G.cypher_lines(self._node), self._G.parameters, self._names
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
-                 obj: str = None, start=None, index=None, single=False) -> None:
+                 obj: str = None, start: 'Query' = None, index: Union['ObjectQuery', 'Query', str] = None,
+                 single=False, names=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
         self._single = single
         self._data = data
@@ -45,8 +60,11 @@ class BaseQuery:
             self._start = start
         if self._obj is not None:
             self._obj = self._normalise_object(self._obj)[0]
+        self._names = [] if names is None else names
 
     def _get_object_of(self, maybe_attribute: str):
+        if self._data.singular_name(maybe_attribute) in self._data.class_hierarchies[self._obj].factors:
+            return self._obj, True
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
         hs = {h.__name__ for h in self._data.factor_hierarchies[maybe_attribute]}
@@ -79,8 +97,8 @@ class BaseQuery:
         return self._G.export(fname, self._node)
 
     @classmethod
-    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index=None, single=False):
-        return cls(parent._data, parent._G, node, parent, obj, parent._start, index, single)
+    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index=None, single=False, *args, **kwargs):
+        return cls(parent._data, parent._G, node, parent, obj, parent._start, index, single, *args, **kwargs)
 
     def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool]:
         return self._data.path_to_hierarchy(self._obj, obj, want_single)
@@ -115,11 +133,3 @@ class BaseQuery:
             n = self._G.add_aggregation(self._node, wrt._node, string_op)
         from .objects import AttributeQuery
         return AttributeQuery._spawn(self, n, wrt._obj, wrt._index)
-
-
-class AmbiguousPathError(Exception):
-    pass
-
-
-class CardinalityError(Exception):
-    pass

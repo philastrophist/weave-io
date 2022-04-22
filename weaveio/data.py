@@ -10,7 +10,7 @@ from typing import Union, List, Tuple, Type, Dict, Set, Callable
 import networkx as nx
 import pandas as pd
 import py2neo
-from networkx import NetworkXNoPath
+from networkx import NetworkXNoPath, NodeNotFound
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
@@ -116,11 +116,22 @@ def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
 def add_relation_graph_edge(graph, parent, child, relation: Multiple):
-    if isinstance(relation, One2One):
-        graph.add_edge(parent, child, singular=True, optional=True, relation=relation)
+    """
+    if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
+    parent-(n)->object (1 object has n parents of type P)
+    it implicitly follows that:
+        object--(m)-parent (each of object's parents of type P can be used by an unknown number `m` of objects of type O = many to one)
+    if an object of type O requires n children of type C then this is equivalent to defining that instances of those behave as:
+        object-(n)->child (1 object has n children of type C)
+        it implicitly follows that:
+            child-[has 1]->Object (each child has maybe 1 parent of type O)
+    """
+    relation.instantate_node()
+    graph.add_edge(parent, child, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
+    if isinstance(relation, One2One) or relation.node is parent:
         graph.add_edge(child, parent, singular=True, optional=True, relation=relation)
     else:
-        graph.add_edge(parent, child, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
+        graph.add_edge(child, parent, singular=False, optional=True, relation=relation)
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
@@ -129,23 +140,13 @@ def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
         if h not in graph.nodes:
             graph.add_node(h)
         for child in h.children:
-            if isinstance(child, Multiple):
-                rel = child
-                child.instantate_node()
-                child = child.node
-            else:
-                rel = Multiple(child, 1, 1)
+            rel = child if isinstance(child, Multiple) else Single(child)
+            child = child.node if isinstance(child, Multiple) else child
             add_relation_graph_edge(graph, h, child, rel)
         for parent in h.parents:
-            if isinstance(parent, Multiple):
-                rel = parent
-                parent.instantate_node()
-                parent = parent.node
-            else:
-                rel = Multiple(parent)
-            raise NotImplementedError
+            rel = parent if isinstance(parent, Multiple) else Single(parent)
+            parent = parent.node if isinstance(parent, Multiple) else parent
             add_relation_graph_edge(graph, parent, h, rel)
-            add_relation_graph_edge(graph, h, parent, Single(h))
     return graph
 
 def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hierarchy]]:
@@ -254,7 +255,7 @@ class Data:
         for i, g in enumerate(self.relation_graphs):
             try:
                 return path_to_hierarchy(g, self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
-            except NetworkXNoPath:
+            except (NodeNotFound, NetworkXNoPath):
                 if i == len(self.relation_graphs)-1:
                     if not singular:
                         to = f"multiple `{self.plural_name(b)}`"
@@ -275,10 +276,10 @@ class Data:
                 hiers.add(node)
         return hiers
 
-    def all_single_links_to_hierarchy(self, hierarchy: Type[Hierarchy]):
+    def all_single_links_to_hierarchy(self, hierarchy: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
         return self.all_links_to_hierarchy(hierarchy, lambda g, e: g.edges[e]['singular'])
 
-    def all_multiple_links_to_hierarchy(self, hierarchy: Type[Hierarchy]):
+    def all_multiple_links_to_hierarchy(self, hierarchy: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
         return self.all_links_to_hierarchy(hierarchy, lambda g, e: not g.edges[e]['singular'])
 
     def write(self, collision_manager='track&flag'):
@@ -505,6 +506,8 @@ class Data:
         return duplicates, schema_violations
 
     def is_factor_name(self, name):
+        if name in self.factor_hierarchies:
+            return True
         try:
             name = self.singular_name(name)
             return self.is_singular_factor(name) or self.is_singular_idname(name)

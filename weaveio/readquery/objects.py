@@ -10,7 +10,7 @@ with waiting,
 it treats two chained expressions as one action
 """
 from itertools import chain
-from typing import List, TYPE_CHECKING, Tuple, Dict, Any
+from typing import List, TYPE_CHECKING, Tuple, Dict, Any, Union
 
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph
@@ -23,10 +23,9 @@ class ObjectQuery(BaseQuery):
         """
         Automatically returns all single links to this object
         """
-        single_names = map(self._data.singular_name, self._data.all_single_links_to_hierarchy(self._obj))
-        single_nodes = map(lambda o: self._traverse_to_specific_object(o, True)._select_all_attrs(o)._node, single_names)
-        r = self._G.add_results_table(self._node, single_nodes)
-        return self._G.cypher_lines(r), self._G.parameters
+        single_objs = [self._data.class_hierarchies[self._data.singular_name(n)] for n in self._data.all_single_links_to_hierarchy(self._obj)]
+        factors = [f"{o.singular_name}.{f}" for o in single_objs for f in o.factors]
+        return self._make_table(*factors)._compile()
 
     def _select_all_attrs(self):
         h = self._data.class_hierarchies[self._data.class_name(self._obj)]
@@ -83,7 +82,7 @@ class ObjectQuery(BaseQuery):
              `run.cnames` returns the cname of each target in a run (this is a list per run)
         """
         n = self._G.add_getitem(self._node, attr)
-        return AttributeQuery._spawn(self, n, single=want_single)
+        return AttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
 
     def _make_table(self, *items):
         """
@@ -91,9 +90,10 @@ class ObjectQuery(BaseQuery):
         obj['factora', 'factorb']
         obj['factora', obj.obj.factorb]
         """
-        attrs = [item.__getitem__(item) if not isinstance(item, AttributeQuery) else item for item in items]
+        attrs = [item if isinstance(item, AttributeQuery) else self.__getitem__(item) for item in items]
+        names = [item._factor_name if isinstance(item, AttributeQuery) else item for item in items]
         n = self._G.add_results_table(self._index._node, *[attr._node for attr in attrs])
-        return TableQuery._spawn(self, n)
+        return TableQuery._spawn(self, n, names=names)
 
     def _traverse_to_relative_object(self):
         """
@@ -153,6 +153,9 @@ class Query(BaseQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
         super().__init__(data, G, node, previous, obj, start, 'start')
 
+    def _compile(self):
+        raise NotImplementedError(f"{self.__class__} is not compilable")
+
     def _traverse_to_specific_object(self, obj):
         obj, single = self._normalise_object(obj)
         if single:
@@ -181,6 +184,13 @@ class Query(BaseQuery):
 
 
 class AttributeQuery(BaseQuery):
+    expect_one_column = True
+
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
+                 obj: str = None, start: Query = None, index: Union['ObjectQuery', 'Query'] = None,
+                 single=False, factor_name: str = None, *args, **kwargs) -> None:
+        super().__init__(data, G, node, previous, obj, start, index, single, [factor_name], *args, **kwargs)
+
     def _perform_arithmetic(self, op_string, op_name, other=None):
         """
         arithmetics
@@ -291,12 +301,28 @@ class AttributeQuery(BaseQuery):
     def __abs__(self):
         return self._basic_scalar_function('abs')
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any]]:
+    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
         if self._index == 'start':
             r = self._G.add_scalar_results_row(self._node)
+            one_row = True
         else:
             r = self._G.add_results_table(self._index._node, self._node)
-        return self._G.cypher_lines(r), self._G.parameters
+            one_row = False
+        return self._G.cypher_lines(r), self._G.parameters, self._names
+
+
+class TableQuery(BaseQuery):
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None,
+                 previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None, obj: str = None,
+                 start: Query = None, index: Union['ObjectQuery', 'Query'] = None,
+                 single=False, attr_queries=None, names=None, *args, **kwargs) -> None:
+        super().__init__(data, G, node, previous, obj, start, index, single, names, *args, **kwargs)
+        self._attr_queries = attr_queries
+
+    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str], bool, bool]:
+        r = super()._compile()
+        r[-2:] = False, False
+        return r
 
 
 class ListAttributeQuery(BaseQuery):

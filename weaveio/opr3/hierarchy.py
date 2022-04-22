@@ -1,4 +1,33 @@
-import logging
+"""
+Hierarchies are defined like so:
+
+class Name(Type):
+    singular_name = 'custom_singular_name'
+    plural_name = 'custom_plural_name'
+    idname = 'the_name_of_the_unique_attribute_of_this_Object'
+    identifier_builder = [list_of_attributes_or_objects_that_define_uniqueness]
+    factors = ['attribute1', 'attribute2']
+    products = {'name_of_product': product_object}
+    parents = [required_object_that_comes_before]
+    children = [required_object_that_comes_after]
+
+if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
+    parent-(n)->object (1 object has n parents of type P)
+    it implicitly follows that:
+        object--(m)-parent (each of object's parents of type P can be used by an unknown number `m` of objects of type O = many to one)
+if an object of type O requires n children of type C then this is equivalent to defining that instances of those behave as:
+    object-(n)->child (1 object has n children of type C)
+    it implicitly follows that:
+        child-[has 1]->Object (each child has maybe 1 parent of type O)
+
+A child does not need to require a parent at instantiation
+
+You can modify the first relation in each of the above by using:
+    Multiple(parent/child, minnumber, maxnumber)
+    One2One(parent/child) - makes a reciprocal one to one relationship
+    Optional(parent/child) == Multiple(parent/Child, 0, 1)
+
+"""
 from pathlib import Path
 
 import os
