@@ -119,8 +119,8 @@ class ObjectQuery(BaseQuery):
         item can be an id, a factor name, a list of those, a slice, or a boolean_mask
         """
         if isinstance(item, (tuple, list)):
-            if not all(isinstance(i, (str, float, int)) for i in item):
-                raise TypeError(f"Cannot index by non str/float/int values")
+            if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in item):
+                raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
             if any(self._data.is_valid_name(i) for i in item):
                 return self._make_table(*item)
             else:
@@ -139,6 +139,12 @@ class ObjectQuery(BaseQuery):
                     return self._select_attribute(item, single)
                 return self._traverse_to_specific_object(obj, single)._select_attribute(item, single)
             except (KeyError, ValueError):
+                if '.' in item:
+                    try:
+                        obj, attr = item.split('.')
+                    except ValueError:
+                        raise ValueError(f"{item} cannot be parsed as an `obj.attribute`.")
+                    return self.__getitem__(obj).__getitem__(attr)
                 try:
                     obj, single = self._normalise_object(item)
                     return self._traverse_to_specific_object(obj, single)
@@ -186,10 +192,14 @@ class Query(BaseQuery):
 class AttributeQuery(BaseQuery):
     expect_one_column = True
 
+    def __repr__(self):
+        return f'<{self.__class__.__name__}({self._obj}.{self._names[0]})>'
+
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: Query = None, index: Union['ObjectQuery', 'Query'] = None,
                  single=False, factor_name: str = None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index, single, [factor_name], *args, **kwargs)
+        self._factor_name = factor_name
 
     def _perform_arithmetic(self, op_string, op_name, other=None):
         """
