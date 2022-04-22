@@ -16,7 +16,7 @@ from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
-from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional
+from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional, Single
 from .readquery import Query
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
@@ -115,35 +115,37 @@ def shared_base_class(*classes):
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
-def add_relation_graph_edge(graph, parent, child):
-    if isinstance(parent, Multiple):
-        parent.instantate_node()
-        parent = parent.node
-    if isinstance(child, Multiple):
-        child.instantate_node()
-    if isinstance(child, One2One):
-        graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
-        graph.add_edge(child.node, parent, singular=True, optional=True, relation=child)
-    elif isinstance(child, Optional):
-        graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
-    elif isinstance(child, Multiple):
-        graph.add_edge(parent, child.node, singular=False, optional=child.minnumber == 0, relation=child)
+def add_relation_graph_edge(graph, parent, child, relation: Multiple):
+    if isinstance(relation, One2One):
+        graph.add_edge(parent, child, singular=True, optional=True, relation=relation)
+        graph.add_edge(child, parent, singular=True, optional=True, relation=relation)
     else:
-        graph.add_edge(parent, child, singular=True, optional=False, relation=Multiple(child, 1, 1))
+        graph.add_edge(parent, child, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
     graph = nx.DiGraph()
     for h in hierarchies:
         if h not in graph.nodes:
-            if isinstance(h, Multiple):
-                h.instantate_node()
-                h = h.node
-        graph.add_node(h)
+            graph.add_node(h)
         for child in h.children:
-            add_relation_graph_edge(graph, h, child)
+            if isinstance(child, Multiple):
+                rel = child
+                child.instantate_node()
+                child = child.node
+            else:
+                rel = Multiple(child, 1, 1)
+            add_relation_graph_edge(graph, h, child, rel)
         for parent in h.parents:
-            add_relation_graph_edge(graph, parent, h)
+            if isinstance(parent, Multiple):
+                rel = parent
+                parent.instantate_node()
+                parent = parent.node
+            else:
+                rel = Multiple(parent)
+            raise NotImplementedError
+            add_relation_graph_edge(graph, parent, h, rel)
+            add_relation_graph_edge(graph, h, parent, Single(h))
     return graph
 
 def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hierarchy]]:
@@ -269,11 +271,7 @@ class Data:
         singles = nx.subgraph_view(g, filter_edge=lambda a, b: edge_constraint(g, (a, b)))
         hiers = set()
         for node in singles.nodes:
-            try:
-                nx.has_path(singles, hierarchy, node)
-            except NetworkXNoPath:
-                pass
-            else:
+            if nx.has_path(singles, hierarchy, node):
                 hiers.add(node)
         return hiers
 

@@ -112,6 +112,11 @@ class Multiple:
         return single_list + multiple_list
 
 
+class Single(Multiple):
+    def __init__(self, node, constrain=None, idname=None):
+        super().__init__(node, 1, 1, constrain, idname)
+
+
 class One2One(Multiple):
     def __init__(self, node, constrain=None, idname=None):
         super(One2One, self).__init__(node, 1, 1, constrain, idname)
