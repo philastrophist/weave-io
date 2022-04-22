@@ -81,8 +81,12 @@ class ObjectQuery(BaseQuery):
              `run.mjd` returns the mjd by a run's exposure (still only one mjd per run though)
              `run.cnames` returns the cname of each target in a run (this is a list per run)
         """
+        attr = self._data.singular_name(attr)
         n = self._G.add_getitem(self._node, attr)
-        return AttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
+        if want_single:
+            return AttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
+        n = self._G.add_scalar_operation(n, '[{0}]', 'array')
+        return ListAttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
 
     def _make_table(self, *items):
         """
@@ -91,6 +95,7 @@ class ObjectQuery(BaseQuery):
         obj['factora', obj.obj.factorb]
         """
         attrs = [item if isinstance(item, AttributeQuery) else self.__getitem__(item) for item in items]
+        # TODO: collect if necessary
         names = [item._factor_name if isinstance(item, AttributeQuery) else item for item in items]
         n = self._G.add_results_table(self._index._node, *[attr._node for attr in attrs])
         return TableQuery._spawn(self, n, names=names)
@@ -331,5 +336,5 @@ class TableQuery(BaseQuery):
 
 
 
-class ListAttributeQuery(BaseQuery):
+class ListAttributeQuery(AttributeQuery):
     pass

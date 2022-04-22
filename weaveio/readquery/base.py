@@ -63,15 +63,16 @@ class BaseQuery:
         self._names = [] if names is None else names
 
     def _get_object_of(self, maybe_attribute: str):
-        if self._data.singular_name(maybe_attribute) in self._data.class_hierarchies[self._obj].factors:
+        single_name = self._data.singular_name(maybe_attribute)
+        if single_name in self._data.class_hierarchies[self._obj].factors:
             return self._obj, True
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
-        hs = {h.__name__ for h in self._data.factor_hierarchies[maybe_attribute]}
+        hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
         if len(hs) > 1:
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
                                      f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
-        return self._normalise_object(hs.pop())
+        return self._normalise_object(hs.pop())[0], self._data.is_singular_name(maybe_attribute)
 
     def _normalise_object(self, obj: str):
         obj = obj.lower()
