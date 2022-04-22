@@ -70,7 +70,7 @@ class BaseQuery:
         hs = {h.__name__ for h in self._data.factor_hierarchies[maybe_attribute]}
         if len(hs) > 1:
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
-                                     f" Please be specific e.g. `{hs[0]}.{maybe_attribute}`")
+                                     f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
         return self._normalise_object(hs.pop())
 
     def _normalise_object(self, obj: str):
