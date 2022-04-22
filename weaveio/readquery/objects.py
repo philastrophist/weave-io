@@ -20,6 +20,9 @@ class AmbiguousPathError(Exception):
 
 
 class BaseQuery:
+    def __repr__(self):
+        return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
+
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start=None, index=None, single=False) -> None:
         self._single = single
