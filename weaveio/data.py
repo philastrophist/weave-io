@@ -127,11 +127,11 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
             child-[has 1]->Object (each child has maybe 1 parent of type O)
     """
     relation.instantate_node()
-    graph.add_edge(parent, child, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
-    if isinstance(relation, One2One) or relation.node is parent:
-        graph.add_edge(child, parent, singular=True, optional=True, relation=relation)
+    graph.add_edge(child, parent, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
+    if isinstance(relation, One2One) or relation.node is child:
+        graph.add_edge(parent, child, singular=True, optional=True, relation=relation)
     else:
-        graph.add_edge(child, parent, singular=False, optional=True, relation=relation)
+        graph.add_edge(parent, child, singular=False, optional=True, relation=relation)
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
