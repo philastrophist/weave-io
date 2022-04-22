@@ -3,10 +3,9 @@ import re
 import time
 from collections import defaultdict
 from functools import reduce
-from itertools import product
 from operator import and_
 from pathlib import Path
-from typing import Union, List, Tuple, Type, Dict, Set
+from typing import Union, List, Tuple, Type, Dict, Set, Callable
 
 import networkx as nx
 import pandas as pd
@@ -124,6 +123,7 @@ def add_relation_graph_edge(graph, parent, child):
         child.instantate_node()
     if isinstance(child, One2One):
         graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
+        graph.add_edge(child.node, parent, singular=True, optional=True, relation=child)
     elif isinstance(child, Optional):
         graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
     elif isinstance(child, Multiple):
@@ -243,7 +243,7 @@ class Data:
         self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
 
 
-    def path_to_hierarchy(self, from_obj, to_obj, singular):
+    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool):
         """
         Find path from one obj to another obj with the constraint that the path is singular or not
         raises NetworkXNoPath if there is no path with that constraint
@@ -263,6 +263,25 @@ class Data:
                                         f"This may be because it doesn't make sense for `{from_}` to have {to}. "
                                         f"Try checking the cardinalty of your query.")
 
+    def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
+        hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
+        g = self.relation_graphs[-1]
+        singles = nx.subgraph_view(g, filter_edge=lambda a, b: edge_constraint(g, (a, b)))
+        hiers = set()
+        for node in singles.nodes:
+            try:
+                nx.has_path(singles, hierarchy, node)
+            except NetworkXNoPath:
+                pass
+            else:
+                hiers.add(node)
+        return hiers
+
+    def all_single_links_to_hierarchy(self, hierarchy: Type[Hierarchy]):
+        return self.all_links_to_hierarchy(hierarchy, lambda g, e: g.edges[e]['singular'])
+
+    def all_multiple_links_to_hierarchy(self, hierarchy: Type[Hierarchy]):
+        return self.all_links_to_hierarchy(hierarchy, lambda g, e: not g.edges[e]['singular'])
 
     def write(self, collision_manager='track&flag'):
         if self.write_allowed:
@@ -506,13 +525,23 @@ class Data:
     def is_singular_factor(self, value):
         return self.is_singular_name(value) and value.split('.')[-1] in self.singular_factors
 
+    def class_name(self, name):
+        if isinstance(name, type):
+            return name.__name__
+        else:
+            return self.singular_hierarchies[self.singular_name(name)].__name__
+
     def plural_name(self, name):
+        if isinstance(name, type):
+            name = name.__name__
         pattern = name.split('.')
         if any(map(self.is_plural_name, pattern)):
             return name
         return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
 
     def singular_name(self, name):
+        if isinstance(name, type):
+            name = name.__name__
         pattern = name.lower().split('.')
         return '.'.join([make_singular(p) for p in pattern])
 
