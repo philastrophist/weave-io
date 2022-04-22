@@ -319,10 +319,6 @@ class TableQuery(BaseQuery):
         super().__init__(data, G, node, previous, obj, start, index, single, names, *args, **kwargs)
         self._attr_queries = attr_queries
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str], bool, bool]:
-        r = super()._compile()
-        r[-2:] = False, False
-        return r
 
 
 class ListAttributeQuery(BaseQuery):
