@@ -62,17 +62,28 @@ class BaseQuery:
             self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
 
-    def _get_object_of(self, maybe_attribute: str):
+    def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
+        """
+        Given a str that might refer to an attribute, return the object that contains that attribute
+        and also whether the attribute and the object are singular
+        obj | attr
+         s  |  s  (i.e. run.obid)
+         p  |  p  - cannot be inferred just from a name
+         s  |  p  (i.e. run.obids)
+         p  |  s  (i.e. run.snr) - is not allowed
+         :return: obj, obj_is_singular, attr_is_singular
+        """
         single_name = self._data.singular_name(maybe_attribute)
         if single_name in self._data.class_hierarchies[self._obj].factors:
-            return self._obj, True
+            return self._obj, True, self._data.is_singular_name(maybe_attribute)
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
         hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
         if len(hs) > 1:
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
                                      f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
-        return self._normalise_object(hs.pop())[0], self._data.is_singular_name(maybe_attribute)
+        obj, obj_is_singular = self._normalise_object(hs.pop())
+        return obj, obj_is_singular, self._data.is_singular_name(maybe_attribute)
 
     def _normalise_object(self, obj: str):
         obj = obj.lower()

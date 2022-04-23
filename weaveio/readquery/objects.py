@@ -88,6 +88,12 @@ class ObjectQuery(BaseQuery):
         n = self._G.add_scalar_operation(n, '[{0}]', 'array')
         return ListAttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
 
+    def _select_or_traverse_to_attribute(self, attr):
+        obj, obj_is_single, attr_is_single = self._get_object_of(attr)  # if factor
+        if obj == self._obj:
+            return self._select_attribute(attr, attr_is_single)
+        return self._traverse_to_specific_object(obj, obj_is_single)._select_attribute(attr, attr_is_single)
+
     def _make_table(self, *items):
         """
         obj['factor_string', AttributeQuery]
@@ -139,10 +145,7 @@ class ObjectQuery(BaseQuery):
             return self._previous._traverse_by_object_index(self._obj, item)
         else:
             try:
-                obj, single = self._get_object_of(item)  # if factor
-                if obj == self._obj:
-                    return self._select_attribute(item, single)
-                return self._traverse_to_specific_object(obj, single)._select_attribute(item, single)
+                return self._select_or_traverse_to_attribute(item)
             except (KeyError, ValueError):
                 if '.' in item:
                     try:
@@ -188,8 +191,8 @@ class Query(BaseQuery):
 
     def __getattr__(self, item):
         try:
-            obj, single = self._get_object_of(item)  # if factor
-            return self._traverse_to_specific_object(obj)._select_attribute(item, single)
+            obj = self._get_object_of(item)[0]
+            return self._traverse_to_specific_object(obj)._select_attribute(item, single=True)
         except (KeyError, ValueError):
             return self._traverse_to_specific_object(item)
 
