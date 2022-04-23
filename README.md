@@ -1,5 +1,34 @@
 ![PyPI](https://img.shields.io/pypi/v/weaveio)
 
+# What is WEAVE-IO?
+WEAVE-IO is a *query language* that provides a *pythonic* interface to *graph* database 
+that store information about how different files and data structures *relate* to each other.
+
+#### What does this mean?
+
+* WEAVE-IO links together many different filetypes that are produced from WEAVE CASU/APS, 
+allowing the user to skip searching all the files themselves and simply write a pythonic query:
+It is designed to act as if all the data is already in memory.
+* WEAVE-IO is not like SQL: You do not need to know names of tables or do any joins. 
+* Like Python, WEAVE-IO is an object-oriented language: 
+E.g. An `L1Spectrum` is a type of `Spectrum` that has an `snr`, `flux`, `ivar` etc.
+* WEAVE-IO is about objects: Objects, such as `L1Spectrum` and `OB` are linked together such that information stored in 
+one is accessed from the other. 
+For instance, `L1Spectrum` has exactly 1 `OB` but an `OB` has many different `L1Spectra`.
+Therefore, each `L1Spectra` has exactly one `obid`, exactly one `snr`, exactly one `camera`, 
+whereas each `OB` has many `snrs` (from each spectrum), exactly one `obid` and two `cameras`.
+You therefore, don't need to know where any of those attributes are stored, just how many you
+expect an object to have (1 or more than 1).
+
+
+#### Examples:
+* Find all weave targets which have at least one observed spectrum with SNR>3 and return their unique cnames.
+    - `data.l1spectrum[data.l1spectrum.snr > 3]`
+
+
+
+
+
 # Tutorial
 
 ## Basics
