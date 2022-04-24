@@ -83,10 +83,7 @@ class ObjectQuery(BaseQuery):
         """
         attr = self._data.singular_name(attr)
         n = self._G.add_getitem(self._node, attr)
-        if want_single:
-            return AttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
-        n = self._G.add_scalar_operation(n, '[{0}]', 'array')
-        return ListAttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
+        return AttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
 
     def _select_or_traverse_to_attribute(self, attr):
         obj, obj_is_single, attr_is_single = self._get_object_of(attr)  # if factor
@@ -103,7 +100,9 @@ class ObjectQuery(BaseQuery):
         attrs = [item if isinstance(item, AttributeQuery) else self.__getitem__(item) for item in items]
         # TODO: collect if necessary
         names = [item._factor_name if isinstance(item, AttributeQuery) else item for item in items]
-        n = self._G.add_results_table(self._index._node, *[attr._node for attr in attrs])
+        # nodes = [self._G.add_scalar_operation(a._node, '[{0}]', 'array') if not a._single else a._node for a in attrs]
+        # nodes = [self._G.add_aggregation(a._node, self._node, 'collect') if not a._single else a._node for a in attrs]
+        n = self._G.add_results_table(self._node, [a._node for a in attrs], [a._single for a in attrs])
         return TableQuery._spawn(self, n, names=names)
 
     def _traverse_to_relative_object(self):
@@ -191,8 +190,13 @@ class Query(BaseQuery):
 
     def __getattr__(self, item):
         try:
+            if self._data.is_singular_name(item):
+                raise CardinalityError(f"Cannot start a query with a single object `{item}`")
             obj = self._get_object_of(item)[0]
-            return self._traverse_to_specific_object(obj)._select_attribute(item, single=True)
+            obj = self._data.plural_name(obj)
+            r = self._traverse_to_specific_object(obj)._select_attribute(item, True)
+            r._index = 'start'
+            return r
         except (KeyError, ValueError):
             return self._traverse_to_specific_object(item)
 
@@ -320,12 +324,15 @@ class AttributeQuery(BaseQuery):
         return self._basic_scalar_function('abs')
 
     def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+        # if self._index == 'start':
+        #     r = self._G.add_scalar_results_row(self._node)
+        # else:
+        #     r = self._G.add_results_table(self._index._node, [self._node], [self._single])
         if self._index == 'start':
-            r = self._G.add_scalar_results_row(self._node)
-            one_row = True
+            index = self._G.start
         else:
-            r = self._G.add_results_table(self._index._node, self._node)
-            one_row = False
+            index = self._index._node
+        r = self._G.add_results_table(index, [self._node], [self._single])
         return self._G.cypher_lines(r), self._G.parameters, self._names
 
 

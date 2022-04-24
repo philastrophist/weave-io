@@ -181,25 +181,24 @@ def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular) -> Tuple[str, b
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
+    :returns:
+    path: str
+    path_yields_singular: bool
     """
     singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])  # type: nx.DiGraph
     try:
-        if singular:
-            return make_arrows(nx.shortest_path(singles, from_obj, to_obj)), True
-        else:
-            try:
-                # singular path, but will be plural later
-                return make_arrows(nx.shortest_path(singles, from_obj, to_obj)), True
-            except NetworkXNoPath:
-                pass
-            try:
-                return make_arrows(nx.shortest_path(singles, to_obj, from_obj)[::-1]), True
-            except NetworkXNoPath:
-                pass
-            try:
-                return make_arrows(nx.shortest_path(g, from_obj, to_obj)), False
-            except NetworkXNoPath:
-                return make_arrows(nx.shortest_path(singles, to_obj, from_obj)[::-1]), False
+        try:
+            # singular path, but will be plural later
+            return make_arrows(nx.shortest_path(singles, from_obj, to_obj)[::-1], False), True
+        except NetworkXNoPath as e:
+            if singular:
+                raise e # singular searches one get one chance
+        try:
+            # e.g. run.obs find the path ob->run is
+            return make_arrows(nx.shortest_path(singles, to_obj, from_obj)), False
+        except NetworkXNoPath:
+            pass
+        return make_arrows(nx.shortest_path(g, from_obj, to_obj)), False
     except NetworkXNoPath:
         raise NetworkXNoPath(f"A single={singular} link between {from_obj} and {to_obj} doesn't make sense. "
                              f"Go via a another object.")
@@ -535,7 +534,7 @@ class Data:
     def plural_name(self, name):
         if isinstance(name, type):
             name = name.__name__
-        pattern = name.split('.')
+        pattern = name.lower().split('.')
         if any(map(self.is_plural_name, pattern)):
             return name
         return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
