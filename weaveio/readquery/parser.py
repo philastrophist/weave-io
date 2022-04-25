@@ -635,6 +635,7 @@ class QueryGraph:
                     edge = list(self.traversal_G.in_edges(aggr))[0]
                     if isinstance(self.G.edges[edge]['statement'], NullStatement):
                         # this is a fake aggregation so get all required nodes as well
+                        # TODO: do not do this if the branch is not SINGLE!
                         op_stuff = self.get_host_nodes_for_operation(aggr)
                         states |= op_stuff
                     else:
@@ -672,7 +673,7 @@ class QueryGraph:
             wrt = next(self.traversal_G.predecessors(parent_node))
         return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement, 'aggr', True)
 
-    def add_scalar_operation(self, parent_node, op_format_string, op_name):
+    def add_scalar_operation(self, parent_node, op_format_string, op_name) -> Tuple:
         """
         A scalar operation is one which takes only one input and returns one output argument
         the input can be one of [object, operation, aggregation]
@@ -681,9 +682,9 @@ class QueryGraph:
             wrt = next(self.backwards_G.successors(parent_node))
             return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
         statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self)
-        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement)
+        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement), parent_node
 
-    def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None):
+    def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None) -> Tuple:
         """
         A combining operation is one which takes multiple inputs and returns one output
         Operations should be inline (no variables) for as long as possible.
@@ -695,7 +696,7 @@ class QueryGraph:
         dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in nodes]  # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
         statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
-        return self.retrieve(statement, add_operation, self.G, wrt, dependency_nodes, statement)
+        return self.retrieve(statement, add_operation, self.G, wrt, dependency_nodes, statement), wrt
 
     def add_getitem(self, parent_node, item):
         statement = GetItem(self.G.nodes[parent_node]['variables'][0], item, self)
@@ -825,13 +826,13 @@ if __name__ == '__main__':
     obs = G.add_start_node('OB')  # obs = data.obs
     runs = G.add_traversal(obs, '-->(:Exposure)-->', 'Run')  # runs = obs.runs
     camera = G.add_getitem(G.add_traversal(runs, '<--', 'ArmConfig', single=True), 'camera')
-    is_red = G.add_scalar_operation(camera, '{0} = "red"', '==')
+    is_red, _ = G.add_scalar_operation(camera, '{0} = "red"', '==')
     red_runs = G.add_filter(runs, is_red)
     snr = G.add_getitem(red_runs, 'snr')
     red_snr = G.add_aggregation(snr, obs, 'avg')  #  'mean(run.camera==red, wrt=obs)'
     spec = G.add_traversal(runs, '-->(:Observation)-->(:RawSpectrum)-->', 'L1SingleSpectrum')
     snr = G.add_getitem(spec, 'snr')
-    compare = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
+    compare, _ = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
     spec = G.add_filter(spec, compare)
     l2 = G.add_traversal(spec, '-->', 'L2')
     snr = G.add_getitem(l2, 'snr')

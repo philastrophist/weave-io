@@ -11,11 +11,13 @@ data = Data()
 # q = data.obs['obid', 'runids', 'obids']
 # q = sum(data.obs.obids)
 # q = data.obs.obids
-q = data.obs['obid', 'obids', 'runids']
-q = data.runs['obid', 'obids', 'runids', 'runid']
+# q = data.obs['obid', 'obids', 'runids']
+# q = data.runs['obid', 'obids', 'runids', 'runid']
 # print(data.obs.obid)
 # q = sum(data.obs.runs.runid)
 # q = sum(data.obs.runs.runid, wrt=data.obs)
+
+q = sum(data.obs.runs.runid * data.obs.obid * 2, wrt=data.obs)
 
 # unravel everything until the last moment
 
