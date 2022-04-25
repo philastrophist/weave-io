@@ -219,14 +219,6 @@ class QueryGraph:
     def statements(self):
         return {d['statement']: (a, b) for a, b, d in self.G.edges(data=True) if 'statement' in d}
 
-    def retrieve(self, statement, function, *args, **kwargs):
-        edge = self.statements.get(statement, None)
-        # if edge is not None:
-        #     print(edge, statement)
-        #     return edge[1]
-        # TODO: fix this
-        return function(*args, **kwargs)
-
     def latest_shared_ancestor(self, *nodes):
         return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
 
@@ -281,11 +273,11 @@ class QueryGraph:
     def add_start_node(self, node_type):
         parent_node = self.start
         statement = StartingMatch(node_type, self)
-        return self.retrieve(statement, add_traversal, self.G, parent_node, statement)
+        return add_traversal(self.G, parent_node, statement)
 
     def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwind=None):
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwind, self)
-        return self.retrieve(statement, add_traversal, self.G, parent_node, statement, single=single)
+        return add_traversal(self.G, parent_node, statement, single=single)
 
     def fold_single(self, parent_node, wrt=None, raise_error=True):
         """
@@ -298,7 +290,7 @@ class QueryGraph:
         statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
         if wrt is None:
             wrt = next(self.traversal_G.predecessors(parent_node))
-        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement, 'aggr', True)
+        return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name) -> Tuple:
         """
@@ -309,7 +301,7 @@ class QueryGraph:
             wrt = next(self.backwards_G.successors(parent_node))
             return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
         statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self)
-        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement), parent_node
+        return add_operation(self.G, parent_node, [], statement), parent_node
 
     def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None) -> Tuple:
         """
@@ -323,21 +315,21 @@ class QueryGraph:
         dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in nodes]  # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
         statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
-        return self.retrieve(statement, add_operation, self.G, wrt, dependency_nodes, statement), wrt
+        return add_operation(self.G, wrt, dependency_nodes, statement), wrt
 
     def add_getitem(self, parent_node, item):
         statement = GetItem(self.G.nodes[parent_node]['variables'][0], item, self)
-        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement)
+        return add_operation(self.G, parent_node, [], statement)
 
     def assign_to_variable(self, parent_node, only_if_op=False):
         if only_if_op and any(d['type'] in ['operation', 'aggr'] for a, b, d in self.G.in_edges(parent_node, data=True)):
             stmt = AssignToVariable(self.G.nodes[parent_node]['variables'][0], self)
-            return self.retrieve(stmt, add_operation, self.G, parent_node, [], stmt)
+            return add_operation(self.G, parent_node, [], stmt)
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
-        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt_node, statement)
+        return add_aggregation(self.G, parent_node, wrt_node, statement)
 
     def add_aggregation(self, parent_node, wrt_node, op):
         return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op)
@@ -355,11 +347,11 @@ class QueryGraph:
         else:
             FilterClass = CopyAndFilter
         statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
-        return self.retrieve(statement, add_filter, self.G, parent_node, [predicate_node], statement)
+        return add_filter(self.G, parent_node, [predicate_node], statement)
 
     def add_unwind_parameter(self, wrt_node, to_unwind):
         statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
-        return self.retrieve(statement, add_unwind, self.G, wrt_node, statement)
+        return add_unwind(self.G, wrt_node, statement)
 
     def collect(self, index_node, other_node, single):
         """
@@ -379,13 +371,13 @@ class QueryGraph:
         except IndexError:
             vs = None
         statement = Return(deps, vs, self)
-        return self.retrieve(statement, add_return, self.G, index_node, column_nodes, statement)
+        return add_return(self.G, index_node, column_nodes, statement)
 
     def add_scalar_results_row(self, *column_nodes):
         """data already folded back"""
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         statement = Return(deps, None, self)
-        return self.retrieve(statement, add_return, self.G, self.start, column_nodes, statement)
+        return add_return(self.G, self.start, column_nodes, statement)
 
     def add_parameter(self, value, name=None):
         name = f'${name}' if name is not None else '$'
