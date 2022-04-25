@@ -75,14 +75,14 @@ class BaseQuery:
         """
         single_name = self._data.singular_name(maybe_attribute)
         hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
+        if self._obj in hs:
+            return self._obj, True, self._data.is_singular_name(maybe_attribute)
         if len(hs) > 1:
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
                                      f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
         obj = hs.pop()
         if self._obj is None:
             return obj, True, False
-        if self._obj == obj:
-            return self._obj, True, self._data.is_singular_name(maybe_attribute)
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
         path, obj_is_singular = self._data.path_to_hierarchy(self._obj, obj, False)

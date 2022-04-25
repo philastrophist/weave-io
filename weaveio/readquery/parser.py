@@ -357,6 +357,8 @@ class QueryGraph:
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
+        if wrt_node not in nx.ancestors(self.dag_G, parent_node):
+            raise SyntaxError(f"{parent_node} cannot be aggregated to {wrt_node} ({wrt_node} is not an ancestor of {parent_node})")
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
         return add_aggregation(self.G, parent_node, wrt_node, statement)
 

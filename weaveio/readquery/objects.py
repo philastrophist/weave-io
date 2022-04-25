@@ -13,7 +13,8 @@ from itertools import chain
 from typing import List, TYPE_CHECKING, Tuple, Dict, Any, Union
 
 from .base import BaseQuery, CardinalityError
-from .parser import QueryGraph
+from .parser import QueryGraph, ParserError
+
 if TYPE_CHECKING:
     from weaveio.data import Data
 
@@ -226,7 +227,10 @@ class AttributeQuery(BaseQuery):
         if isinstance(other, ObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
         elif isinstance(other, BaseQuery):
-            n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
+            try:
+                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
+            except ParserError:
+                raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
         else:
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True)
