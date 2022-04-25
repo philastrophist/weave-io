@@ -160,4 +160,4 @@ class BaseQuery:
         else:
             n = self._G.add_aggregation(self._node, wrt._node, string_op)
         from .objects import AttributeQuery
-        return AttributeQuery._spawn(self, n, wrt._obj, wrt._index)
+        return AttributeQuery._spawn(self, n, wrt._obj, wrt._index, single=True)
