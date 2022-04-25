@@ -13,7 +13,8 @@ from itertools import chain
 from typing import List, TYPE_CHECKING, Tuple, Dict, Any, Union
 
 from .base import BaseQuery, CardinalityError
-from .parser import QueryGraph
+from .parser import QueryGraph, ParserError
+
 if TYPE_CHECKING:
     from weaveio.data import Data
 
@@ -65,7 +66,7 @@ class ObjectQuery(BaseQuery):
         path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
-        eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
@@ -90,7 +91,7 @@ class ObjectQuery(BaseQuery):
         if obj == self._obj:
             return self._select_attribute(attr, attr_is_single)
         r = self._traverse_to_specific_object(obj, obj_is_single)._select_attribute(attr, attr_is_single)
-        r._index = self
+        r._index_node = self._node
         return r
 
     def _make_table(self, *items):
@@ -180,7 +181,7 @@ class Query(BaseQuery):
         name = self._G.add_parameter(index)
         travel = self._G.add_start_node(obj)
         i = self._G.add_getitem(travel, 'id')
-        eq = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
@@ -193,9 +194,7 @@ class Query(BaseQuery):
                 raise CardinalityError(f"Cannot start a query with a single object `{item}`")
             obj = self._get_object_of(item)[0]
             obj = self._data.plural_name(obj)
-            r = self._traverse_to_specific_object(obj)._select_attribute(item, True)
-            r._index = 'start'
-            return r
+            return self._traverse_to_specific_object(obj)._select_attribute(item, True)
         except (KeyError, ValueError):
             return self._traverse_to_specific_object(item)
 
@@ -207,9 +206,9 @@ class AttributeQuery(BaseQuery):
         return f'<{self.__class__.__name__}({self._obj}.{self._factor_name})>'
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
-                 obj: str = None, start: Query = None, index: Union['ObjectQuery', 'Query'] = None,
+                 obj: str = None, start: Query = None, index_node=None,
                  single=False, factor_name: str = None, *args, **kwargs) -> None:
-        super().__init__(data, G, node, previous, obj, start, index, single, [factor_name], *args, **kwargs)
+        super().__init__(data, G, node, previous, obj, start, index_node, single, [factor_name], *args, **kwargs)
         self._factor_name = factor_name
 
     def _perform_arithmetic(self, op_string, op_name, other=None):
@@ -225,13 +224,16 @@ class AttributeQuery(BaseQuery):
         e.g. sum(ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red'].snr, wrt=ob) > ob.l1stackedspectra.snr is allowed since there is a shared parent,
              we take ob.l1stackedspectra as the hierarchy level in order to continue
         """
-        if isinstance(other, BaseQuery):
-            n = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
-        elif isinstance(other, ObjectQuery):
+        if isinstance(other, ObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
+        elif isinstance(other, BaseQuery):
+            try:
+                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
+            except ParserError:
+                raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
         else:
-            n = self._G.add_scalar_operation(self._node, op_string, op_name)
-        return AttributeQuery._spawn(self, n)
+            n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True)
 
     def _basic_scalar_function(self, name):
         return self._perform_arithmetic(f'{name}({{0}})', name)
@@ -323,10 +325,10 @@ class AttributeQuery(BaseQuery):
         return self._basic_scalar_function('abs')
 
     def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
-        if self._index == 'start':
+        if self._index_node == 'start':
             index = self._G.start
         else:
-            index = self._index._node
+            index = self._index_node
         r = self._G.add_results_table(index, [self._node], [self._single])
         return self._G.cypher_lines(r), self._G.parameters, self._names
 
@@ -334,9 +336,9 @@ class AttributeQuery(BaseQuery):
 class TableQuery(BaseQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None,
                  previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None, obj: str = None,
-                 start: Query = None, index: Union['ObjectQuery', 'Query'] = None,
+                 start: Query = None, index_node=None,
                  single=False, attr_queries=None, names=None, *args, **kwargs) -> None:
-        super().__init__(data, G, node, previous, obj, start, index, single, names, *args, **kwargs)
+        super().__init__(data, G, node, previous, obj, start, index_node, single, names, *args, **kwargs)
         self._attr_queries = attr_queries
 
 

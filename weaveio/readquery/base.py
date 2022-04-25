@@ -29,7 +29,7 @@ class BaseQuery:
         return self._G.cypher_lines(self._node), self._G.parameters, self._names
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
-                 obj: str = None, start: 'Query' = None, index: Union['ObjectQuery', 'Query', str] = None,
+                 obj: str = None, start: 'Query' = None, index_node = None,
                  single=False, names=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
         self._single = single
@@ -44,14 +44,14 @@ class BaseQuery:
             self._node = node
         self._previous = previous
         self.__cypher = None
-        self._index = index
+        self._index_node = index_node
         self._obj = obj
         if previous is not None:
-            if self._index is None:
+            if self._index_node is None:
                 if isinstance(previous, ObjectQuery):
-                    self._index = previous
-                elif self._index != 'start':
-                    self._index = previous._index
+                    self._index_node = previous._node
+                elif self._index_node != 'start':
+                    self._index_node = previous._index_node
             if obj is None:
                 self._obj = previous._obj
         if start is None:
@@ -75,14 +75,14 @@ class BaseQuery:
         """
         single_name = self._data.singular_name(maybe_attribute)
         hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
+        if self._obj in hs:
+            return self._obj, True, self._data.is_singular_name(maybe_attribute)
         if len(hs) > 1:
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
                                      f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
         obj = hs.pop()
         if self._obj is None:
             return obj, True, False
-        if self._obj == obj:
-            return self._obj, True, self._data.is_singular_name(maybe_attribute)
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
         path, obj_is_singular = self._data.path_to_hierarchy(self._obj, obj, False)
@@ -125,8 +125,8 @@ class BaseQuery:
         return self._G.export(fname, self._node)
 
     @classmethod
-    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index=None, single=False, *args, **kwargs):
-        return cls(parent._data, parent._G, node, parent, obj, parent._start, index, single, *args, **kwargs)
+    def _spawn(cls, parent: 'BaseQuery', node, obj=None, index_node=None, single=False, *args, **kwargs):
+        return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
     def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool]:
         return self._data.path_to_hierarchy(self._obj, obj, want_single)
@@ -160,4 +160,4 @@ class BaseQuery:
         else:
             n = self._G.add_aggregation(self._node, wrt._node, string_op)
         from .objects import AttributeQuery
-        return AttributeQuery._spawn(self, n, wrt._obj, wrt, single=True)
+        return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, single=True)
