@@ -1,10 +1,11 @@
-from typing import Callable
+from typing import Callable, TYPE_CHECKING
 
 import numpy as np
-import predicate as predicate
 
 from .utilities import mask_infs
-from .objects import BaseQuery, AttributeQuery
+from .base import BaseQuery
+if TYPE_CHECKING:
+    pass
 
 __all__ = ['sum', 'max', 'min', 'mean', 'std', 'count', 'any', 'all']
 
@@ -16,12 +17,13 @@ python_sum = sum
 
 
 def _template_aggregator(string_op, predicate, python_func: Callable, item: BaseQuery, wrt: BaseQuery = None,
-                        allow_hiers=False, remove_infs: bool = True, args=None, kwargs=None):
-    if not isinstance(item, BaseQuery) or not allow_hiers and not isinstance(item, AttributeQuery):
+                         remove_infs: bool = True, args=None, kwargs=None):
+    try:
+        if remove_infs:
+            string_op = string_op.format(mask_infs('{0}'))
+        return item._aggregate(wrt, string_op, predicate)
+    except AttributeError:
         return python_func(item, *args, **kwargs)
-    if remove_infs and isinstance(item, AttributeQuery):
-        string_op = string_op.format(mask_infs('{0}'))
-    return item._aggregate(wrt, string_op, predicate)
 
 
 def sum(item, wrt=None, *args, **kwargs):
@@ -37,7 +39,7 @@ def min(item, wrt=None, *args, **kwargs):
 
 
 def count(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('count', False, len, item, wrt, allow_hiers=True, args=args, kwargs=kwargs)
+    return _template_aggregator('count', False, len, item, wrt, args=args, kwargs=kwargs)
 
 
 def std(item, wrt=None, *args, **kwargs):

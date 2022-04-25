@@ -3,21 +3,20 @@ import re
 import time
 from collections import defaultdict
 from functools import reduce
-from itertools import product
 from operator import and_
 from pathlib import Path
-from typing import Union, List, Tuple, Type, Dict, Set
+from typing import Union, List, Tuple, Type, Dict, Set, Callable
 
 import networkx as nx
 import pandas as pd
 import py2neo
-from networkx import NetworkXNoPath
+from networkx import NetworkXNoPath, NodeNotFound
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
-from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional
+from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional, Single
 from .readquery import Query
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
@@ -116,34 +115,38 @@ def shared_base_class(*classes):
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
-def add_relation_graph_edge(graph, parent, child):
-    if isinstance(parent, Multiple):
-        parent.instantate_node()
-        parent = parent.node
-    if isinstance(child, Multiple):
-        child.instantate_node()
-    if isinstance(child, One2One):
-        graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
-    elif isinstance(child, Optional):
-        graph.add_edge(parent, child.node, singular=True, optional=True, relation=child)
-    elif isinstance(child, Multiple):
-        graph.add_edge(parent, child.node, singular=False, optional=child.minnumber == 0, relation=child)
+def add_relation_graph_edge(graph, parent, child, relation: Multiple):
+    """
+    if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
+    parent-(n)->object (1 object has n parents of type P)
+    it implicitly follows that:
+        object--(m)-parent (each of object's parents of type P can be used by an unknown number `m` of objects of type O = many to one)
+    if an object of type O requires n children of type C then this is equivalent to defining that instances of those behave as:
+        object-(n)->child (1 object has n children of type C)
+        it implicitly follows that:
+            child-[has 1]->Object (each child has maybe 1 parent of type O)
+    """
+    relation.instantate_node()
+    graph.add_edge(child, parent, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
+    if isinstance(relation, One2One) or relation.node is child:
+        graph.add_edge(parent, child, singular=True, optional=True, relation=relation)
     else:
-        graph.add_edge(parent, child, singular=True, optional=False, relation=Multiple(child, 1, 1))
+        graph.add_edge(parent, child, singular=False, optional=True, relation=relation)
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
     graph = nx.DiGraph()
     for h in hierarchies:
         if h not in graph.nodes:
-            if isinstance(h, Multiple):
-                h.instantate_node()
-                h = h.node
-        graph.add_node(h)
+            graph.add_node(h)
         for child in h.children:
-            add_relation_graph_edge(graph, h, child)
+            rel = child if isinstance(child, Multiple) else Single(child)
+            child = child.node if isinstance(child, Multiple) else child
+            add_relation_graph_edge(graph, h, child, rel)
         for parent in h.parents:
-            add_relation_graph_edge(graph, parent, h)
+            rel = parent if isinstance(parent, Multiple) else Single(parent)
+            parent = parent.node if isinstance(parent, Multiple) else parent
+            add_relation_graph_edge(graph, parent, h, rel)
     return graph
 
 def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hierarchy]]:
@@ -178,25 +181,24 @@ def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular) -> Tuple[str, b
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
+    :returns:
+    path: str
+    path_yields_singular: bool
     """
     singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])  # type: nx.DiGraph
     try:
-        if singular:
-            return make_arrows(nx.shortest_path(singles, from_obj, to_obj)), True
-        else:
-            try:
-                # singular path, but will be plural later
-                return make_arrows(nx.shortest_path(singles, from_obj, to_obj)), True
-            except NetworkXNoPath:
-                pass
-            try:
-                return make_arrows(nx.shortest_path(singles, to_obj, from_obj)[::-1]), True
-            except NetworkXNoPath:
-                pass
-            try:
-                return make_arrows(nx.shortest_path(g, from_obj, to_obj)), False
-            except NetworkXNoPath:
-                return make_arrows(nx.shortest_path(singles, to_obj, from_obj)[::-1]), False
+        try:
+            # singular path, but will be plural later
+            return make_arrows(nx.shortest_path(singles, from_obj, to_obj)[::-1], False), True
+        except NetworkXNoPath as e:
+            if singular:
+                raise e # singular searches one get one chance
+        try:
+            # e.g. run.obs find the path ob->run is
+            return make_arrows(nx.shortest_path(singles, to_obj, from_obj)), False
+        except NetworkXNoPath:
+            pass
+        return make_arrows(nx.shortest_path(g, from_obj, to_obj)), False
     except NetworkXNoPath:
         raise NetworkXNoPath(f"A single={singular} link between {from_obj} and {to_obj} doesn't make sense. "
                              f"Go via a another object.")
@@ -243,7 +245,7 @@ class Data:
         self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
 
 
-    def path_to_hierarchy(self, from_obj, to_obj, singular):
+    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool):
         """
         Find path from one obj to another obj with the constraint that the path is singular or not
         raises NetworkXNoPath if there is no path with that constraint
@@ -252,7 +254,7 @@ class Data:
         for i, g in enumerate(self.relation_graphs):
             try:
                 return path_to_hierarchy(g, self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
-            except NetworkXNoPath:
+            except (NodeNotFound, NetworkXNoPath):
                 if i == len(self.relation_graphs)-1:
                     if not singular:
                         to = f"multiple `{self.plural_name(b)}`"
@@ -263,6 +265,21 @@ class Data:
                                         f"This may be because it doesn't make sense for `{from_}` to have {to}. "
                                         f"Try checking the cardinalty of your query.")
 
+    def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
+        hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
+        g = self.relation_graphs[-1]
+        singles = nx.subgraph_view(g, filter_edge=lambda a, b: edge_constraint(g, (a, b)))
+        hiers = set()
+        for node in singles.nodes:
+            if nx.has_path(singles, hierarchy, node):
+                hiers.add(node)
+        return hiers
+
+    def all_single_links_to_hierarchy(self, hierarchy: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
+        return self.all_links_to_hierarchy(hierarchy, lambda g, e: g.edges[e]['singular'])
+
+    def all_multiple_links_to_hierarchy(self, hierarchy: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
+        return self.all_links_to_hierarchy(hierarchy, lambda g, e: not g.edges[e]['singular'])
 
     def write(self, collision_manager='track&flag'):
         if self.write_allowed:
@@ -488,6 +505,8 @@ class Data:
         return duplicates, schema_violations
 
     def is_factor_name(self, name):
+        if name in self.factor_hierarchies:
+            return True
         try:
             name = self.singular_name(name)
             return self.is_singular_factor(name) or self.is_singular_idname(name)
@@ -506,13 +525,23 @@ class Data:
     def is_singular_factor(self, value):
         return self.is_singular_name(value) and value.split('.')[-1] in self.singular_factors
 
+    def class_name(self, name):
+        if isinstance(name, type):
+            return name.__name__
+        else:
+            return self.singular_hierarchies[self.singular_name(name)].__name__
+
     def plural_name(self, name):
-        pattern = name.split('.')
+        if isinstance(name, type):
+            name = name.__name__
+        pattern = name.lower().split('.')
         if any(map(self.is_plural_name, pattern)):
             return name
         return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
 
     def singular_name(self, name):
+        if isinstance(name, type):
+            name = name.__name__
         pattern = name.lower().split('.')
         return '.'.join([make_singular(p) for p in pattern])
 

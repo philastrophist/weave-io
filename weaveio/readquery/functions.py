@@ -3,7 +3,8 @@ from typing import Callable
 import numpy as np
 
 from .utilities import mask_infs
-from .objects import BaseQuery, AttributeQuery
+from .objects import AttributeQuery
+from .base import BaseQuery
 
 
 def _template_operator(string_op: str, name: str, python_func: Callable, item: BaseQuery, remove_infs=True, *args, **kwargs):

@@ -529,11 +529,11 @@ class Statement:
         self.output_variables.append(out)
         return out
 
-    def make_cypher(self) -> Optional[str]:
+    def make_cypher(self, ordering: list) -> Optional[str]:
         raise NotImplementedError
 
     def __repr__(self):
-        r = self.make_cypher()
+        r = self.make_cypher(list(self.graph.G.nodes))
         if r is None:
             return 'Nothing'
         return f'{r}'
@@ -547,7 +547,7 @@ class StartingMatch(Statement):
         self.to_node_type = to_node_type
         self.to_node = self.make_variable(to_node_type)
 
-    def make_cypher(self) -> str:
+    def make_cypher(self, ordering: list) -> Optional[str]:
         return f"MATCH ({self.to_node}:{self.to_node_type})"
 
 
@@ -566,7 +566,7 @@ class Traversal(Statement):
         else:
             self.to_unwind = None
 
-    def make_cypher(self) -> str:
+    def make_cypher(self, ordering: list) -> str:
         r = f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
         if self.to_unwind is not None:
             r = f'UNWIND {self.unwind} as {self.unwound} {r}'
@@ -578,8 +578,8 @@ class NullStatement(Statement):
         super().__init__(input_variables, graph)
         self.output_variables = input_variables
 
-    def make_cypher(self):
-        return None
+    def make_cypher(self, ordering: list):
+        return
 
 
 class Operation(Statement):
@@ -591,7 +591,7 @@ class Operation(Statement):
         self.op = f'({self.op_string.format(*self.inputs)})'
         self.output_variables.append(self.op)
 
-    def make_cypher(self):
+    def make_cypher(self, ordering: list):
         return
 
 
@@ -609,7 +609,7 @@ class AssignToVariable(Statement):
         self.input = input_variable
         self.output = self.make_variable('variable')
 
-    def make_cypher(self) -> Optional[str]:
+    def make_cypher(self, ordering: list) -> Optional[str]:
         return f"WITH *, {self.input} as {self.output}"
 
 
@@ -626,7 +626,7 @@ class DirectFilter(Filter):
         self.output = to_filter_variable
         self.output_variables = [to_filter_variable]
 
-    def make_cypher(self) -> str:
+    def make_cypher(self, ordering: list) -> str:
         return f"WHERE {self.predicate_variable}"
 
 
@@ -635,7 +635,7 @@ class CopyAndFilter(Filter):
         super().__init__(to_filter_variable, predicate_variable, graph)
         self.output = self.make_variable(to_filter_variable)
 
-    def make_cypher(self) -> str:
+    def make_cypher(self, ordering: list) -> str:
         return f"WITH *, CASE WHEN {self.predicate_variable} THEN {self.to_filter_variable} ELSE null END as {self.output}"
 
 
@@ -646,7 +646,7 @@ class Slice(Statement):
         super().__init__([input_variable], graph)
         self.slc = slc
 
-    def make_cypher(self) -> str:
+    def make_cypher(self, ordering: list) -> str:
         raise NotImplementedError
 
 
@@ -654,16 +654,27 @@ class Aggregate(Statement):
     ids = ['agg_func', 'name', 'input']
     default_ids = ['__class__']
 
-    def __init__(self, input, conserve, agg_func: str, name, graph: 'QueryGraph'):
-        super().__init__([input]+conserve, graph)
+    def __init__(self, input, wrt_node, agg_func: str, name, graph: 'QueryGraph'):
+        super().__init__([input, wrt_node], graph)
         self.agg_func = agg_func
         self.input = input
-        self.conserve = conserve
+        self.wrt_node = wrt_node
         self.name = name
         self.output = self.make_variable(name)
 
-    def make_cypher(self) -> str:
-        variables = ', '.join(set(self.conserve)) + ', ' if self.conserve else ''
+    @property
+    def conserve(self):
+        above = self.graph.above_state(self.wrt_node)
+        to_conserve = []
+        for c in above:
+            if not self.graph.node_holds_type(c, 'operation'):
+                to_conserve.append(c)
+        return to_conserve
+
+    def make_cypher(self, ordering) -> str:
+        conserve = {i for i in self.conserve if i in ordering}
+        conserve = [self.graph.G.nodes[c]['variables'][0] for c in conserve if self.graph.G.nodes[c]['variables']]
+        variables = ', '.join(conserve) + ', ' if conserve else ''
         agg_string = self.agg_func.format(self.input)
         return f"WITH {variables}{agg_string} as {self.output}"
 
@@ -676,7 +687,7 @@ class Return(Statement):
         self.index_variable = index_variable
         self.column_variables = column_variables
 
-    def make_cypher(self) -> Optional[str]:
+    def make_cypher(self, ordering: list) -> Optional[str]:
         cols = self.column_variables if self.index_variable is None else self.column_variables[:-1]
         cols = ', '.join(cols)
         return f"RETURN {cols}"
@@ -690,7 +701,7 @@ class Unwind(Statement):
         self.parameter = parameter
         self.output = self.make_variable(name)
 
-    def make_cypher(self) -> Optional[str]:
+    def make_cypher(self, ordering: list) -> Optional[str]:
         return f"UNWIND {self.parameter} as {self.output}"
 
 
@@ -719,9 +730,9 @@ class QueryGraph:
         self.G = HashedDiGraph()
         self.start = add_start(self.G, 'data')
         self.variable_names = defaultdict(int)
-        self.dag_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'wrt')
-        self.backwards_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] == 'wrt')
-        self.traversal_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'dep')
+        self.dag_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'wrt')  # type: nx.DiGraph
+        self.backwards_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] == 'wrt')  # type: nx.DiGraph
+        self.traversal_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'dep')  # type: nx.DiGraph
         self.parameters = {}
 
     @property
@@ -743,12 +754,38 @@ class QueryGraph:
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
 
+    def node_holds_type(self, node, *types):
+        return any(d['type'] in types for a, b, d in self.G.in_edges(node, data=True))
+
+    def get_host_nodes_for_operation(self, op_node) -> set:
+        """
+        Find nodes which are necessary to construct `op_node`
+        traverses until it encounters a traversal/filter/aggr then it stops
+        An operation can have a single path (just scalar ops) or a branching mess (combining ops),
+        """
+        necessary = set()
+        for input_edge in self.dag_G.in_edges(op_node, data=True):
+            input = input_edge[0]
+            if self.node_holds_type(input, 'traversal', 'filter', 'aggr'):
+                necessary.add(input)
+            else:
+                necessary |= self.get_host_nodes_for_operation(input)
+        return necessary
+
     def above_state(self, node, no_wrt=False):
         states = nx.descendants(self.above_graph, node)
         states.add(node)
         if not no_wrt:
             for n in states.copy():
-                states |= set(self.backwards_G.predecessors(n))
+                aggregates = self.backwards_G.predecessors(n)
+                for aggr in aggregates:
+                    edge = list(self.traversal_G.in_edges(aggr))[0]
+                    if isinstance(self.G.edges[edge]['statement'], NullStatement):
+                        # this is a fake aggregation so get all required nodes as well
+                        op_stuff = self.get_host_nodes_for_operation(aggr)
+                        states |= op_stuff
+                    else:
+                        states.add(aggr)
         return states
 
     def get_variable_name(self, name):
@@ -770,6 +807,9 @@ class QueryGraph:
         return self.retrieve(statement, add_traversal, self.G, parent_node, statement, single=single)
 
     def fold_single(self, parent_node, wrt=None, raise_error=True):
+        """
+        Adds a fake aggregation such that a node can be used as a dependency later
+        """
         if not any(d.get('single', False) for a, b, d in self.G.in_edges(parent_node, data=True)):
             if raise_error:
                 raise ParserError(f"{parent_node} is not a singular extension. Cannot single_fold")
@@ -780,6 +820,10 @@ class QueryGraph:
         return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement, 'aggr', True)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name):
+        """
+        A scalar operation is one which takes only one input and returns one output argument
+        the input can be one of [object, operation, aggregation]
+        """
         if any(d['type'] == 'aggr' for a, b, d in self.G.in_edges(parent_node, data=True)):
             wrt = next(self.backwards_G.successors(parent_node))
             return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
@@ -788,6 +832,7 @@ class QueryGraph:
 
     def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None):
         """
+        A combining operation is one which takes multiple inputs and returns one output
         Operations should be inline (no variables) for as long as possible.
         This is so they can be used in match where statements
         """
@@ -810,14 +855,8 @@ class QueryGraph:
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
-        above = self.above_state(wrt_node)
-        to_conserve = []
-        for c in above:
-            if not any(d.get('single', False) for a, b, d in self.G.in_edges(c, data=True)):
-                to_conserve.append(c)
-        statement = Aggregate(self.G.nodes[parent_node]['variables'][0],
-                              [self.G.nodes[c]['variables'][0] for c in to_conserve if self.G.nodes[c]['variables']],
-                              op_format_string, op_name, self)
+        # TODO: this does not work if there are two aggregations with the same wrt node. Need the ordering to get the correct state
+        statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
         return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt_node, statement)
 
     def add_aggregation(self, parent_node, wrt_node, op):
@@ -842,11 +881,24 @@ class QueryGraph:
         statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
         return self.retrieve(statement, add_unwind, self.G, wrt_node, statement)
 
-    def add_results_table(self, index_node, *column_nodes):
+    def collect(self, index_node, other_node, single):
+        """
+        Collect `other_node` with respect to the shared common ancestor of `index_node` and `other_node`.
+        """
+        shared = self.latest_shared_ancestor(index_node, other_node)
+        if single:
+            return self.fold_single(other_node, shared, raise_error=False)
+        return self.add_aggregation(other_node, index_node, 'collect')
+
+    def add_results_table(self, index_node, column_nodes, request_singles: List[bool]):
         # fold back column data into the index node
-        column_nodes = [self.fold_single(d, index_node, raise_error=False) for d in column_nodes] # fold back when combining
+        column_nodes = [self.collect(index_node, d, single=s) for s, d in zip(request_singles, column_nodes)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
-        statement = Return(deps, self.G.nodes[index_node]['variables'][0], self)
+        try:
+            vs = self.G.nodes[index_node]['variables'][0]
+        except IndexError:
+            vs = None
+        statement = Return(deps, vs, self)
         return self.retrieve(statement, add_return, self.G, index_node, column_nodes, statement)
 
     def add_scalar_results_row(self, *column_nodes):
@@ -881,9 +933,9 @@ class QueryGraph:
         ordering = self.traverse_query(result)
         self.verify_traversal(result, ordering)
         statements = []
-        for e in zip(ordering[:-1], ordering[1:]):
+        for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
             try:
-                statement = self.G.edges[e]['statement'].make_cypher()
+                statement = self.G.edges[e]['statement'].make_cypher(ordering[:i+1])
                 if statement is not None:
                     statements.append(statement)
             except KeyError:
@@ -1036,9 +1088,9 @@ if __name__ == '__main__':
     #         print(f"Trav: {o[0]} -> {o[1]}")
     # verify_saves(edge_ordering, ordering)
     # edge_ordering = collapse_chains_of_loading(edge_ordering)
-    for e in zip(ordering[:-1], ordering[1:]):
+    for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
         try:
-            statement = G.G.edges[e]['statement'].make_cypher()
+            statement = G.G.edges[e]['statement'].make_cypher(ordering[:i+1])
             if statement is not None:
                 print(statement)
         except KeyError:
