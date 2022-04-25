@@ -20,13 +20,13 @@ if TYPE_CHECKING:
 
 
 class ObjectQuery(BaseQuery):
-    def _compile(self) -> Tuple[List[str], Dict[str, Any]]:
+    def _precompile(self) -> 'TableQuery':
         """
         Automatically returns all single links to this object
         """
         single_objs = [self._data.class_hierarchies[self._data.singular_name(n)] for n in self._data.all_single_links_to_hierarchy(self._obj)]
         factors = [f"{o.singular_name}.{f}" for o in single_objs for f in o.factors]
-        return self._make_table(*factors)._compile()
+        return self._make_table(*factors)
 
     def _select_all_attrs(self):
         h = self._data.class_hierarchies[self._data.class_name(self._obj)]
@@ -324,13 +324,12 @@ class AttributeQuery(BaseQuery):
     def __abs__(self):
         return self._basic_scalar_function('abs')
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+    def _precompile(self) -> 'TableQuery':
         if self._index_node == 'start':
             index = self._G.start
         else:
             index = self._index_node
-        r = self._G.add_results_table(index, [self._node], [self._single])
-        return self._G.cypher_lines(r), self._G.parameters, self._names
+        return self._G.add_results_table(index, [self._node], [self._single])
 
 
 class TableQuery(BaseQuery):

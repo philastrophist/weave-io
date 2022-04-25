@@ -370,8 +370,7 @@ class QueryGraph:
         return self.add_generic_aggregation(parent, wrt_node, op_format_string, op_name)
 
     def add_filter(self, parent_node, predicate_node, direct=False):
-        wrt = self.latest_shared_ancestor(parent_node, predicate_node)
-        predicate_node = self.fold_to_cardinal(predicate_node, wrt, raise_error=False)
+        predicate_node = self.fold_to_cardinal(predicate_node)  # predicates can only come from before obvs...
         predicate = self.G.nodes[predicate_node]['variables'][0]
         if direct:
             FilterClass = DirectFilter

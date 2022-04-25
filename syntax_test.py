@@ -4,10 +4,10 @@ from weaveio.readquery import *
 data = Data()
 runs = data.obs.runs
 specs = runs.l1singlespectra
-# ra = specs.targras
-# fibretarget = specs.fibretarget
-q = runs[['runid', count(specs, wrt=runs), runs.runid * 2 * mean(specs.snr, wrt=runs)]]
-
+red_specs = specs[specs.camera == 'red']
+blue_specs = specs[specs.camera == 'blue']
+q = runs[['runid', count(red_specs, wrt=runs), count(blue_specs, wrt=runs), runs.runid * 2 * mean(specs.snr, wrt=runs)]]
+# q = red_specs.camera
 
 q._G.export('parser')
 lines, params, names = q._compile()

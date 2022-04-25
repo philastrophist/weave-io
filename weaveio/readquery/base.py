@@ -22,11 +22,17 @@ class BaseQuery:
     def __repr__(self):
         return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+    def _precompile(self) -> 'BaseQuery':
+        return self
+
+    def _to_cypher(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
         return self._G.cypher_lines(self._node), self._G.parameters, self._names
+
+    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+        return self._precompile()._to_cypher()
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node = None,
