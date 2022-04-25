@@ -1,6 +1,7 @@
 from collections import namedtuple, defaultdict, OrderedDict
+from contextlib import contextmanager
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, wraps
 from typing import List, Tuple, Dict, Optional
 
 import graphviz
@@ -25,13 +26,30 @@ class HashedDiGraph(nx.DiGraph):
     def __hash__(self) -> int:
         return hash(self.name)
 
+    def add_node(self, node_for_adding, **attr):
+        """add_node but return existing node if it is matched, ignoring attributes"""
+        if node_for_adding in self.nodes:
+            return node_for_adding
+        return super().add_node(node_for_adding, **attr)
+
+    def add_edge(self, u_of_edge, v_of_edge, **attr):
+        """add_edge but return existing node if it is matched"""
+        if (u_of_edge, v_of_edge) in self.edges:
+            if self.edges[(u_of_edge, v_of_edge)] == attr:
+                return (u_of_edge, v_of_edge)
+        super().add_edge(u_of_edge, v_of_edge, **attr)
+
 
 def plot_graph(graph):
     g = nx.DiGraph()
     for n in graph.nodes:
         g.add_node(n)
     for e in graph.edges():
-        g.add_edge(*e, **graph.edges[e])
+        try:
+            label = e['statement'].make_cypher(graph.nodes)
+        except:
+            label = ''
+        g.add_edge(*e, **graph.edges[e], label=label)
     nx.relabel_nodes(g, {n: f"{d['i']}\n{d['label']}" for n, d in graph.nodes(data=True)}, copy=False)
     return graphviz.Source(to_pydot(g).to_string())
 
@@ -41,12 +59,16 @@ def make_node(graph: HashedDiGraph, parent, type: str, statement: 'Statement', s
         label = str(statement.output_variables[0])
     except (IndexError, AttributeError):
         label = 'node'
-    graph.add_node(i, label=label, i=i, variables=[])
+    node = i
+    for a, b, d in graph.out_edges(parent, data=True):
+        if d.get('statement', None) == statement:
+            return b  # node is already there so return it
+    graph.add_node(node, label=label, i=i, variables=[])
     if parent is not None:
-        graph.add_edge(parent, i, type=type, label=f"{statement}", statement=statement, single=single, **edge_data)
+        graph.add_edge(parent, node, type=type, statement=statement, single=single, **edge_data)
     if statement is not None:
-        statement.edge = (parent, i)
-    return i
+        statement.edge = (parent, node)
+    return node
 
 def add_start(graph: HashedDiGraph, name):
     return make_node(graph, None, name, None, False)
@@ -288,176 +310,6 @@ def verify(graph):
             if not (nops ^ nfilters ^ nreturns):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
 
-Store = namedtuple('Store', ['state', 'aggs', 'reference', 'chain'])
-Aggregation = namedtuple('Aggregation', ['edge', 'reference'])
-Load = namedtuple('Load', ['reference', 'state', 'store'])
-
-
-def merge_overlapping_sequences(sequences):
-    sequences.sort(key=len)
-    keep = []
-    for i, seq in enumerate(sequences):
-        matching = {i for i, s in enumerate(sequences) if all(x in s for x in seq)}
-        matching.remove(i)
-        if not matching:
-            keep.append(seq)
-    return keep
-
-
-
-
-def get_patterns(sequence, banned=(Store, Load)) -> Dict[int,List[Tuple[Tuple, List[int]]]]:
-    """
-    finds returns repeated patterns
-    :returns:
-        final index of the first use of each pattern Dict[last_index,pattern]
-        other indexes of other uses of each pattern Dict[first_index, pattern]
-    the last_index is where the save/load should occur (do shortest patterns first)
-    the first_index is where the load should occur)
-    """
-    min_length = 1
-    counter = defaultdict(set)
-    for length in range(min_length, len(sequence)):
-        for i in range(len(sequence)):
-            seq = tuple(sequence[i:i+length])
-            if not any(isinstance(x, banned) for x in seq):
-                if not any(x in seq[:z] for z, x in enumerate(seq)):
-                    counter[seq].add(i)
-    counter = {k: v for k, v in counter.items() if len(v) > 1}
-    earliest = {k: min(v) for k, v in counter.items()}
-    for seq, index in earliest.items():
-        counter[seq].remove(index)
-    others = defaultdict(list)
-    for k, vs in counter.items():
-        for v in vs:
-            others[v].append(k)
-    others = dict(others)
-    for index, seqs in others.items():
-        merged_seqs = merge_overlapping_sequences(seqs)
-        assert len(merged_seqs) == 1, f"a path starting at {index} can only go to one place"
-        others[index] = merged_seqs[0]
-    _others = defaultdict(list)
-    for k, v in others.items():
-        _others[v].append(k)
-
-    earliest = {seq: i for seq, i in earliest.items() if seq in others.values()}  # only if used later
-    first_use_last_index = defaultdict(list)
-    for seq, i in earliest.items():
-        first_use_last_index[i+len(seq)].append(seq)
-    grouped = {}
-    for first_use_last_i, patterns in first_use_last_index.items():
-        patterns.sort(key=len)
-        grouped[first_use_last_i] = [(pattern, _others[pattern]) for pattern in patterns]
-    # {first_use_last_index: [(pattern, other_first_indexes), ...]}
-    g = OrderedDict()
-    for k in sorted(grouped.keys()):
-        g[k] = grouped[k]
-    return g
-
-
-
-
-def find_and_replace_repetition_edges(traversal_edges_order: List[Tuple]):
-    """
-    To avoid repeating effort, paths that are repeated should be replaced by a `load`
-    Given a list of nodes, identify repeating edges and add save/load edges in their place
-    """
-    new = traversal_edges_order.copy()
-    try:
-        patterns = get_patterns(new)  # type: OrderedDict
-    except ValueError:
-        return new
-    iadd = 0
-    for first_use_last_index, others in patterns.items():
-        for pattern, other_use_first_indices in others:
-            start, end = pattern[0][0], pattern[-1][-1]
-            store = Store([end], [], start, pattern)
-            load = Load(start, [end], store)
-            for other_use_first_index in other_use_first_indices:
-                new[other_use_first_index+iadd] = load
-                for i in range(other_use_first_index+iadd+1, other_use_first_index+len(pattern)+iadd):
-                    new[i] = None
-            new.insert(first_use_last_index+iadd, store)
-            new.insert(first_use_last_index+iadd+1, load)
-            iadd += 2
-    new = [n for n in new if n is not None]
-    i = 0
-    while i < len(new)-2:
-        if new[i] == new[i+1]:
-            del new[i+1]
-            i = -1
-        if i < len(new)-3:
-            if isinstance(new[i], Store) and isinstance(new[i+1], Load) and not isinstance(new[i+2], (Store, Load)):
-                if new[i+1].store == new[i] and new[i+2][0] in new[i+1].state and new[i+2][1] == new[i+1].reference:
-                    new[i].aggs.append(new[i+2])
-                    del new[i+1]
-                    del new[i+1]
-                    i = -1
-        i += 1
-    return new
-
-def insert_load_saves(traversal_order: List[str]):
-    traversal_edges_order = list(zip(traversal_order[:-1], traversal_order[1:]))
-    new_traversal_edges_order = find_and_replace_repetition_edges(traversal_edges_order)
-    return new_traversal_edges_order
-
-def collapse_chains_of_loading(traversal_edges_order):
-    """
-    looks for consecutive chains of Loads
-    flattens them
-    inserts the appropriate Store
-    removes unused
-    """
-    new = traversal_edges_order.copy()
-    i = 0
-    while i < len(new)-1:
-        a, b = new[i], new[i+1]
-        if isinstance(a, Load) and isinstance(b, Load):
-            if a.state[0] == b.reference:
-                load = Load(a.reference, b.state, a.store)
-                new[i] = load
-                del new[i+1]
-        i += 1
-    return [n for n in new if n is not None]
-
-
-def verify_saves(traversal_edges_order, original_traversal_order):
-    original_traversal_edges_order = list(zip(original_traversal_order[:-1], original_traversal_order[1:]))
-    unwrapped = []
-    for i, o in enumerate(traversal_edges_order):
-        if isinstance(o, Store):
-            if o.aggs:
-                for a in o.aggs:
-                    unwrapped.append(a)
-        elif isinstance(o, Load):
-            if traversal_edges_order[i-1] == o.store:
-                if not traversal_edges_order[i-1].aggs:
-                    continue # only append stuff if its not just saving/loading
-            for edge in o.store.chain:
-                unwrapped.append(edge)
-        else:
-            unwrapped.append(o)
-    previous = None
-    for i, o in enumerate(traversal_edges_order):
-        if isinstance(o, Load):
-            a = o.reference
-            b = o.state[0]
-            if o.store not in traversal_edges_order[:i]:
-                raise ParserError(f"Cannot load {o} before it is stored. This is a bug")
-        elif isinstance(o, Store):
-            a = o.state[0]
-            b = o.reference
-            s = {o.reference, *o.state} | {x for ch in list(o.chain)+o.aggs for x in ch}
-            if not all(any(n in before for before in traversal_edges_order[:i]) for n in s):
-                raise ParserError(f"Cannot store {o} before it is traversed. This is a bug")
-        else:
-            a, b = o
-        if previous is not None:
-            if previous[1] != a:
-                raise ParserError(f"Cannot traverse from {previous} to {o}")
-        previous = a, b
-    if original_traversal_edges_order != unwrapped:
-        raise ParserError(f"Saved/Loaded query does not equal the original repetitive query. This is a bug")
 
 def partial_reverse(G: HashedDiGraph, edges: List[Tuple]) -> HashedDiGraph:
     newG = generic_graph_view(G).copy()
@@ -651,8 +503,7 @@ class Slice(Statement):
 
 
 class Aggregate(Statement):
-    ids = ['agg_func', 'name', 'input']
-    default_ids = ['__class__']
+    ids = ['agg_func', 'name']
 
     def __init__(self, input, wrt_node, agg_func: str, name, graph: 'QueryGraph'):
         super().__init__([input, wrt_node], graph)
@@ -680,6 +531,8 @@ class Aggregate(Statement):
 
 
 class Return(Statement):
+    ids = ['index_variable']
+
     def __init__(self, column_variables, index_variable, graph: 'QueryGraph'):
         super().__init__(column_variables, graph)
         if index_variable is not None:
@@ -737,10 +590,10 @@ class QueryGraph:
 
     @property
     def statements(self):
-        return {d['statement']: (a, b) for a, b, d in G.G.edges(data=True) if 'statement' in d}
+        return {d['statement']: (a, b) for a, b, d in self.G.edges(data=True) if 'statement' in d}
 
     def retrieve(self, statement, function, *args, **kwargs):
-        # edge = self.statements.get(statement, None)
+        edge = self.statements.get(statement, None)
         # if edge is not None:
         #     print(edge, statement)
         #     return edge[1]

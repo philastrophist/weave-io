@@ -204,7 +204,7 @@ class AttributeQuery(BaseQuery):
     expect_one_column = True
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}({self._obj}.{self._names[0]})>'
+        return f'<{self.__class__.__name__}({self._obj}.{self._factor_name})>'
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: Query = None, index: Union['ObjectQuery', 'Query'] = None,
