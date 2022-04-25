@@ -225,10 +225,10 @@ class AttributeQuery(BaseQuery):
         e.g. sum(ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red'].snr, wrt=ob) > ob.l1stackedspectra.snr is allowed since there is a shared parent,
              we take ob.l1stackedspectra as the hierarchy level in order to continue
         """
-        if isinstance(other, BaseQuery):
-            n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
-        elif isinstance(other, ObjectQuery):
+        if isinstance(other, ObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
+        elif isinstance(other, BaseQuery):
+            n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
         else:
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True)
