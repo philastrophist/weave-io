@@ -222,6 +222,26 @@ class QueryGraph:
     def latest_shared_ancestor(self, *nodes):
         return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
 
+    def latest_object_node(self, a, b):
+        """
+        a and b have a shared ancestor
+        Scenarios:
+            a = single; b = single -> shared
+            a = single; b = plural -> choose originating object of b
+            a = plural; b = single -> choose ordering object of a
+            a = plural; b = plural -> disallowed [at least one must be aggregated back]
+        """
+        cardinal_a = next(self.backwards_G.successors(a))
+        cardinal_b = next(self.backwards_G.successors(b))
+        shared = self.latest_shared_ancestor(cardinal_a, cardinal_b)
+        if shared == cardinal_a:
+            return cardinal_b
+        elif shared == cardinal_b:
+            return cardinal_a
+        else:
+            raise ParserError(f"One of [{a}, {b}] must be a parent of the other. {shared} != [{a}, {b}] ")
+
+
     @property
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
@@ -279,18 +299,27 @@ class QueryGraph:
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwind, self)
         return add_traversal(self.G, parent_node, statement, single=single)
 
-    def fold_single(self, parent_node, wrt=None, raise_error=True):
+    def fold_to_cardinal(self, parent_node):
         """
-        Adds a fake aggregation such that a node can be used as a dependency later
+        Adds a fake aggregation such that a node can be used as a dependency later.
+        For operation chains, you follow the traversal route backwards.
+        If the node
         """
-        if not any(d.get('single', False) for a, b, d in self.G.in_edges(parent_node, data=True)):
-            if raise_error:
-                raise ParserError(f"{parent_node} is not a singular extension. Cannot single_fold")
+        try:
+            next(self.backwards_G.successors(parent_node))  # if its already aggregated then do nothing
             return parent_node
-        statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
-        if wrt is None:
-            wrt = next(self.traversal_G.predecessors(parent_node))
-        return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
+        except StopIteration:
+            path = nx.shortest_path(self.traversal_G, self.start, parent_node)[::-1]
+            for b, a in zip(path[:-1], path[1:]):
+                if not self.G.edges[(a, b)]['single']:
+                    wrt = b
+                    break
+            else:
+                raise ParserError
+            if wrt == parent_node:
+                return parent_node
+            statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
+            return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name) -> Tuple:
         """
@@ -310,9 +339,9 @@ class QueryGraph:
         This is so they can be used in match where statements
         """
         # if this is combiner operation, then we do everything with respect to the nearest ancestor
+        dependency_nodes = [self.fold_to_cardinal(d) for d in nodes]  # fold back when combining
         if wrt is None:
-            wrt = self.latest_shared_ancestor(*nodes)
-        dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in nodes]  # fold back when combining
+            wrt = self.latest_object_node(*dependency_nodes)
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
         statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
         return add_operation(self.G, wrt, dependency_nodes, statement), wrt
@@ -340,7 +369,7 @@ class QueryGraph:
 
     def add_filter(self, parent_node, predicate_node, direct=False):
         wrt = self.latest_shared_ancestor(parent_node, predicate_node)
-        predicate_node = self.fold_single(predicate_node, wrt, raise_error=False)
+        predicate_node = self.fold_to_cardinal(predicate_node, wrt, raise_error=False)
         predicate = self.G.nodes[predicate_node]['variables'][0]
         if direct:
             FilterClass = DirectFilter
@@ -353,18 +382,28 @@ class QueryGraph:
         statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
         return add_unwind(self.G, wrt_node, statement)
 
-    def collect(self, index_node, other_node, single):
+    def collect_or_not(self, index_node, other_node, want_single):
         """
         Collect `other_node` with respect to the shared common ancestor of `index_node` and `other_node`.
+        If other_node is above the index, fold back to cardinal node
+        if not, fold back to shared ancestor
         """
         shared = self.latest_shared_ancestor(index_node, other_node)
-        if single:
-            return self.fold_single(other_node, shared, raise_error=False)
-        return self.add_aggregation(other_node, index_node, 'collect')
+        try:
+            if next(self.backwards_G.successors(other_node)) == index_node:
+                if want_single:
+                    return other_node
+                else:
+                    return self.add_aggregation(other_node, shared, 'collect')
+        except StopIteration:
+            pass
+        if want_single:
+            return self.fold_to_cardinal(other_node)
+        return self.add_aggregation(other_node, shared, 'collect')  # coalesce
 
     def add_results_table(self, index_node, column_nodes, request_singles: List[bool]):
         # fold back column data into the index node
-        column_nodes = [self.collect(index_node, d, single=s) for s, d in zip(request_singles, column_nodes)] # fold back when combining
+        column_nodes = [self.collect_or_not(index_node, d, s) for d, s in zip(column_nodes, request_singles)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         try:
             vs = self.G.nodes[index_node]['variables'][0]

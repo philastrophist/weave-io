@@ -193,9 +193,7 @@ class Query(BaseQuery):
                 raise CardinalityError(f"Cannot start a query with a single object `{item}`")
             obj = self._get_object_of(item)[0]
             obj = self._data.plural_name(obj)
-            r = self._traverse_to_specific_object(obj)._select_attribute(item, True)
-            r._index_node = 'start'
-            return r
+            return self._traverse_to_specific_object(obj)._select_attribute(item, True)
         except (KeyError, ValueError):
             return self._traverse_to_specific_object(item)
 
