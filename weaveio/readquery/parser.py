@@ -1,155 +1,14 @@
-from collections import namedtuple, defaultdict, OrderedDict
-from contextlib import contextmanager
-from dataclasses import dataclass
-from functools import lru_cache, wraps
-from typing import List, Tuple, Dict, Optional
+from collections import defaultdict
+from typing import List, Tuple
 
-import graphviz
 import networkx as nx
-from networkx import dfs_tree
-from networkx.classes.graphviews import generic_graph_view
-from networkx.drawing.nx_pydot import to_pydot
 
-
-class HashedDiGraph(nx.DiGraph):
-    hash_edge_attr = 'type'
-    hash_node_attr = 'i'
-
-    @property
-    def name(self) -> str:
-        return nx.weisfeiler_lehman_graph_hash(self, edge_attr=self.hash_edge_attr, node_attr=self.hash_node_attr)
-
-    @name.setter
-    def name(self, s):
-        raise NotImplementedError
-
-    def __hash__(self) -> int:
-        return hash(self.name)
-
-    def add_node(self, node_for_adding, **attr):
-        """add_node but return existing node if it is matched, ignoring attributes"""
-        if node_for_adding in self.nodes:
-            return node_for_adding
-        return super().add_node(node_for_adding, **attr)
-
-    def add_edge(self, u_of_edge, v_of_edge, **attr):
-        """add_edge but return existing node if it is matched"""
-        if (u_of_edge, v_of_edge) in self.edges:
-            if self.edges[(u_of_edge, v_of_edge)] == attr:
-                return (u_of_edge, v_of_edge)
-        super().add_edge(u_of_edge, v_of_edge, **attr)
-
-
-def plot_graph(graph):
-    g = nx.DiGraph()
-    for n in graph.nodes:
-        g.add_node(n)
-    for e in graph.edges():
-        try:
-            label = e['statement'].make_cypher(graph.nodes)
-        except:
-            label = ''
-        g.add_edge(*e, **graph.edges[e], label=label)
-    nx.relabel_nodes(g, {n: f"{d['i']}\n{d['label']}" for n, d in graph.nodes(data=True)}, copy=False)
-    return graphviz.Source(to_pydot(g).to_string())
-
-def make_node(graph: HashedDiGraph, parent, type: str, statement: 'Statement', single, **edge_data):
-    i = graph.number_of_nodes()
-    try:
-        label = str(statement.output_variables[0])
-    except (IndexError, AttributeError):
-        label = 'node'
-    node = i
-    for a, b, d in graph.out_edges(parent, data=True):
-        if d.get('statement', None) == statement:
-            return b  # node is already there so return it
-    graph.add_node(node, label=label, i=i, variables=[])
-    if parent is not None:
-        graph.add_edge(parent, node, type=type, statement=statement, single=single, **edge_data)
-    if statement is not None:
-        statement.edge = (parent, node)
-    return node
-
-def add_start(graph: HashedDiGraph, name):
-    return make_node(graph, None, name, None, False)
-
-def add_traversal(graph: HashedDiGraph, parent, statement, single=False):
-    return make_node(graph, parent, 'traversal', statement, single)
-
-def add_filter(graph: HashedDiGraph, parent, dependencies, statement):
-    n = make_node(graph, parent, 'filter', statement, False)
-    for d in dependencies:
-        graph.add_edge(d, n, type='dep', style='dotted')
-    return n
-
-def add_aggregation(graph: HashedDiGraph, parent, wrt, statement, type='aggr', single=False):
-    n = make_node(graph, parent, type, statement, single)
-    graph.add_edge(n, wrt, type='wrt', style='dashed')
-    return n
-
-def add_operation(graph: HashedDiGraph, parent, dependencies, statement):
-    n = make_node(graph, parent, 'operation', statement, True)
-    for d in dependencies:
-        graph.add_edge(d, n, type='dep', style='dotted')
-    return n
-
-def add_return(graph: HashedDiGraph, index, columns, statement):
-    n = make_node(graph, index, 'return', statement, True)
-    for d in columns:
-        graph.add_edge(d, n, type='dep', style='dotted')
-    return n
-
-def add_unwind(graph: HashedDiGraph, parent, statement):
-    return make_node(graph, parent, 'traversal', statement, single=False)
-
-def subgraph_view(graph: HashedDiGraph, excluded_edge_type=None, only_edge_type=None,
-                  only_nodes: List = None, excluded_nodes: List = None,
-                  only_edges: List[Tuple] = None, excluded_edges: List[Tuple] = None,
-                  path_to = None,
-                  ) -> HashedDiGraph:
-    """
-    filters out edges and nodes
-    """
-    excluded_edges = set([] if excluded_edges is None else excluded_edges)
-    excluded_nodes = set([] if excluded_nodes is None else excluded_nodes)
-    if excluded_edge_type is not None:
-        excluded_edges |= {e for e in graph.edges if graph.edges[e].get('type', '') == excluded_edge_type}
-    if only_edge_type is not None:
-        excluded_edges |= {e for e in graph.edges if graph.edges[e].get('type', '') != only_edge_type}
-    if only_nodes is not None:
-        excluded_nodes |= {n for n in graph.nodes if n not in only_nodes}
-    if only_edges is not None:
-        excluded_edges |= {e for e in graph.edges if e not in only_edges}
-    r = nx.restricted_view(graph, excluded_nodes, excluded_edges)  # type: HashedDiGraph
-    if path_to:
-        r = nx.subgraph_view(r, lambda n:  nx.has_path(graph, n, path_to))
-    return r
+from weaveio.readquery.digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
+from weaveio.readquery.statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
 
 
 class ParserError(Exception):
     pass
-
-
-def get_node_i(graph, i):
-    return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
-
-def node_dependencies(graph, node):
-    dag = subgraph_view(graph, excluded_edge_type='wrt')
-    return {n for n in graph.nodes if nx.has_path(dag, n, node)} - {node}
-
-def verify_traversal(graph, traversal_order):
-    edges = list(zip(traversal_order[:-1], traversal_order[1:]))
-    if any(graph.edges[e]['type'] == 'dep' for e in edges):
-        raise ParserError(f"Some dep edges where traversed. This is a bug")
-    semi_dag = subgraph_view(graph, excluded_edge_type='dep')
-    if set(semi_dag.edges) != set(edges):
-        raise ParserError(f"Not all edges were traversed. This is a bug")
-    done = set()
-    for n in traversal_order:
-        if n not in done:
-            if not all(dep in done for dep in node_dependencies(graph, n)):
-                raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug")
-            done.add(n)
 
 
 class DeadEndException(Exception):
@@ -212,6 +71,21 @@ def traverse(graph, start=None, end=None, done=None):
                     pass  # try another option
             else:
                 raise DeadEndException  # all options exhausted, entire recursive path is bad
+
+
+def verify_traversal(graph, traversal_order):
+    edges = list(zip(traversal_order[:-1], traversal_order[1:]))
+    if any(graph.edges[e]['type'] == 'dep' for e in edges):
+        raise ParserError(f"Some dep edges where traversed. This is a bug")
+    semi_dag = subgraph_view(graph, excluded_edge_type='dep')
+    if set(semi_dag.edges) != set(edges):
+        raise ParserError(f"Not all edges were traversed. This is a bug")
+    done = set()
+    for n in traversal_order:
+        if n not in done:
+            if not all(dep in done for dep in node_dependencies(graph, n)):
+                raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug")
+            done.add(n)
 
 
 def verify(graph):
@@ -311,253 +185,6 @@ def verify(graph):
                 raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
 
 
-def partial_reverse(G: HashedDiGraph, edges: List[Tuple]) -> HashedDiGraph:
-    newG = generic_graph_view(G).copy()
-    succ = {}
-    pred = {}
-    for node in newG.nodes:
-        succs = {succ: data for succ, data in newG._succ[node].items() if (node, succ) not in edges}
-        succs.update({pred: data for pred, data in newG._pred[node].items() if (pred, node) in edges})
-        preds = {pred: data for pred, data in newG._pred[node].items() if (pred, node) not in edges}
-        preds.update({succ: data for succ, data in newG._succ[node].items() if (node, succ) in edges})
-        succ[node] = succs
-        pred[node] = preds
-    newG._succ = succ
-    newG._pred = pred
-    newG._adj = newG._succ
-    return newG
-
-
-@lru_cache()
-def get_above_state_traversal_graph(graph: HashedDiGraph):
-    """
-    traverse backwards and only follow wrt when there is a choice
-    """
-    wrt_graph = subgraph_view(graph, only_edge_type='wrt')
-    def allowed_traversal(a, b):
-        if graph.edges[(a, b)]['type'] == 'wrt':
-            return True
-        if graph.edges[(a, b)]['type'] == 'dep':
-            return False
-        if wrt_graph.out_degree(b):
-            return False  # can't traverse other edges if there is a wrt
-        return True
-    alloweds = nx.subgraph_view(graph, filter_edge=allowed_traversal)  # type: HashedDiGraph
-    return partial_reverse(alloweds, [(a, b) for a, b, data in graph.edges(data=True) if data['type'] != 'wrt'])
-
-
-class Statement:
-    default_ids = ['inputs', '__class__']
-    ids = []
-
-    def __init__(self, input_variables, graph: 'QueryGraph'):
-        self.inputs = input_variables
-        self.output_variables = []
-        self._edge = None
-        self.graph = graph
-
-    def __eq__(self, o: object) -> bool:
-        if not isinstance(o, self.__class__):
-            return False
-        return hash(self) == hash(o)
-
-    def __hash__(self):
-        ids = self.ids + self.default_ids
-        obs = (getattr(self, i) for i in ids)
-        obs = map(lambda x: tuple(x) if isinstance(x, list) else x, obs)
-        return hash(tuple(map(hash, obs)))
-
-    @property
-    def edge(self):
-        return self._edge
-
-    @edge.setter
-    def edge(self, value):
-        self._edge = value
-        self.graph.G.nodes[self._edge[1]]['variables'] = self.output_variables
-
-    def make_variable(self, name):
-        out = self.graph.get_variable_name(name)
-        self.output_variables.append(out)
-        return out
-
-    def make_cypher(self, ordering: list) -> Optional[str]:
-        raise NotImplementedError
-
-    def __repr__(self):
-        r = self.make_cypher(list(self.graph.G.nodes))
-        if r is None:
-            return 'Nothing'
-        return f'{r}'
-
-
-class StartingMatch(Statement):
-    ids = ['to_node_type']
-
-    def __init__(self, to_node_type, graph):
-        super(StartingMatch, self).__init__([], graph)
-        self.to_node_type = to_node_type
-        self.to_node = self.make_variable(to_node_type)
-
-    def make_cypher(self, ordering: list) -> Optional[str]:
-        return f"MATCH ({self.to_node}:{self.to_node_type})"
-
-
-class Traversal(Statement):
-    ids = ['to_node_type', 'path', 'from_variable', 'to_unwind']
-
-    def __init__(self, from_variable, to_node_type, path, unwind, graph):
-        super().__init__([from_variable], graph)
-        self.from_variable = from_variable
-        self.to_node_type = to_node_type
-        self.path = path
-        self.to_node = self.make_variable(to_node_type)
-        if unwind is not None:
-            self.to_unwind = unwind
-            self.unwound = self.make_variable(unwind)
-        else:
-            self.to_unwind = None
-
-    def make_cypher(self, ordering: list) -> str:
-        r = f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
-        if self.to_unwind is not None:
-            r = f'UNWIND {self.unwind} as {self.unwound} {r}'
-        return r
-
-
-class NullStatement(Statement):
-    def __init__(self, input_variables, graph: 'QueryGraph'):
-        super().__init__(input_variables, graph)
-        self.output_variables = input_variables
-
-    def make_cypher(self, ordering: list):
-        return
-
-
-class Operation(Statement):
-    ids = ['op_string', 'op_name']
-    def __init__(self, input_variable, dependency_variables, op_string, op_name, graph: 'QueryGraph'):
-        super().__init__([input_variable]+dependency_variables, graph)
-        self.op_string = op_string
-        self.op_name = op_name
-        self.op = f'({self.op_string.format(*self.inputs)})'
-        self.output_variables.append(self.op)
-
-    def make_cypher(self, ordering: list):
-        return
-
-
-class GetItem(Operation):
-    ids = ['name']
-
-    def __init__(self, input_variable, name, graph: 'QueryGraph'):
-        super().__init__(input_variable, [], f'{{}}.{name}', f'.{name}', graph)
-        self.name = name
-
-
-class AssignToVariable(Statement):
-    def __init__(self, input_variable, graph: 'QueryGraph'):
-        super().__init__([input_variable], graph)
-        self.input = input_variable
-        self.output = self.make_variable('variable')
-
-    def make_cypher(self, ordering: list) -> Optional[str]:
-        return f"WITH *, {self.input} as {self.output}"
-
-
-class Filter(Statement):
-    def __init__(self, to_filter_variable, predicate_variable, graph: 'QueryGraph'):
-        super().__init__([to_filter_variable, predicate_variable], graph)
-        self.to_filter_variable = to_filter_variable
-        self.predicate_variable = predicate_variable
-
-
-class DirectFilter(Filter):
-    def __init__(self, to_filter_variable, predicate_variable, graph: 'QueryGraph'):
-        super().__init__(to_filter_variable, predicate_variable, graph)
-        self.output = to_filter_variable
-        self.output_variables = [to_filter_variable]
-
-    def make_cypher(self, ordering: list) -> str:
-        return f"WHERE {self.predicate_variable}"
-
-
-class CopyAndFilter(Filter):
-    def __init__(self, to_filter_variable, predicate_variable, graph: 'QueryGraph'):
-        super().__init__(to_filter_variable, predicate_variable, graph)
-        self.output = self.make_variable(to_filter_variable)
-
-    def make_cypher(self, ordering: list) -> str:
-        return f"WITH *, CASE WHEN {self.predicate_variable} THEN {self.to_filter_variable} ELSE null END as {self.output}"
-
-
-class Slice(Statement):
-    ids = ['slc']
-
-    def __init__(self, input_variable, slc, graph: 'QueryGraph'):
-        super().__init__([input_variable], graph)
-        self.slc = slc
-
-    def make_cypher(self, ordering: list) -> str:
-        raise NotImplementedError
-
-
-class Aggregate(Statement):
-    ids = ['agg_func', 'name']
-
-    def __init__(self, input, wrt_node, agg_func: str, name, graph: 'QueryGraph'):
-        super().__init__([input, wrt_node], graph)
-        self.agg_func = agg_func
-        self.input = input
-        self.wrt_node = wrt_node
-        self.name = name
-        self.output = self.make_variable(name)
-
-    @property
-    def conserve(self):
-        above = self.graph.above_state(self.wrt_node)
-        to_conserve = []
-        for c in above:
-            if not self.graph.node_holds_type(c, 'operation'):
-                to_conserve.append(c)
-        return to_conserve
-
-    def make_cypher(self, ordering) -> str:
-        conserve = {i for i in self.conserve if i in ordering}
-        conserve = [self.graph.G.nodes[c]['variables'][0] for c in conserve if self.graph.G.nodes[c]['variables']]
-        variables = ', '.join(conserve) + ', ' if conserve else ''
-        agg_string = self.agg_func.format(self.input)
-        return f"WITH {variables}{agg_string} as {self.output}"
-
-
-class Return(Statement):
-    ids = ['index_variable']
-
-    def __init__(self, column_variables, index_variable, graph: 'QueryGraph'):
-        super().__init__(column_variables, graph)
-        if index_variable is not None:
-            self.inputs.append(index_variable)
-        self.index_variable = index_variable
-        self.column_variables = column_variables
-
-    def make_cypher(self, ordering: list) -> Optional[str]:
-        cols = self.column_variables if self.index_variable is None else self.column_variables[:-1]
-        cols = ', '.join(cols)
-        return f"RETURN {cols}"
-
-
-class Unwind(Statement):
-    ids = ['parameter']
-
-    def __init__(self, wrt, parameter, name, graph: 'QueryGraph'):
-        super().__init__([wrt], graph)
-        self.parameter = parameter
-        self.output = self.make_variable(name)
-
-    def make_cypher(self, ordering: list) -> Optional[str]:
-        return f"UNWIND {self.parameter} as {self.output}"
-
-
 class QueryGraph:
     """
     Rules of adding nodes/edges:
@@ -592,16 +219,28 @@ class QueryGraph:
     def statements(self):
         return {d['statement']: (a, b) for a, b, d in self.G.edges(data=True) if 'statement' in d}
 
-    def retrieve(self, statement, function, *args, **kwargs):
-        edge = self.statements.get(statement, None)
-        # if edge is not None:
-        #     print(edge, statement)
-        #     return edge[1]
-        # TODO: fix this
-        return function(*args, **kwargs)
-
     def latest_shared_ancestor(self, *nodes):
         return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
+
+    def latest_object_node(self, a, b):
+        """
+        a and b have a shared ancestor
+        Scenarios:
+            a = single; b = single -> shared
+            a = single; b = plural -> choose originating object of b
+            a = plural; b = single -> choose ordering object of a
+            a = plural; b = plural -> disallowed [at least one must be aggregated back]
+        """
+        cardinal_a = next(self.backwards_G.successors(a))
+        cardinal_b = next(self.backwards_G.successors(b))
+        shared = self.latest_shared_ancestor(cardinal_a, cardinal_b)
+        if shared == cardinal_a:
+            return cardinal_b
+        elif shared == cardinal_b:
+            return cardinal_a
+        else:
+            raise ParserError(f"One of [{a}, {b}] must be a parent of the other. {shared} != [{a}, {b}] ")
+
 
     @property
     def above_graph(self):
@@ -654,24 +293,33 @@ class QueryGraph:
     def add_start_node(self, node_type):
         parent_node = self.start
         statement = StartingMatch(node_type, self)
-        return self.retrieve(statement, add_traversal, self.G, parent_node, statement)
+        return add_traversal(self.G, parent_node, statement)
 
     def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwind=None):
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwind, self)
-        return self.retrieve(statement, add_traversal, self.G, parent_node, statement, single=single)
+        return add_traversal(self.G, parent_node, statement, single=single)
 
-    def fold_single(self, parent_node, wrt=None, raise_error=True):
+    def fold_to_cardinal(self, parent_node):
         """
-        Adds a fake aggregation such that a node can be used as a dependency later
+        Adds a fake aggregation such that a node can be used as a dependency later.
+        For operation chains, you follow the traversal route backwards.
+        If the node
         """
-        if not any(d.get('single', False) for a, b, d in self.G.in_edges(parent_node, data=True)):
-            if raise_error:
-                raise ParserError(f"{parent_node} is not a singular extension. Cannot single_fold")
+        try:
+            next(self.backwards_G.successors(parent_node))  # if its already aggregated then do nothing
             return parent_node
-        statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
-        if wrt is None:
-            wrt = next(self.traversal_G.predecessors(parent_node))
-        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt, statement, 'aggr', True)
+        except StopIteration:
+            path = nx.shortest_path(self.traversal_G, self.start, parent_node)[::-1]
+            for b, a in zip(path[:-1], path[1:]):
+                if not self.G.edges[(a, b)]['single']:
+                    wrt = b
+                    break
+            else:
+                raise ParserError
+            if wrt == parent_node:
+                return parent_node
+            statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
+            return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name) -> Tuple:
         """
@@ -682,7 +330,7 @@ class QueryGraph:
             wrt = next(self.backwards_G.successors(parent_node))
             return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
         statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self)
-        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement), parent_node
+        return add_operation(self.G, parent_node, [], statement), parent_node
 
     def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None) -> Tuple:
         """
@@ -691,27 +339,26 @@ class QueryGraph:
         This is so they can be used in match where statements
         """
         # if this is combiner operation, then we do everything with respect to the nearest ancestor
+        dependency_nodes = [self.fold_to_cardinal(d) for d in nodes]  # fold back when combining
         if wrt is None:
-            wrt = self.latest_shared_ancestor(*nodes)
-        dependency_nodes = [self.fold_single(d, wrt, raise_error=False) for d in nodes]  # fold back when combining
+            wrt = self.latest_object_node(*dependency_nodes)
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
         statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
-        return self.retrieve(statement, add_operation, self.G, wrt, dependency_nodes, statement), wrt
+        return add_operation(self.G, wrt, dependency_nodes, statement), wrt
 
     def add_getitem(self, parent_node, item):
         statement = GetItem(self.G.nodes[parent_node]['variables'][0], item, self)
-        return self.retrieve(statement, add_operation, self.G, parent_node, [], statement)
+        return add_operation(self.G, parent_node, [], statement)
 
     def assign_to_variable(self, parent_node, only_if_op=False):
         if only_if_op and any(d['type'] in ['operation', 'aggr'] for a, b, d in self.G.in_edges(parent_node, data=True)):
             stmt = AssignToVariable(self.G.nodes[parent_node]['variables'][0], self)
-            return self.retrieve(stmt, add_operation, self.G, parent_node, [], stmt)
+            return add_operation(self.G, parent_node, [], stmt)
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
-        # TODO: this does not work if there are two aggregations with the same wrt node. Need the ordering to get the correct state
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
-        return self.retrieve(statement, add_aggregation, self.G, parent_node, wrt_node, statement)
+        return add_aggregation(self.G, parent_node, wrt_node, statement)
 
     def add_aggregation(self, parent_node, wrt_node, op):
         return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op)
@@ -722,44 +369,54 @@ class QueryGraph:
 
     def add_filter(self, parent_node, predicate_node, direct=False):
         wrt = self.latest_shared_ancestor(parent_node, predicate_node)
-        predicate_node = self.fold_single(predicate_node, wrt, raise_error=False)
+        predicate_node = self.fold_to_cardinal(predicate_node, wrt, raise_error=False)
         predicate = self.G.nodes[predicate_node]['variables'][0]
         if direct:
             FilterClass = DirectFilter
         else:
             FilterClass = CopyAndFilter
         statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
-        return self.retrieve(statement, add_filter, self.G, parent_node, [predicate_node], statement)
+        return add_filter(self.G, parent_node, [predicate_node], statement)
 
     def add_unwind_parameter(self, wrt_node, to_unwind):
         statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
-        return self.retrieve(statement, add_unwind, self.G, wrt_node, statement)
+        return add_unwind(self.G, wrt_node, statement)
 
-    def collect(self, index_node, other_node, single):
+    def collect_or_not(self, index_node, other_node, want_single):
         """
         Collect `other_node` with respect to the shared common ancestor of `index_node` and `other_node`.
+        If other_node is above the index, fold back to cardinal node
+        if not, fold back to shared ancestor
         """
         shared = self.latest_shared_ancestor(index_node, other_node)
-        if single:
-            return self.fold_single(other_node, shared, raise_error=False)
-        return self.add_aggregation(other_node, index_node, 'collect')
+        try:
+            if next(self.backwards_G.successors(other_node)) == index_node:
+                if want_single:
+                    return other_node
+                else:
+                    return self.add_aggregation(other_node, shared, 'collect')
+        except StopIteration:
+            pass
+        if want_single:
+            return self.fold_to_cardinal(other_node)
+        return self.add_aggregation(other_node, shared, 'collect')  # coalesce
 
     def add_results_table(self, index_node, column_nodes, request_singles: List[bool]):
         # fold back column data into the index node
-        column_nodes = [self.collect(index_node, d, single=s) for s, d in zip(request_singles, column_nodes)] # fold back when combining
+        column_nodes = [self.collect_or_not(index_node, d, s) for d, s in zip(column_nodes, request_singles)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         try:
             vs = self.G.nodes[index_node]['variables'][0]
         except IndexError:
             vs = None
         statement = Return(deps, vs, self)
-        return self.retrieve(statement, add_return, self.G, index_node, column_nodes, statement)
+        return add_return(self.G, index_node, column_nodes, statement)
 
     def add_scalar_results_row(self, *column_nodes):
         """data already folded back"""
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         statement = Return(deps, None, self)
-        return self.retrieve(statement, add_return, self.G, self.start, column_nodes, statement)
+        return add_return(self.G, self.start, column_nodes, statement)
 
     def add_parameter(self, value, name=None):
         name = f'${name}' if name is not None else '$'
@@ -802,6 +459,10 @@ class QueryGraph:
 
 if __name__ == '__main__':
     G = QueryGraph()
+
+
+    # def get_node_i(graph, i):
+    #     return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
 
     # # # 0
     # obs = G.add_start_node('OB')  # obs = data.obs
