@@ -1,4 +1,5 @@
 from typing import Callable
+from math import floor
 
 import numpy as np
 
@@ -40,4 +41,3 @@ isnull = ismissing
 
 def isnan(item):
     return _template_operator('{0} == 1.0/0.0', 'isnan', np.isnan, item, remove_infs=False)
-

@@ -173,9 +173,12 @@ class BaseQuery:
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, remove_infs=None):
         if wrt is None:
             wrt = self._start
-        if predicate:
-            n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
-        else:
-            n = self._G.add_aggregation(self._node, wrt._node, string_op, remove_infs, expected_dtype)
+        try:
+            if predicate:
+                n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
+            else:
+                n = self._G.add_aggregation(self._node, wrt._node, string_op, remove_infs, expected_dtype)
+        except SyntaxError:
+            raise SyntaxError(f"Cannot aggregate {self} into {wrt} since they don't share a parent query")
         from .objects import AttributeQuery
         return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, single=True)

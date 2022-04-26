@@ -14,6 +14,7 @@ from typing import List, TYPE_CHECKING, Tuple, Dict, Any, Union
 
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph, ParserError
+from .utilities import is_regex
 
 if TYPE_CHECKING:
     from weaveio.data import Data
@@ -24,8 +25,13 @@ class ObjectQuery(BaseQuery):
         """
         Automatically returns all single links to this object
         """
-        single_objs = [self._data.class_hierarchies[self._data.singular_name(n)] for n in self._data.all_single_links_to_hierarchy(self._obj)]
-        factors = [f"{o.singular_name}.{f}" for o in single_objs for f in o.factors]
+        single_objs = self._data.all_single_links_to_hierarchy(self._obj)
+        factors = {f"{o.singular_name}" if o.__name__ == self._obj else f"{o.singular_name}.{f}" for o in single_objs for f in o.factors}
+        try:
+            factors.remove('id')
+            factors = ['id'] + sorted(factors)
+        except KeyError:
+            factors = sorted(factors)
         return self._make_table(*factors)
 
     def _select_all_attrs(self):
@@ -155,6 +161,8 @@ class ObjectQuery(BaseQuery):
                     return self.__getitem__(obj).__getitem__(attr)
                 try:
                     obj, single = self._normalise_object(item)
+                    if obj == self._obj:
+                        return self
                     return self._traverse_to_specific_object(obj, single)
                 except ValueError:
                     return self._previous._traverse_by_object_index(self._obj, item)
@@ -162,6 +170,8 @@ class ObjectQuery(BaseQuery):
     def __getattr__(self, item):
         return self.__getitem__(item)
 
+    def __eq__(self, other):
+        return self._select_attribute('id', True).__eq__(other)
 
 class Query(BaseQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
@@ -296,7 +306,12 @@ class AttributeQuery(BaseQuery):
         return self._basic_math_operator('/', other, switch=True)
 
     def __eq__(self, other):
-        return self._basic_math_operator('=', other)
+        op = '='
+        if isinstance(other, str):
+            if is_regex(other):
+                op = '=~'
+                other = other.strip('/')
+        return self._basic_math_operator(op, other)
 
     def __ne__(self, other):
         return self._basic_math_operator('<>', other)
