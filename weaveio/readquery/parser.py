@@ -2,9 +2,11 @@ from collections import defaultdict
 from typing import List, Tuple
 
 import networkx as nx
+from pathlib import Path
 
-from weaveio.readquery.digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
-from weaveio.readquery.statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
+from .utilities import mask_infs
+from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
+from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
 
 
 class ParserError(Exception):
@@ -15,22 +17,26 @@ class DeadEndException(Exception):
     pass
 
 
-def traverse(graph, start=None, end=None, done=None):
+def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
     """
     traverse the traversal_graph with backtracking
     """
-    dag = subgraph_view(graph, excluded_edge_type='wrt')
-    backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-    traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-    # semi_traversal = subgraph_view(graph, excluded_edge_type='dep')   # can go through wrt and traversals
-    dep_graph = subgraph_view(graph, only_edge_type='dep')
+    if views is None:
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        dep_graph = subgraph_view(graph, only_edge_type='dep')
+        views = (dag, backwards_graph, traversal_graph, dep_graph)
+    else:
+        dag, backwards_graph, traversal_graph, dep_graph = views
     if start is None or end is None:
         naive_ordering = list(nx.topological_sort(dag))
         if start is None:
             start = naive_ordering[0]  # get top node
         if end is None:
             end = naive_ordering[-1]
-    ordering = [start]
+    if ordering is None:
+        ordering = [start]
     node = start
     done = set() if done is None else done  # stores wrt edges and visited nodes
     while True:
@@ -39,7 +45,7 @@ def traverse(graph, start=None, end=None, done=None):
             raise DeadEndException
         options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
         if not options:
-            options = list(traversal_graph.successors(node))   # where to go next?
+            options = [o for o in traversal_graph.successors(node) if o not in done]   # where to go next?
         if not options:
             # if you cant go anywhere and you're not done, then this recursive path is bad
             if node != end:
@@ -54,6 +60,18 @@ def traverse(graph, start=None, end=None, done=None):
                 raise DeadEndException
             elif graph.edges[edge]['type'] == 'wrt':
                 done.add(edge)
+                # and now also reset the branch listed in `ordering[iwrt:inode] so it can be traversed again`
+                # only reset the nodes/edges which have other dep-paths outside the branch
+                most_recent_mention = len(ordering) - ordering[::-1].index(options[0]) - 1
+                this_branch = ordering[most_recent_mention:]
+                still_todo = set(graph.nodes) - done - set(this_branch)
+                restricted_dag = nx.subgraph_view(dag, lambda n: n != node)
+                # TODO: also include this edge we are on now... might be needed later somehow
+                for n in set(this_branch[:-1]):
+                    if any(nx.has_path(restricted_dag, n, a) for a in still_todo):
+                        done -= {n}
+                        for wrt_edge in backwards_graph.successors(n):
+                            done -= {wrt_edge}
             done.add(node)
             node = options[0]
             ordering.append(node)
@@ -63,7 +81,11 @@ def traverse(graph, start=None, end=None, done=None):
             for option in options:
                 try:
                     new_done = done.copy()
-                    ordering += traverse(graph, option, end, new_done)
+                    new_ordering = ordering.copy()
+                    new_ordering.append(option)
+                    new_done.add(node)
+                    new_done.add(option)
+                    ordering = traverse(graph, option, end, new_done, new_ordering, views)
                     done.update(new_done)
                     node = ordering[-1]
                     break
@@ -287,8 +309,15 @@ class QueryGraph:
         self.variable_names[name] += 1
         return new_name
 
-    def export(self, fname, result_node=None):
-        return plot_graph(self.restricted(result_node)).render(fname)
+    def export(self, fname, result_node=None, directory=None, highlight_nodes=None,
+               highlight_edges=None, ftype='pdf'):
+        return plot_graph(self.restricted(result_node), highlight_nodes, highlight_edges).\
+            render(fname, directory, format=ftype)
+
+    def export_slideshow(self, dirname, ordering, result_node=None):
+        Path(dirname).mkdir(parents=True, exist_ok=True)
+        for i, (a, b) in enumerate(zip(ordering[:-1], ordering[1:])):
+            self.export(f'{i}', result_node, dirname, [b], [(a, b)], ftype='png')
 
     def add_start_node(self, node_type):
         parent_node = self.start
@@ -356,22 +385,27 @@ class QueryGraph:
             return add_operation(self.G, parent_node, [], stmt)
         return parent_node
 
-    def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
+    def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name,
+                                remove_infs=None, expected_dtype=None):
+        if expected_dtype is not None:
+            op_format_string = op_format_string.replace('{0}', f'to{expected_dtype}({{0}})')
+        if remove_infs:
+            op_format_string = op_format_string.format(mask_infs('{0}'))
         if wrt_node not in nx.ancestors(self.dag_G, parent_node):
             raise SyntaxError(f"{parent_node} cannot be aggregated to {wrt_node} ({wrt_node} is not an ancestor of {parent_node})")
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
         return add_aggregation(self.G, parent_node, wrt_node, statement)
 
-    def add_aggregation(self, parent_node, wrt_node, op):
-        return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op)
+    def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None):
+        return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op,
+                                            remove_infs, expected_dtype)
 
     def add_predicate_aggregation(self, parent, wrt_node, op_name):
         op_format_string = f'{op_name}(x in collect({{0}}) where toBoolean(x))'
         return self.add_generic_aggregation(parent, wrt_node, op_format_string, op_name)
 
     def add_filter(self, parent_node, predicate_node, direct=False):
-        wrt = self.latest_shared_ancestor(parent_node, predicate_node)
-        predicate_node = self.fold_to_cardinal(predicate_node, wrt, raise_error=False)
+        predicate_node = self.fold_to_cardinal(predicate_node)  # predicates can only come from before obvs...
         predicate = self.G.nodes[predicate_node]['variables'][0]
         if direct:
             FilterClass = DirectFilter
@@ -403,7 +437,7 @@ class QueryGraph:
             return self.fold_to_cardinal(other_node)
         return self.add_aggregation(other_node, shared, 'collect')  # coalesce
 
-    def add_results_table(self, index_node, column_nodes, request_singles: List[bool]):
+    def add_results_table(self, index_node, column_nodes, request_singles: List[bool], dropna: List):
         # fold back column data into the index node
         column_nodes = [self.collect_or_not(index_node, d, s) for d, s in zip(column_nodes, request_singles)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
@@ -411,13 +445,17 @@ class QueryGraph:
             vs = self.G.nodes[index_node]['variables'][0]
         except IndexError:
             vs = None
-        statement = Return(deps, vs, self)
+        try:
+            dropna = self.G.nodes[index_node]['variables'][0]
+        except IndexError:
+            dropna = None
+        statement = Return(deps, vs, dropna, self)
         return add_return(self.G, index_node, column_nodes, statement)
 
     def add_scalar_results_row(self, *column_nodes):
         """data already folded back"""
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
-        statement = Return(deps, None, self)
+        statement = Return(deps, None, [], self)
         return add_return(self.G, self.start, column_nodes, statement)
 
     def add_parameter(self, value, name=None):
@@ -456,162 +494,3 @@ class QueryGraph:
         end_time = time.perf_counter()
         timed = end_time - start_time
         return statements
-
-
-
-if __name__ == '__main__':
-    G = QueryGraph()
-
-
-    # def get_node_i(graph, i):
-    #     return next(n for n in graph.nodes if graph.nodes[n].get('i', -1) == i)
-
-    # # # 0
-    # obs = G.add_start_node('OB')  # obs = data.obs
-    # runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
-    # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum') # runs.spectra
-    # result = G.add_results(spectra, G.add_getitem(spectra, 'snr'))
-
-    # # 1
-    # obs = G.add_start_node('OB')
-    # runs = G.add_traversal(obs, '-->', 'Run')  # runs = obs.runs
-    # spectra = G.add_traversal(runs, '-->', 'L1SingleSpectrum')  # runs.spectra
-    # l2 = G.add_traversal(runs, '-->', 'L2')  # runs.l2
-    # runid = G.add_getitem(runs, 'runid')
-    # runid2 = G.add_scalar_operation(runid, '{0} * 2 > 0', '2>0')  # runs.runid * 2 > 0
-    # agg = G.add_predicate_aggregation(runid2, obs, 'all')
-    # spectra = G.add_filter(spectra, agg)
-    # snr_above0 = G.add_scalar_operation(G.add_getitem(spectra, 'snr'), '{0}>0', '>')
-    # agg_spectra = G.add_predicate_aggregation(snr_above0, obs, 'any')
-    # result = G.add_filter(l2, agg_spectra)  # l2[any(ob.runs.spectra[all(ob.runs.runid*2 > 0)].snr > 0)]
-
-    # 2
-    obs = G.add_start_node('OB')  # obs = data.obs
-    runs = G.add_traversal(obs, '-->(:Exposure)-->', 'Run')  # runs = obs.runs
-    camera = G.add_getitem(G.add_traversal(runs, '<--', 'ArmConfig', single=True), 'camera')
-    is_red, _ = G.add_scalar_operation(camera, '{0} = "red"', '==')
-    red_runs = G.add_filter(runs, is_red)
-    snr = G.add_getitem(red_runs, 'snr')
-    red_snr = G.add_aggregation(snr, obs, 'avg')  #  'mean(run.camera==red, wrt=obs)'
-    spec = G.add_traversal(runs, '-->(:Observation)-->(:RawSpectrum)-->', 'L1SingleSpectrum')
-    snr = G.add_getitem(spec, 'snr')
-    compare, _ = G.add_combining_operation('{0} > {1}', '>', snr, red_snr)
-    spec = G.add_filter(spec, compare)
-    l2 = G.add_traversal(spec, '-->', 'L2')
-    snr = G.add_getitem(l2, 'snr')
-    result = G.add_results(l2, snr)
-
-    # # 3
-    # # obs = data.obs
-    # # x = all(obs.l2s[obs.l2s.ha > 2].hb > 0, wrt=obs)
-    # # y = mean(obs.runs[all(obs.runs.l1s[obs.runs.l1s.camera == 'red'].snr > 0, wrt=runs)].l1s.snr, wrt=obs)
-    # # z = all(obs.targets.ra > 0, wrt=obs)
-    # # result = obs[x & y & z]
-    # obs = G.add_start_node('OB')  # obs = data.obs
-    # l2s = G.add_traversal(obs, '-->', 'l2')  # l2s = obs.l2s
-    # has = G.add_traversal(l2s, '-->', 'ha', single=True)  # l2s = obs.l2s.ha
-    # above_2 = G.add_scalar_operation(has, '{0} > 2', '>')  # l2s > 2
-    # hb = G.add_traversal(G.add_filter(l2s, above_2), '-->', 'hb', single=True)
-    # hb_above_0 = G.add_scalar_operation(hb, '{0} > 0', '>0')
-    # x = G.add_predicate_aggregation(hb_above_0, obs, 'all')
-    #
-    # runs = G.add_traversal(obs, '-->', 'runs')
-    # l1s = G.add_traversal(runs, '-->', 'l1')
-    # camera = G.add_traversal(l1s, '-->', 'camera')
-    # is_red = G.add_scalar_operation(camera, '{0}= "red"', '=red')
-    # red_l1s = G.add_filter(l1s, is_red)
-    # red_snrs = G.add_scalar_operation(G.add_getitem(red_l1s, 'snr'), '{0}> 0', '>0')
-    # all_red_snrs = G.add_predicate_aggregation(red_snrs, runs, 'all')
-    # red_runs = G.add_filter(runs, all_red_snrs)
-    # red_l1s = G.add_traversal(red_runs, '-->', 'l1')
-    # y = G.add_scalar_operation(G.add_aggregation(G.add_getitem(red_l1s, 'snr'), obs, 'avg'), '{0}>1', '>1')
-    #
-    # targets = G.add_traversal(obs, '-->', 'target')
-    # z = G.add_predicate_aggregation(G.add_scalar_operation(G.add_getitem(targets, 'ra'), '{0}>0', '>0'), obs, 'all')
-    #
-    # # TODO: need to somehow make this happen in the syntax
-    # x_and_y = G.add_combining_operation('{0} and {1}', '&', x, y)
-    # x_and_y_and_z = G.add_combining_operation('{0} and {1}', '&', x_and_y, z)
-    # result = G.add_filter(obs, x_and_y_and_z)
-
-    #
-    # # 4
-    # obs = G.add_start_node('OB')  # obs
-    # exps = G.add_traversal(obs, '-->', 'Exposure')  # obs.exps
-    # runs = G.add_traversal(exps, '-->', 'Run')  # obs.exps.runs
-    # l1s = G.add_traversal(runs, '-->', 'L1')  # obs.exps.runs.l1s
-    # snr = G.add_getitem(l1s, 'snr')  # obs.exps.runs.l1s.snr
-    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
-    #
-    # exp_above_1 = G.add_scalar_operation(avg_snr_per_exp, '{0} > 1', '>1')  # x > 1
-    # run_above_1 = G.add_scalar_operation(avg_snr_per_run, '{0} > 1', '> 1')  # y > 1
-    # l1_above_1 = G.add_scalar_operation(snr, '{0} > 1', '> 1')  # obs.exps.runs.l1s.snr > 1
-    #
-    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    # l1_and_run = G.add_combining_operation('{0} and {1}', '&', l1_above_1, run_above_1)
-    # condition = G.add_combining_operation('{0} and {1}', '&', l1_and_run, exp_above_1)
-    # l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
-    # result = G.add_traversal(l1s, '-->', 'L2')
-
-    #
-    # obs = G.add_start_node('OB')  # obs
-    # exps = G.add_traversal(obs, '-->', 'Exposure')  # obs.exps
-    # runs = G.add_traversal(exps, '-->', 'Run')  # obs.exps.runs
-    # l1s = G.add_traversal(runs, '-->', 'L1')  # obs.exps.runs.l1s
-    # snr = G.add_getitem(l1s, 'snr')  # obs.exps.runs.l1s.snr
-    # avg_snr_per_exp = G.add_aggregation(snr, exps, 'avg')  # x = mean(obs.exps.runs.l1s.snr, wrt=exps)
-    # avg_snr_per_run = G.add_aggregation(snr, runs, 'avg')  # y = mean(obs.exps.runs.l1s.snr, wrt=runs)
-    #
-    # exp_above_1 = G.add_scalar_operation(avg_snr_per_exp, '{0} > 1', '>1')  # x > 1
-    # run_above_1 = G.add_scalar_operation(avg_snr_per_run, '{0} > 1', '> 1')  # y > 1
-    # l1_above_1 = G.add_scalar_operation(snr, '{0} > 1', '> 1')  # obs.exps.runs.l1s.snr > 1
-    #
-    # # cond = (x > 1) & (y > 1) & (obs.exps.runs.l1s.snr > 1)
-    # l1_and_run = G.add_combining_operation('{0} and {1}', '&', l1_above_1, run_above_1)
-    # condition = G.add_combining_operation('{0} and {1}', '&', l1_and_run, exp_above_1)
-    # l1s = G.add_filter(l1s, condition)  # obs.exps.runs.l1s[cond]
-    # result = G.add_traversal(l1s, '-->', 'L2')
-
-
-    # used to use networkx 2.4
-    G.export('parser', result)
-    dag = subgraph_view(G.G, excluded_edge_type='wrt')
-    backwards = subgraph_view(G.G, only_edge_type='wrt')
-    traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-    dep_graph = subgraph_view(G.G, only_edge_type='dep')
-    plot_graph(traversal_graph).render('parser-traversal')
-
-
-    ordering = []
-    import time
-    start_time = time.perf_counter()
-    for n in G.traverse_query(result):
-        end_time = time.perf_counter()
-        print(G.G.nodes[n]["i"])
-        ordering.append(n)
-    verify_traversal(G.G, ordering)
-    print(end_time - start_time)
-
-    # ordering = [1, 2, 3, 4, 1, 2, 3, 4, 5, 3, 4, 6, 7]
-    # ordering = [G.G.nodes[o]['i'] for o in ordering]
-    # edge_ordering = insert_load_saves(ordering)
-    # for o in edge_ordering:
-    #     if isinstance(o, Store):
-    #         print(f"Store: {o.state} -> {o.reference}")
-    #     elif isinstance(o, Load):
-    #         print(f"Load: {o.reference} --> {o.state}")
-    #     else:
-    #         print(f"Trav: {o[0]} -> {o[1]}")
-    # verify_saves(edge_ordering, ordering)
-    # edge_ordering = collapse_chains_of_loading(edge_ordering)
-    for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
-        try:
-            statement = G.G.edges[e]['statement'].make_cypher(ordering[:i+1])
-            if statement is not None:
-                print(statement)
-        except KeyError:
-            pass
-
-
-    # TODO: Single load/save  and then unroll recursively

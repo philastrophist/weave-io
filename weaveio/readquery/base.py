@@ -1,3 +1,6 @@
+import logging
+import time
+from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
 from .parser import QueryGraph
@@ -15,6 +18,13 @@ class CardinalityError(Exception):
     pass
 
 
+@contextmanager
+def logtime(name):
+    start = time.perf_counter()
+    yield
+    logging.info(f"{name} took {time.perf_counter() - start: .3f} seconds")
+
+
 class BaseQuery:
     one_row = False
     one_column = False
@@ -22,11 +32,19 @@ class BaseQuery:
     def __repr__(self):
         return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+    def _precompile(self) -> 'BaseQuery':
+        return self
+
+    def _to_cypher(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
         return self._G.cypher_lines(self._node), self._G.parameters, self._names
+
+    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+        with logtime('compiling'):
+            return self._precompile()._to_cypher()
+
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node = None,
@@ -152,12 +170,12 @@ class BaseQuery:
         n = self._G.add_filter(self._node, mask._node, direct=False)
         return self.__class__._spawn(self, n, single=self._single)
 
-    def _aggregate(self, wrt, string_op, predicate=False):
+    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, remove_infs=None):
         if wrt is None:
             wrt = self._start
         if predicate:
             n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
         else:
-            n = self._G.add_aggregation(self._node, wrt._node, string_op)
+            n = self._G.add_aggregation(self._node, wrt._node, string_op, remove_infs, expected_dtype)
         from .objects import AttributeQuery
         return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, single=True)

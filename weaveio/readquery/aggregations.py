@@ -17,25 +17,23 @@ python_sum = sum
 
 
 def _template_aggregator(string_op, predicate, python_func: Callable, item: BaseQuery, wrt: BaseQuery = None,
-                         remove_infs: bool = True, args=None, kwargs=None):
+                         remove_infs: bool = True, expected_dtype: str = None, args=None, kwargs=None):
     try:
-        if remove_infs:
-            string_op = string_op.format(mask_infs('{0}'))
-        return item._aggregate(wrt, string_op, predicate)
+        return item._aggregate(wrt, string_op, predicate, expected_dtype, remove_infs)
     except AttributeError:
         return python_func(item, *args, **kwargs)
 
 
 def sum(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('sum', False, python_sum, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('sum', False, python_sum, item, wrt, expected_dtype='float', args=args, kwargs=kwargs)
 
 
 def max(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('max', False, python_max, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('max', False, python_max, item, wrt, expected_dtype='float', args=args, kwargs=kwargs)
 
 
 def min(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('min', False, python_min, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('min', False, python_min, item, wrt, expected_dtype='float', args=args, kwargs=kwargs)
 
 
 def count(item, wrt=None, *args, **kwargs):
@@ -43,11 +41,11 @@ def count(item, wrt=None, *args, **kwargs):
 
 
 def std(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('stDev', False, np.std, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('stDev', False, np.std, item, wrt, expected_dtype='float', args=args, kwargs=kwargs)
 
 
 def mean(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('avg', False, np.mean, item, wrt, args=args, kwargs=kwargs)
+    return _template_aggregator('avg', False, np.mean, item, wrt, expected_dtype='float', args=args, kwargs=kwargs)
 
 #predicates
 

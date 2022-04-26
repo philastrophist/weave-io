@@ -190,18 +190,21 @@ class Aggregate(Statement):
 
 
 class Return(Statement):
-    ids = ['index_variable']
+    ids = ['index_variable', 'dropna']
 
-    def __init__(self, column_variables, index_variable, graph: 'QueryGraph'):
+    def __init__(self, column_variables, index_variable, dropna, graph: 'QueryGraph'):
         super().__init__(column_variables, graph)
         if index_variable is not None:
             self.inputs.append(index_variable)
         self.index_variable = index_variable
         self.column_variables = column_variables
+        self.dropna = dropna
 
     def make_cypher(self, ordering: list) -> Optional[str]:
         cols = self.column_variables if self.index_variable is None else self.column_variables[:-1]
         cols = ', '.join(cols)
+        if self.dropna is not None:
+            return f"WITH * WHERE {self.dropna} is not null RETURN {cols}"
         return f"RETURN {cols}"
 
 

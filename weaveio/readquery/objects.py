@@ -20,13 +20,13 @@ if TYPE_CHECKING:
 
 
 class ObjectQuery(BaseQuery):
-    def _compile(self) -> Tuple[List[str], Dict[str, Any]]:
+    def _precompile(self) -> 'TableQuery':
         """
         Automatically returns all single links to this object
         """
         single_objs = [self._data.class_hierarchies[self._data.singular_name(n)] for n in self._data.all_single_links_to_hierarchy(self._obj)]
         factors = [f"{o.singular_name}.{f}" for o in single_objs for f in o.factors]
-        return self._make_table(*factors)._compile()
+        return self._make_table(*factors)
 
     def _select_all_attrs(self):
         h = self._data.class_hierarchies[self._data.class_name(self._obj)]
@@ -102,7 +102,8 @@ class ObjectQuery(BaseQuery):
         """
         attrs = [item if isinstance(item, AttributeQuery) else self.__getitem__(item) for item in items]
         names = [item._factor_name if isinstance(item, AttributeQuery) else item for item in items]
-        n = self._G.add_results_table(self._node, [a._node for a in attrs], [a._single for a in attrs])
+        n = self._G.add_results_table(self._node, [a._node for a in attrs],
+                                      [a._single for a in attrs], dropna=[self._node])
         return TableQuery._spawn(self, n, names=names)
 
     def _traverse_to_relative_object(self):
@@ -211,7 +212,7 @@ class AttributeQuery(BaseQuery):
         super().__init__(data, G, node, previous, obj, start, index_node, single, [factor_name], *args, **kwargs)
         self._factor_name = factor_name
 
-    def _perform_arithmetic(self, op_string, op_name, other=None):
+    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None):
         """
         arithmetics
         [+, -, /, *, >, <, ==, !=, <=, >=]
@@ -226,7 +227,10 @@ class AttributeQuery(BaseQuery):
         """
         if isinstance(other, ObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
-        elif isinstance(other, BaseQuery):
+        if expected_dtype is not None:
+            op_string = op_string.replace('{0}', f'to{expected_dtype}({{0}})')
+            op_string = op_string.replace('{1}', f'to{expected_dtype}({{1}})')  # both arguments
+        if isinstance(other, BaseQuery):
             try:
                 n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
             except ParserError:
@@ -324,13 +328,13 @@ class AttributeQuery(BaseQuery):
     def __abs__(self):
         return self._basic_scalar_function('abs')
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+    def _precompile(self) -> 'TableQuery':
         if self._index_node == 'start':
             index = self._G.start
         else:
             index = self._index_node
-        r = self._G.add_results_table(index, [self._node], [self._single])
-        return self._G.cypher_lines(r), self._G.parameters, self._names
+        r = self._G.add_results_table(index, [self._node], [self._single], dropna=[self._node])
+        return AttributeQuery._spawn(self, r, self._obj, index, self._single, factor_name=self._factor_name)
 
 
 class TableQuery(BaseQuery):
