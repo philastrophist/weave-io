@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import List, Tuple
 
 import networkx as nx
+from pathlib import Path
 
 from weaveio.readquery.digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
 from weaveio.readquery.statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
@@ -287,8 +288,15 @@ class QueryGraph:
         self.variable_names[name] += 1
         return new_name
 
-    def export(self, fname, result_node=None):
-        return plot_graph(self.restricted(result_node)).render(fname)
+    def export(self, fname, result_node=None, directory=None, highlight_nodes=None,
+               highlight_edges=None, ftype='pdf'):
+        return plot_graph(self.restricted(result_node), highlight_nodes, highlight_edges).\
+            render(fname, directory, format=ftype)
+
+    def export_slideshow(self, dirname, ordering, result_node=None):
+        Path(dirname).mkdir(parents=True, exist_ok=True)
+        for i, (a, b) in enumerate(zip(ordering[:-1], ordering[1:])):
+            self.export(f'{i}', result_node, dirname, [b], [(a, b)], ftype='png')
 
     def add_start_node(self, node_type):
         parent_node = self.start

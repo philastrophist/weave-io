@@ -36,16 +36,22 @@ class HashedDiGraph(nx.DiGraph):
         super().add_edge(u_of_edge, v_of_edge, **attr)
 
 
-def plot_graph(graph):
+def plot_graph(graph, highlight_nodes=None, highlight_edges=None):
+    highlight_nodes = [] if highlight_nodes is None else highlight_nodes
+    highlight_edges = [] if highlight_edges is None else highlight_edges
     g = nx.DiGraph()
     for n in graph.nodes:
         g.add_node(n)
+        if n in highlight_nodes:
+            g.nodes[n]['style'] = 'filled'
     for e in graph.edges():
         try:
             label = e['statement'].make_cypher(graph.nodes)
         except:
             label = ''
         g.add_edge(*e, **graph.edges[e], label=label)
+        if e in highlight_edges:
+            g.edges[e]['arrowsize'] = 2
     nx.relabel_nodes(g, {n: f"{d['i']}\n{d['label']}" for n, d in graph.nodes(data=True)}, copy=False)
     return graphviz.Source(to_pydot(g).to_string())
 
