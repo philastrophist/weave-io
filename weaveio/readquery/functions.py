@@ -36,6 +36,8 @@ def sqrt(item, *args, **kwargs):
 
 def ismissing(item):
     return _template_operator('{0} is null' ,'isnull', lambda x: x is None, item, remove_infs=False)
+isnull = ismissing
 
 def isnan(item):
     return _template_operator('{0} == 1.0/0.0', 'isnan', np.isnan, item, remove_infs=False)
+

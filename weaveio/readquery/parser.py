@@ -4,8 +4,9 @@ from typing import List, Tuple
 import networkx as nx
 from pathlib import Path
 
-from weaveio.readquery.digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
-from weaveio.readquery.statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
+from .utilities import mask_infs
+from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
+from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
 
 
 class ParserError(Exception):
@@ -384,14 +385,20 @@ class QueryGraph:
             return add_operation(self.G, parent_node, [], stmt)
         return parent_node
 
-    def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name):
+    def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name,
+                                remove_infs=None, expected_dtype=None):
+        if expected_dtype is not None:
+            op_format_string = op_format_string.replace('{0}', f'to{expected_dtype}({{0}})')
+        if remove_infs:
+            op_format_string = op_format_string.format(mask_infs('{0}'))
         if wrt_node not in nx.ancestors(self.dag_G, parent_node):
             raise SyntaxError(f"{parent_node} cannot be aggregated to {wrt_node} ({wrt_node} is not an ancestor of {parent_node})")
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
         return add_aggregation(self.G, parent_node, wrt_node, statement)
 
-    def add_aggregation(self, parent_node, wrt_node, op):
-        return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op)
+    def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None):
+        return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op,
+                                            remove_infs, expected_dtype)
 
     def add_predicate_aggregation(self, parent, wrt_node, op_name):
         op_format_string = f'{op_name}(x in collect({{0}}) where toBoolean(x))'
@@ -430,7 +437,7 @@ class QueryGraph:
             return self.fold_to_cardinal(other_node)
         return self.add_aggregation(other_node, shared, 'collect')  # coalesce
 
-    def add_results_table(self, index_node, column_nodes, request_singles: List[bool]):
+    def add_results_table(self, index_node, column_nodes, request_singles: List[bool], dropna: List):
         # fold back column data into the index node
         column_nodes = [self.collect_or_not(index_node, d, s) for d, s in zip(column_nodes, request_singles)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
@@ -438,13 +445,17 @@ class QueryGraph:
             vs = self.G.nodes[index_node]['variables'][0]
         except IndexError:
             vs = None
-        statement = Return(deps, vs, self)
+        try:
+            dropna = self.G.nodes[index_node]['variables'][0]
+        except IndexError:
+            dropna = None
+        statement = Return(deps, vs, dropna, self)
         return add_return(self.G, index_node, column_nodes, statement)
 
     def add_scalar_results_row(self, *column_nodes):
         """data already folded back"""
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
-        statement = Return(deps, None, self)
+        statement = Return(deps, None, [], self)
         return add_return(self.G, self.start, column_nodes, statement)
 
     def add_parameter(self, value, name=None):

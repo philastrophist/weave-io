@@ -175,7 +175,10 @@ def make_arrows(path, forward=True, type=None):
         arrow = f"-{arrow}->"
     else:
         arrow = f"<-{arrow}-"
-    return "{}{}{}".format(arrow, arrow.join(map('(:{})'.format, [p.__name__ for p in path[1:-1]])), arrow)
+    middle = arrow.join(map('(:{})'.format, [p.__name__ for p in path[1:-1]]))
+    if middle:
+        return "{}{}{}".format(arrow, middle, arrow)
+    return arrow
 
 def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular) -> Tuple[str, bool]:
     """
