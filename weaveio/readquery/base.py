@@ -155,7 +155,7 @@ class BaseQuery:
         e.g. `ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red']` gives only the red stacks
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
-        n = self._G.add_filter(self._node, mask._node, direct=False)
+        n = self._G.add_filter(self._node, mask._node, direct=True)
         return self.__class__._spawn(self, n, single=self._single)
 
     def _aggregate(self, wrt, string_op, predicate=False):

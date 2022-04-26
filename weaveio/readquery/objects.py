@@ -329,7 +329,8 @@ class AttributeQuery(BaseQuery):
             index = self._G.start
         else:
             index = self._index_node
-        return self._G.add_results_table(index, [self._node], [self._single])
+        r = self._G.add_results_table(index, [self._node], [self._single])
+        return TableQuery._spawn(self, r, self._obj, index, self._single)
 
 
 class TableQuery(BaseQuery):

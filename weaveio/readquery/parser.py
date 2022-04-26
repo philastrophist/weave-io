@@ -16,22 +16,26 @@ class DeadEndException(Exception):
     pass
 
 
-def traverse(graph, start=None, end=None, done=None):
+def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
     """
     traverse the traversal_graph with backtracking
     """
-    dag = subgraph_view(graph, excluded_edge_type='wrt')
-    backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-    traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-    # semi_traversal = subgraph_view(graph, excluded_edge_type='dep')   # can go through wrt and traversals
-    dep_graph = subgraph_view(graph, only_edge_type='dep')
+    if views is None:
+        dag = subgraph_view(graph, excluded_edge_type='wrt')
+        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
+        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
+        dep_graph = subgraph_view(graph, only_edge_type='dep')
+        views = (dag, backwards_graph, traversal_graph, dep_graph)
+    else:
+        dag, backwards_graph, traversal_graph, dep_graph = views
     if start is None or end is None:
         naive_ordering = list(nx.topological_sort(dag))
         if start is None:
             start = naive_ordering[0]  # get top node
         if end is None:
             end = naive_ordering[-1]
-    ordering = [start]
+    if ordering is None:
+        ordering = [start]
     node = start
     done = set() if done is None else done  # stores wrt edges and visited nodes
     while True:
@@ -40,7 +44,7 @@ def traverse(graph, start=None, end=None, done=None):
             raise DeadEndException
         options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
         if not options:
-            options = list(traversal_graph.successors(node))   # where to go next?
+            options = [o for o in traversal_graph.successors(node) if o not in done]   # where to go next?
         if not options:
             # if you cant go anywhere and you're not done, then this recursive path is bad
             if node != end:
@@ -55,6 +59,18 @@ def traverse(graph, start=None, end=None, done=None):
                 raise DeadEndException
             elif graph.edges[edge]['type'] == 'wrt':
                 done.add(edge)
+                # and now also reset the branch listed in `ordering[iwrt:inode] so it can be traversed again`
+                # only reset the nodes/edges which have other dep-paths outside the branch
+                most_recent_mention = len(ordering) - ordering[::-1].index(options[0]) - 1
+                this_branch = ordering[most_recent_mention:]
+                still_todo = set(graph.nodes) - done - set(this_branch)
+                restricted_dag = nx.subgraph_view(dag, lambda n: n != node)
+                # TODO: also include this edge we are on now... might be needed later somehow
+                for n in set(this_branch[:-1]):
+                    if any(nx.has_path(restricted_dag, n, a) for a in still_todo):
+                        done -= {n}
+                        for wrt_edge in backwards_graph.successors(n):
+                            done -= {wrt_edge}
             done.add(node)
             node = options[0]
             ordering.append(node)
@@ -64,7 +80,11 @@ def traverse(graph, start=None, end=None, done=None):
             for option in options:
                 try:
                     new_done = done.copy()
-                    ordering += traverse(graph, option, end, new_done)
+                    new_ordering = ordering.copy()
+                    new_ordering.append(option)
+                    new_done.add(node)
+                    new_done.add(option)
+                    ordering = traverse(graph, option, end, new_done, new_ordering, views)
                     done.update(new_done)
                     node = ordering[-1]
                     break
