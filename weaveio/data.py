@@ -180,7 +180,7 @@ def make_arrows(path, forward=True, type=None):
         return "{}{}{}".format(arrow, middle, arrow)
     return arrow
 
-def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular) -> Tuple[str, bool]:
+def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular, relation_idname=None) -> Tuple[str, bool]:
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint

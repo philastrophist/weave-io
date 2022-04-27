@@ -126,6 +126,7 @@ class ObjectQuery(GenericObjectQuery):
         traversal, expands
         traverses by a specifically labelled relation instead of a name of an object
         e.g. l1stackedspectra.adjunct_spectrum will get the spectrum in the other arm
+        CYPHER: (from:From)-[r]->(to:To) WHERE r.id = ...
         """
         raise NotImplementedError
 
