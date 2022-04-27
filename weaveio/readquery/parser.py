@@ -71,7 +71,7 @@ def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
                     if any(nx.has_path(restricted_dag, n, a) for a in still_todo):
                         done -= {n}
                         for wrt_edge in backwards_graph.successors(n):
-                            done -= {wrt_edge}
+                            done -= {(n, wrt_edge)}
             done.add(node)
             node = options[0]
             ordering.append(node)
@@ -263,7 +263,6 @@ class QueryGraph:
         else:
             raise ParserError(f"One of [{a}, {b}] must be a parent of the other. {shared} != [{a}, {b}] ")
 
-
     @property
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
@@ -406,6 +405,8 @@ class QueryGraph:
 
     def add_filter(self, parent_node, predicate_node, direct=False):
         predicate_node = self.fold_to_cardinal(predicate_node)  # predicates can only come from before obvs...
+        if not nx.has_path(self.G, predicate_node, parent_node):
+            raise SyntaxError(f"{parent_node} cannot be filtered by {predicate_node} since there is no direct path between them")
         predicate = self.G.nodes[predicate_node]['variables'][0]
         if direct:
             FilterClass = DirectFilter
