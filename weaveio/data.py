@@ -546,7 +546,7 @@ class Data:
         if isinstance(name, type):
             name = name.__name__
         pattern = name.lower().split('.')
-        return '.'.join([make_singular(p) for p in pattern])
+        return '.'.join([make_singular(p) if self.is_plural_name(p) else p for p in pattern])
 
     def is_valid_name(self, name):
         if isinstance(name, str):

@@ -142,7 +142,7 @@ def verify(graph):
     if not ends:
         raise ParserError("An output node is required")
     backwards = subgraph_view(graph, only_edge_type='wrt')
-    without_agg = subgraph_view(dag, excluded_edge_type='aggr')
+    without_agg = subgraph_view(traversal, excluded_edge_type='aggr')
     main_paths = nx.all_simple_paths(without_agg, starts[0], ends[0])
     try:
         next(main_paths)
@@ -188,8 +188,8 @@ def verify(graph):
         if ntraversals > 2:
             raise ParserError(f"Can only have one traversal input: {node}")
         elif ntraversals:
-            if len(inputs) > 1:
-                raise ParserError(f"Can only traverse with one input: {node}")
+            if len(inputs) > 2:
+                raise ParserError(f"Can only traverse with one input or one input and one unwind: {node}")
         if nops > 1:
             raise ParserError(f"Can only have one op input: {node}")
         elif nops:
@@ -201,10 +201,21 @@ def verify(graph):
             if ntraversals + naggs + nfilters > 1:
                 raise ParserError(f"Can only have dependencies as input for an operation: {node}")
         if ndeps:
-            if ntraversals or naggs:
+            if naggs:
                 raise ParserError(f"A traversal/aggregation cannot take any other inputs: {node}")
-            if not (nops ^ nfilters ^ nreturns):
-                raise ParserError(f"A dependency link necessitates an operation or filter: {node}")
+            if not (nops ^ nfilters ^ nreturns ^ ntraversals):
+                raise ParserError(f"A dependency link necessitates an operation filter: {node}")
+
+
+def merge_attribute_forks(graph):
+    """
+    Given a node in the graph find simple (no external deps) successor branches which wrt back to the same node.
+    Merge these parallel branches into one serial branch
+    """
+
+
+def simplify_graph(graph):
+    return graph
 
 
 class QueryGraph:
@@ -253,8 +264,14 @@ class QueryGraph:
             a = plural; b = single -> choose ordering object of a
             a = plural; b = plural -> disallowed [at least one must be aggregated back]
         """
-        cardinal_a = next(self.backwards_G.successors(a))
-        cardinal_b = next(self.backwards_G.successors(b))
+        try:
+            cardinal_a = next(self.backwards_G.successors(a))
+        except StopIteration:
+            cardinal_a = a
+        try:
+            cardinal_b = next(self.backwards_G.successors(b))
+        except StopIteration:
+            cardinal_b = b
         shared = self.latest_shared_ancestor(cardinal_a, cardinal_b)
         if shared == cardinal_a:
             return cardinal_b
@@ -318,14 +335,14 @@ class QueryGraph:
         for i, (a, b) in enumerate(zip(ordering[:-1], ordering[1:])):
             self.export(f'{i}', result_node, dirname, [b], [(a, b)], ftype='png')
 
-    def add_start_node(self, node_type):
+    def add_start_node(self, node_type, unwound=None):
         parent_node = self.start
-        statement = StartingMatch(node_type, self)
-        return add_traversal(self.G, parent_node, statement)
+        statement = StartingMatch(node_type, unwound, self)
+        return add_traversal(self.G, parent_node, statement, unwound=unwound)
 
-    def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwind=None):
-        statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwind, self)
-        return add_traversal(self.G, parent_node, statement, single=single)
+    def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwound=None):
+        statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwound, self)
+        return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
     def fold_to_cardinal(self, parent_node):
         """
@@ -416,7 +433,7 @@ class QueryGraph:
         return add_filter(self.G, parent_node, [predicate_node], statement)
 
     def add_unwind_parameter(self, wrt_node, to_unwind):
-        statement = Unwind(wrt_node, to_unwind, to_unwind.replace('$', ''), self)
+        statement = Unwind(wrt_node, to_unwind, 'unwound_'+to_unwind.replace('$', ''), self)
         return add_unwind(self.G, wrt_node, statement)
 
     def collect_or_not(self, index_node, other_node, want_single):
@@ -470,9 +487,11 @@ class QueryGraph:
             return nx.subgraph_view(self.G)
         return nx.subgraph_view(self.G, lambda n: nx.has_path(self.dag_G, n, result_node))
 
-    def traverse_query(self, result_node=None):
+    def traverse_query(self, result_node=None, simplify=True):
         graph = self.restricted(result_node)
         verify(graph)
+        if simplify:
+            graph = simplify_graph(graph)
         return traverse(graph)
 
     def verify_traversal(self, goal, ordering):

@@ -9,8 +9,7 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from itertools import chain
-from typing import List, TYPE_CHECKING, Tuple, Dict, Any, Union
+from typing import List, TYPE_CHECKING, Union
 
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph, ParserError
@@ -19,14 +18,16 @@ from .utilities import is_regex
 if TYPE_CHECKING:
     from weaveio.data import Data
 
+class GenericObjectQuery(BaseQuery):
+    pass
 
-class ObjectQuery(BaseQuery):
+class ObjectQuery(GenericObjectQuery):
     def _precompile(self) -> 'TableQuery':
         """
         Automatically returns all single links to this object
         """
         single_objs = self._data.all_single_links_to_hierarchy(self._obj)
-        factors = {f"{o.singular_name}" if o.__name__ == self._obj else f"{o.singular_name}.{f}" for o in single_objs for f in o.factors}
+        factors = {f if o.__name__ == self._obj else f"{o.singular_name}.{f}" for o in single_objs for f in o.products_and_factors}
         try:
             factors.remove('id')
             factors = ['id'] + sorted(factors)
@@ -68,16 +69,23 @@ class ObjectQuery(BaseQuery):
         if the object with this id is not in the hierarchy, then null is returned
         e.g. `obs[1234]` filters to the single ob with obid=1234
         """
-        name = self._G.add_parameter(index)
+        param = self._G.add_parameter(index)
         path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
-        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
-        raise NotImplementedError
+        param = self._G.add_parameter(indexes)
+        path, single = self._get_path_to_object(obj, False)
+        one_id = self._G.add_unwind_parameter(self._node, param)
+        travel = self._G.add_traversal(self._node, path, obj, single, one_id)
+        i = self._G.add_getitem(travel, 'id')
+        eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
+        n = self._G.add_filter(travel, eq, direct=True)
+        return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _select_attribute(self, attr, want_single):
         """
@@ -173,7 +181,8 @@ class ObjectQuery(BaseQuery):
     def __eq__(self, other):
         return self._select_attribute('id', True).__eq__(other)
 
-class Query(BaseQuery):
+
+class Query(GenericObjectQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
         super().__init__(data, G, node, previous, obj, start, 'start')
 
@@ -193,6 +202,15 @@ class Query(BaseQuery):
         travel = self._G.add_start_node(obj)
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        n = self._G.add_filter(travel, eq, direct=True)
+        return ObjectQuery._spawn(self, n, obj, single=True)
+
+    def _traverse_by_object_indexes(self, obj, indexes: List):
+        param = self._G.add_parameter(indexes)
+        one_id = self._G.add_unwind_parameter(self._node, param)
+        travel = self._G.add_start_node(obj, one_id)
+        i = self._G.add_getitem(travel, 'id')
+        eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 

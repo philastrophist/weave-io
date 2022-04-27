@@ -78,8 +78,15 @@ def add_start(graph: HashedDiGraph, name):
     return make_node(graph, None, name, None, False)
 
 
-def add_traversal(graph: HashedDiGraph, parent, statement, single=False):
-    return make_node(graph, parent, 'traversal', statement, single)
+def add_traversal(graph: HashedDiGraph, parent, statement, single=False, unwound=None):
+    if unwound is not None:
+        parent, deps = unwound, [parent]
+    else:
+        parent, deps = parent, []
+    n = make_node(graph, parent, 'traversal', statement, single)
+    for d in deps:
+        graph.add_edge(d, n, type='dep', style='dotted')
+    return n
 
 
 def add_filter(graph: HashedDiGraph, parent, dependencies, statement):

@@ -5,10 +5,11 @@ from weaveio.readquery import *
 
 data = Data()
 obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
-# fibretargets = obs.fibretargets[obs.fibretargets.targras == 0]
+# fibretargets = obs.fibretargets[obs.fibretargets.targra == 0]
 fibretargets = obs.fibretargets[any(obs.fibretargets.l1singlespectra.snr == 0)]
-q = l2rows = fibretargets['fibretarget.targra']
+q = fibretargets['fibretarget.targras']
 # table = chosen['wvl', 'flux'](limit=10)
+# q = data.obs.runs[[1003453]].runid
 
 
 q._G.export('parser')

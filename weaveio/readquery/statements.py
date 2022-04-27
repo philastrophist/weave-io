@@ -50,11 +50,12 @@ class Statement:
 
 
 class StartingMatch(Statement):
-    ids = ['to_node_type']
+    ids = ['to_node_type', 'unwound']
 
-    def __init__(self, to_node_type, graph):
+    def __init__(self, to_node_type, unwound, graph):
         super(StartingMatch, self).__init__([], graph)
         self.to_node_type = to_node_type
+        self.unwound = unwound
         self.to_node = self.make_variable(to_node_type)
 
     def make_cypher(self, ordering: list) -> Optional[str]:
@@ -62,25 +63,18 @@ class StartingMatch(Statement):
 
 
 class Traversal(Statement):
-    ids = ['to_node_type', 'path', 'from_variable', 'to_unwind']
+    ids = ['to_node_type', 'path', 'from_variable', 'unwound']
 
-    def __init__(self, from_variable, to_node_type, path, unwind, graph):
+    def __init__(self, from_variable, to_node_type, path, unwound, graph):
         super().__init__([from_variable], graph)
         self.from_variable = from_variable
         self.to_node_type = to_node_type
         self.path = path
         self.to_node = self.make_variable(to_node_type)
-        if unwind is not None:
-            self.to_unwind = unwind
-            self.unwound = self.make_variable(unwind)
-        else:
-            self.to_unwind = None
+        self.unwound = unwound
 
     def make_cypher(self, ordering: list) -> str:
-        r = f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
-        if self.to_unwind is not None:
-            r = f'UNWIND {self.to_unwind} as {self.unwound} {r}'
-        return r
+        return f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
 
 
 class NullStatement(Statement):
