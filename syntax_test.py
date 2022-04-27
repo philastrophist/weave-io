@@ -4,17 +4,12 @@ from weaveio.opr3 import Data
 from weaveio.readquery import *
 
 data = Data()
-# runid = 1002209
-# nsky = sum(data.runs[runid].targuse == 'S')
-# q = nsky
-q = data.fibretargets.l1singlespectra.snr
-# runs = data.obs.runs
-# specs = runs.l1singlespectra
-# red_specs = specs[specs.camera == 'red']
-# blue_specs = specs[specs.camera == 'blue']
-# q = runs[['runid', count(red_specs, wrt=runs), count(blue_specs, wrt=runs), runs.runid * 2 * mean(specs.snr, wrt=runs)]]
-# q = red_specs.camera
-# q = red_specs.snr
+obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
+# fibretargets = obs.fibretargets[obs.fibretargets.targras == 0]
+fibretargets = obs.fibretargets[any(obs.fibretargets.l1singlespectra.snr == 0)]
+q = l2rows = fibretargets['fibretarget.targra']
+# table = chosen['wvl', 'flux'](limit=10)
+
 
 q._G.export('parser')
 lines, params, names = q._compile()

@@ -167,7 +167,10 @@ class BaseQuery:
         e.g. `ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red']` gives only the red stacks
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
-        n = self._G.add_filter(self._node, mask._node, direct=False)
+        try:
+            n = self._G.add_filter(self._node, mask._node, direct=False)
+        except SyntaxError:
+            raise SyntaxError(f"SyntaxError: {self} cannot be filtered by {mask} since there is no direct path between them")
         return self.__class__._spawn(self, n, single=self._single)
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, remove_infs=None):
