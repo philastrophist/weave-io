@@ -280,6 +280,10 @@ class QueryGraph:
         else:
             raise ParserError(f"One of [{a}, {b}] must be a parent of the other. {shared} != [{a}, {b}] ")
 
+    def is_singular_branch(self, a, b):
+        path = nx.shortest_path(self.above_graph, b, a)
+        return all(self.above_graph.edges[(b, a)].get('single', True) for b, a in zip(path[:-1], path[1:]))
+
     @property
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
@@ -436,28 +440,30 @@ class QueryGraph:
         statement = Unwind(wrt_node, to_unwind, 'unwound_'+to_unwind.replace('$', ''), self)
         return add_unwind(self.G, wrt_node, statement)
 
-    def collect_or_not(self, index_node, other_node, want_single):
+    def collect_or_not(self, index_node, other_node, force_plural):
         """
         Collect `other_node` with respect to the shared common ancestor of `index_node` and `other_node`.
         If other_node is above the index, fold back to cardinal node
         if not, fold back to shared ancestor
         """
-        shared = self.latest_shared_ancestor(index_node, other_node)
         try:
-            if next(self.backwards_G.successors(other_node)) == index_node:
-                if want_single:
-                    return other_node
-                else:
-                    return self.add_aggregation(other_node, shared, 'collect')
+            if next(self.backwards_G.successors(other_node)) == index_node:  # if its not already aggregated to the index
+               return other_node
         except StopIteration:
             pass
-        if want_single:
-            return self.fold_to_cardinal(other_node)
-        return self.add_aggregation(other_node, shared, 'collect')  # coalesce
+        shared = self.latest_shared_ancestor(index_node, other_node)
+        if force_plural:
+            return self.add_aggregation(other_node, shared, 'collect')
+        if self.is_singular_branch(shared, other_node):
+            # then fold back singularly (i.e. do nothing in terms of cypher)
+            statement = NullStatement(self.G.nodes[other_node]['variables'], self)
+            return add_aggregation(self.G, other_node, shared, statement, 'aggr', True)
+        else:
+            return self.add_aggregation(other_node, shared, 'collect')
 
-    def add_results_table(self, index_node, column_nodes, request_singles: List[bool], dropna: List):
+    def add_results_table(self, index_node, column_nodes, force_plurals: List[bool], dropna: List):
         # fold back column data into the index node
-        column_nodes = [self.collect_or_not(index_node, d, s) for d, s in zip(column_nodes, request_singles)] # fold back when combining
+        column_nodes = [self.collect_or_not(index_node, d, p) for d, p in zip(column_nodes, force_plurals)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         try:
             vs = self.G.nodes[index_node]['variables'][0]
@@ -503,7 +509,6 @@ class QueryGraph:
         start_time = time.perf_counter()
         ordering = self.traverse_query(result)
         self.verify_traversal(result, ordering)
-        self.export('parser')
         statements = []
         for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
             try:
