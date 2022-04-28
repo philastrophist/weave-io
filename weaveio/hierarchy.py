@@ -1,5 +1,6 @@
 import inspect
 import logging
+from copy import deepcopy
 from functools import wraps, partial
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
 from warnings import warn
@@ -66,6 +67,7 @@ class Multiple:
         self.maxnumber = int_or_none(maxnumber)
         self.constrain = [] if constrain is None else constrain
         self.relation_idname = idname
+        self._isself = self.node == 'self'
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
@@ -192,22 +194,24 @@ class GraphableMeta(type):
             raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
         nparents_in_id = 0
         parentnames = {}
-        for c in cls.children:
+        cls.children = deepcopy(cls.children)  # sever link so that changes here dont affect base classes
+        cls.parents = deepcopy(cls.parents)
+        for i, c in enumerate(cls.children):
             if isinstance(c, Multiple):
-                if c.node == 'self':
-                    c.node = name
-                    c.instantate_node()
-        for i in cls.parents:
-            if isinstance(i, Multiple):
-                if i.node == 'self':
-                    i.node = name
-                i.instantate_node()
-                if isinstance(i, One2One):
-                    parentnames[i.singular_name] = (1, 1)
+                if c._isself:
+                    c.node = cls
+                c.instantate_node()
+        for i, p in enumerate(cls.parents):
+            if isinstance(p, Multiple):
+                if p._isself:
+                    p.node = cls
+                p.instantate_node()
+                if isinstance(p, One2One):
+                    parentnames[p.singular_name] = (1, 1)
                 else:
-                    parentnames[i.plural_name] = (i.minnumber, i.maxnumber)
+                    parentnames[p.plural_name] = (p.minnumber, p.maxnumber)
             else:
-                parentnames[i.singular_name] = (1, 1)
+                parentnames[p.singular_name] = (1, 1)
         if cls.identifier_builder is not None:
             for p in cls.identifier_builder:
                 if p in parentnames:
@@ -223,26 +227,26 @@ class GraphableMeta(type):
                     raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
         version_parents = []
         version_factors = []
-        for i in cls.version_on:
+        for p in cls.version_on:
             parents = [p.node if isinstance(p, One2One) else p for p in cls.parents]
-            if i in [p.singular_name if isinstance(p, type) else p.name for p in parents]:
-                version_parents.append(i)
-            elif i in cls.factors:
-                version_factors.append(i)
+            if p in [pp.singular_name if isinstance(pp, type) else pp.name for pp in parents]:
+                version_parents.append(p)
+            elif p in cls.factors:
+                version_factors.append(p)
             else:
-                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must refer to a parent or factor.")
+                raise RuleBreakingException(f"Unknown {p} to version on for {name}. Must refer to a parent or factor.")
         if len(version_factors) > 1 and len(version_parents) == 0:
             raise RuleBreakingException(f"Cannot build a version relative to nothing. You must version on at least one parent.")
         if not cls.is_template:
             if not (len(cls.indexes) or cls.idname or
                     (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
                 raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
-        for i in cls.indexes:
-            if i not in cls.parents and i not in cls.factors:
-                raise RuleBreakingException(f"index {i} of {name} must be a factor or parent of {name}")
+        for p in cls.indexes:
+            if p not in cls.parents and p not in cls.factors:
+                raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
         if len(cls.hdus):
             hduclasses = {}
-            for i, (hduname, hdu) in enumerate(cls.hdus.items()):
+            for p, (hduname, hdu) in enumerate(cls.hdus.items()):
                 if hdu is not None:
                     typename = name+hduname[0].upper()+hduname[1:]
                     typename = typename.replace('_', '')
@@ -264,6 +268,11 @@ class GraphableMeta(type):
         cls.products_and_factors = cls.factors + list(cls.products.keys())
         if cls.idname is not None:
             cls.products_and_factors.append(cls.idname)
+        cls.relative_names = {}  # reset, no inheritability
+        for relative in cls.children+cls.parents:
+            if isinstance(relative, Multiple):
+                if relative.relation_idname is not None:
+                    cls.relative_names[relative.relation_idname] = relative
         super().__init__(name, bases, dct)
 
 
@@ -290,6 +299,7 @@ class Graphable(metaclass=GraphableMeta):
     concatenation_constants = []
     belongs_to = []
     products_and_factors = []
+    relative_names = {}
 
     @property
     def node(self):
