@@ -251,8 +251,10 @@ class ObjectQuery(GenericObjectQuery):
                             except KeyError:
                                 raise PathError(f"`{self._obj}` has no relative relation called `{singular}`")
                             return self._traverse_to_relative_object(relation.node.__name__, item)
-                    else:  # otherwise treat as an index
+                    elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
+                    else:
+                        raise KeyError(f"Unknown attribute `{item}`")
 
     def __getattr__(self, item):
         return self._getitem(item, False)
