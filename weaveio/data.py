@@ -169,18 +169,20 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
 def hierarchies_from_hierarchies(*hiers: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
     return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
 
-def make_arrows(path, forward=True, type=None):
-    arrow = '' if type is None else f'-[:{type}]-'
+def make_arrows(path, forward=True, descriptor=None):
+    arrow = '' if descriptor is None else f'[{descriptor}]'
     if forward:
-        arrow = f"-{arrow}->"
+        named_arrow = last_arrow = f"-[{{name}}{arrow}]->"
+        first_arrow = arrow = f"-{arrow}->"
     else:
-        arrow = f"<-{arrow}-"
+        named_arrow = first_arrow = f"<-[{{name}}{arrow}]-"
+        last_arrow = arrow = f"<-{arrow}-"
     middle = arrow.join(map('(:{})'.format, [p.__name__ for p in path[1:-1]]))
     if middle:
-        return "{}{}{}".format(arrow, middle, arrow)
-    return arrow
+        return "{}{}{}".format(first_arrow, middle, last_arrow)
+    return named_arrow
 
-def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular) -> Tuple[str, bool]:
+def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular, descriptor=None) -> Tuple[str, bool]:
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
@@ -246,7 +248,12 @@ class Data:
         self.singular_factors = {f.lower() : f.lower() for f in self.factors}
         self.singular_idnames = {h.idname: h for h in self.hierarchies if h.idname is not None}
         self.plural_idnames = {make_plural(k): v for k,v in self.singular_idnames.items()}
-
+        self.relative_names = defaultdict(dict)
+        for h in self.hierarchies:
+            for name, relation in h.relative_names.items():
+                self.relative_names[name][h.__name__] = relation
+        self.relative_names = dict(self.relative_names)
+        self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
     def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool):
         """
@@ -563,13 +570,15 @@ class Data:
         """
         pattern = name.split('.')
         if len(pattern) == 1:
-            return name in self.plural_hierarchies or name in self.plural_factors or name in self.plural_idnames
+            return name in self.plural_hierarchies or name in self.plural_factors or\
+                   name in self.plural_idnames or name in self.plural_relative_names
         return all(self.is_plural_name(n) for n in pattern)
 
     def is_singular_name(self, name):
         pattern = name.split('.')
         if len(pattern) == 1:
-            return name in self.singular_hierarchies or name in self.singular_factors or name in self.singular_idnames
+            return name in self.singular_hierarchies or name in self.singular_factors or \
+                   name in self.singular_idnames or name in self.relative_names
         return all(self.is_singular_name(n) for n in pattern)
 
     def __getitem__(self, address):

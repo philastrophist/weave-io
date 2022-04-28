@@ -14,12 +14,18 @@ from typing import List, TYPE_CHECKING, Union
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex
+from ..opr3.hierarchy import Exposure
 
 if TYPE_CHECKING:
     from weaveio.data import Data
 
 class GenericObjectQuery(BaseQuery):
     pass
+
+
+class PathError(SyntaxError):
+    pass
+
 
 class ObjectQuery(GenericObjectQuery):
     def _precompile(self) -> 'TableQuery':
@@ -120,14 +126,28 @@ class ObjectQuery(GenericObjectQuery):
                                       [a._single for a in attrs], dropna=[self._node])
         return TableQuery._spawn(self, n, names=names)
 
-    def _traverse_to_relative_object(self):
+    def _traverse_to_relative_object(self, obj, index):
         """
         obj.relative_path
         traversal, expands
         traverses by a specifically labelled relation instead of a name of an object
         e.g. l1stackedspectra.adjunct_spectrum will get the spectrum in the other arm
+        CYPHER: (from:From)-[r]->(to:To) WHERE r.id = ...
+        the last relationship will have a variable name:
+            (Exposure)-->()-[r]->(Run)
+            (Run)<-[r]-()<--(Exposure)
         """
-        raise NotImplementedError
+        obj, obj_singular = self._normalise_object(obj)
+        singular_name = self._data.singular_name(index)
+        path, single = self._get_path_to_object(obj, False)
+        if not single and singular_name == index:
+            raise SyntaxError(f"Relative index `{index}` is plural relative to `{self._obj}`.")
+        n = self._G.add_traversal(self._node, path, obj, False)
+        relation_id = self._G.add_getitem(n, 'relation_id', 1)
+        name = self._G.add_parameter(singular_name)
+        eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id')
+        f = self._G.add_filter(n, eq, direct=True)
+        return ObjectQuery._spawn(self, f, obj, single=single)
 
     def _filter_by_relative_index(self):
         """
@@ -139,18 +159,20 @@ class ObjectQuery(GenericObjectQuery):
         """
         raise NotImplementedError
 
-    def __getitem__(self, item):
+    def _getitems(self, items, by_getitem):
+        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
+            raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
+        if any(self._data.is_valid_name(i) for i in items):
+            return self._make_table(*items)
+        # go back and be better
+        return self._previous._traverse_by_object_indexes(self._obj, items)
+
+    def _getitem(self, item, by_getitem):
         """
         item can be an id, a factor name, a list of those, a slice, or a boolean_mask
         """
         if isinstance(item, (tuple, list)):
-            if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in item):
-                raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-            if any(self._data.is_valid_name(i) for i in item):
-                return self._make_table(*item)
-            else:
-                # go back and be better
-                return self._previous._traverse_by_object_indexes(self._obj, item)
+            return self._getitems(item, by_getitem)
         elif isinstance(item, slice):
             return self._slice(item)
         elif isinstance(item, AttributeQuery):
@@ -161,22 +183,41 @@ class ObjectQuery(GenericObjectQuery):
             try:
                 return self._select_or_traverse_to_attribute(item)
             except (KeyError, ValueError):
-                if '.' in item:
+                if '.' in item:  # split the parts and parse
                     try:
                         obj, attr = item.split('.')
+                        return self.__getitem__(obj).__getitem__(attr)
                     except ValueError:
                         raise ValueError(f"{item} cannot be parsed as an `obj.attribute`.")
-                    return self.__getitem__(obj).__getitem__(attr)
-                try:
+                try: # try assuming its an object
                     obj, single = self._normalise_object(item)
                     if obj == self._obj:
                         return self
                     return self._traverse_to_specific_object(obj, single)
-                except ValueError:
-                    return self._previous._traverse_by_object_index(self._obj, item)
+                except (KeyError, ValueError):  # assume its an index of some kind
+                    singular = self._data.singular_name(item)
+                    if singular in self._data.relative_names:  # if it's a relative id
+                        if by_getitem:  # filter by relative relation: ob.runs['red'] gets red runs
+                            if singular != item:
+                                raise SyntaxError(f"Filtering by relative index `{item}` must use its singular name `{singular}`")
+                            print(self._data.relative_names[singular])
+                            if self._previous._obj not in self._data.relative_names[singular]:
+                                raise PathError(f"There are no `{singular}` `{self._obj}` of `{self._previous._obj}`")
+                            return self._previous._traverse_to_relative_object(self._obj, item)
+                        else:  # l1singlespectrum.adjunct gets the adjunct spectrum of a spectrum
+                            try:
+                                relation = self._data.relative_names[singular][self._obj]
+                            except KeyError:
+                                raise PathError(f"`{self._obj}` has no relative relation called `{singular}`")
+                            return self._traverse_to_relative_object(relation.node.__name__, item)
+                    else:  # otherwise treat as an index
+                        return self._previous._traverse_by_object_index(self._obj, item)
 
     def __getattr__(self, item):
-        return self.__getitem__(item)
+        return self._getitem(item, False)
+
+    def __getitem__(self, item):
+        return self._getitem(item, True)
 
     def __eq__(self, other):
         return self._select_attribute('id', True).__eq__(other)

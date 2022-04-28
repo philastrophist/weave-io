@@ -1,5 +1,6 @@
 import inspect
 import logging
+from copy import deepcopy
 from functools import wraps, partial
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
 from warnings import warn
@@ -66,9 +67,14 @@ class Multiple:
         self.maxnumber = int_or_none(maxnumber)
         self.constrain = [] if constrain is None else constrain
         self.relation_idname = idname
+        self._isself = self.node == 'self'
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
+
+    @property
+    def name(self):
+        return self.plural_name
 
     def instantate_node(self, include_hierarchies=None):
         if not inspect.isclass(self.node):
@@ -78,7 +84,6 @@ class Multiple:
                     for h in include_hierarchies:
                         hierarchies[h.__name__] = h  # this overrides the default
                 self.node = hierarchies[self.node]
-        self.name = self.node.plural_name
         self.singular_name = self.node.singular_name
         self.plural_name = self.node.plural_name
         self.idname = self.node.idname
@@ -116,10 +121,17 @@ class Single(Multiple):
     def __init__(self, node, constrain=None, idname=None):
         super().__init__(node, 1, 1, constrain, idname)
 
+    def __repr__(self):
+        return f"<Single({self.node})>"
 
-class One2One(Multiple):
+    @property
+    def name(self):
+        return self.singular_name
+
+
+class One2One(Single):
     def __init__(self, node, constrain=None, idname=None):
-        super(One2One, self).__init__(node, 1, 1, constrain, idname)
+        super(One2One, self).__init__(node, constrain, idname)
 
     def __repr__(self):
         return f"<One2One({self.node})>"
@@ -131,6 +143,10 @@ class Optional(Multiple):
 
     def __repr__(self):
         return f"<Optional({self.node})>"
+
+    @property
+    def name(self):
+        return self.singular_name
 
 
 class Indexed:
@@ -178,18 +194,24 @@ class GraphableMeta(type):
             raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
         nparents_in_id = 0
         parentnames = {}
-        for c in cls.children:
+        cls.children = deepcopy(cls.children)  # sever link so that changes here dont affect base classes
+        cls.parents = deepcopy(cls.parents)
+        for i, c in enumerate(cls.children):
             if isinstance(c, Multiple):
-                if c.node == 'self':
-                    c.node = name
-                    c.instantate_node()
-        for i in cls.parents:
-            if isinstance(i, One2One):
-                parentnames[i.singular_name] = (1, 1)
-            elif isinstance(i, Multiple):
-                parentnames[i.plural_name] = (i.minnumber, i.maxnumber)
+                if c._isself:
+                    c.node = cls
+                c.instantate_node()
+        for i, p in enumerate(cls.parents):
+            if isinstance(p, Multiple):
+                if p._isself:
+                    p.node = cls
+                p.instantate_node()
+                if isinstance(p, One2One):
+                    parentnames[p.singular_name] = (1, 1)
+                else:
+                    parentnames[p.plural_name] = (p.minnumber, p.maxnumber)
             else:
-                parentnames[i.singular_name] = (1, 1)
+                parentnames[p.singular_name] = (1, 1)
         if cls.identifier_builder is not None:
             for p in cls.identifier_builder:
                 if p in parentnames:
@@ -205,26 +227,26 @@ class GraphableMeta(type):
                     raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
         version_parents = []
         version_factors = []
-        for i in cls.version_on:
+        for p in cls.version_on:
             parents = [p.node if isinstance(p, One2One) else p for p in cls.parents]
-            if i in [p.singular_name if isinstance(p, type) else p.name for p in parents]:
-                version_parents.append(i)
-            elif i in cls.factors:
-                version_factors.append(i)
+            if p in [pp.singular_name if isinstance(pp, type) else pp.name for pp in parents]:
+                version_parents.append(p)
+            elif p in cls.factors:
+                version_factors.append(p)
             else:
-                raise RuleBreakingException(f"Unknown {i} to version on for {name}. Must refer to a parent or factor.")
+                raise RuleBreakingException(f"Unknown {p} to version on for {name}. Must refer to a parent or factor.")
         if len(version_factors) > 1 and len(version_parents) == 0:
             raise RuleBreakingException(f"Cannot build a version relative to nothing. You must version on at least one parent.")
         if not cls.is_template:
             if not (len(cls.indexes) or cls.idname or
                     (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
                 raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
-        for i in cls.indexes:
-            if i not in cls.parents and i not in cls.factors:
-                raise RuleBreakingException(f"index {i} of {name} must be a factor or parent of {name}")
+        for p in cls.indexes:
+            if p not in cls.parents and p not in cls.factors:
+                raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
         if len(cls.hdus):
             hduclasses = {}
-            for i, (hduname, hdu) in enumerate(cls.hdus.items()):
+            for p, (hduname, hdu) in enumerate(cls.hdus.items()):
                 if hdu is not None:
                     typename = name+hduname[0].upper()+hduname[1:]
                     typename = typename.replace('_', '')
@@ -246,6 +268,11 @@ class GraphableMeta(type):
         cls.products_and_factors = cls.factors + list(cls.products.keys())
         if cls.idname is not None:
             cls.products_and_factors.append(cls.idname)
+        cls.relative_names = {}  # reset, no inheritability
+        for relative in cls.children+cls.parents:
+            if isinstance(relative, Multiple):
+                if relative.relation_idname is not None:
+                    cls.relative_names[relative.relation_idname] = relative
         super().__init__(name, bases, dct)
 
 
@@ -272,6 +299,7 @@ class Graphable(metaclass=GraphableMeta):
     concatenation_constants = []
     belongs_to = []
     products_and_factors = []
+    relative_names = {}
 
     @property
     def node(self):
@@ -366,19 +394,19 @@ class Graphable(metaclass=GraphableMeta):
                 type = 'is_required_by'
                 if isinstance(parent_list, Collection):
                     with unwind(parent_list, enumerated=True) as (parent, i):
-                        props = {'order': i}
+                        props = {'order': i, 'relation_id': k}
                         merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
                     parent_list = collect(parent)
                     if k in self.version_on:
                         raise RuleBreakingException(f"Cannot version on a collection of nodes")
                 else:
                     for parent in parent_list:
-                        props = {'order': 0}
+                        props = {'order': 0, 'relation_id': k}
                         merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
                         if k in self.version_on:
                             version_parents.append(parent)
         elif merge_strategy == 'NODE+RELATIONSHIP':
-            parentnames = [p.singular_name if isinstance(p, One2One) else p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
+            parentnames = [p.singular_name if isinstance(p, (One2One, Optional)) else p.plural_name if isinstance(p, Multiple) else p.singular_name for p in self.parents]
             parents = []
             others = []
             for k, parent_list in predecessors.items():
@@ -387,16 +415,16 @@ class Graphable(metaclass=GraphableMeta):
                 if k in parentnames and k in self.identifier_builder:
                     parents += [p for p in parent_list]
                 else:
-                    others += [(i, p) for i, p in enumerate(parent_list)]
+                    others += [(i, k, p) for i, p in enumerate(parent_list)]
                 if k in self.version_on:
                     version_parents += parent_list
             reltype = 'is_required_by'
             relparents = {p: (reltype, {'order': 0}, {}) for p in parents}
             child = self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            parents=relparents, collision_manager=collision_manager)
-            for i, other in others:
+            for i, k, other in others:
                 if other is not None:
-                    merge_relationship(other, child, reltype, {'order': i}, {}, collision_manager=collision_manager)
+                    merge_relationship(other, child, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
@@ -407,14 +435,14 @@ class Graphable(metaclass=GraphableMeta):
             type = 'is_required_by'
             if isinstance(child_list, Collection):
                 with unwind(child_list, enumerated=True) as (child, i):
-                    merge_relationship(self.node, child, type,
-                                       {'order': i}, {},
+                    merge_relationship(child, self.node, type,
+                                       {}, {'relation_id': k, 'order': i},
                                        collision_manager=collision_manager)
                 collect(child)
             else:
                 for child in child_list:
-                    props = {'order': 0}
-                    merge_relationship(self.node, child, type, {child.relation_idname: child.relation_identifier},
+                    props =  {'relation_id': k, 'order': 0}
+                    merge_relationship(child, self.node, type, {},
                                        props, collision_manager=collision_manager)
 
 
@@ -549,8 +577,9 @@ class Hierarchy(Graphable):
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
-        parents = {p.singular_name if isinstance(p, (type, One2One)) else p.name: p for p in self.parents}
-        children = {getattr(p, 'idname', getattr(p, 'singular_name', p.name)): p for p in self.children}
+        # parents = {p.singular_name if isinstance(p, (type, One2One)) else p.name: p for p in self.parents}
+        parents = {getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name: p for p in self.parents}
+        children = {getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name: c for c in self.children}
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
@@ -587,16 +616,20 @@ class Hierarchy(Graphable):
         predecessors = {}
         successors = {}
         for name, nodetype in self.specification.items():
+            if isinstance(nodetype, Multiple):
+                if nodetype.minnumber == 0 and name not in kwargs:
+                    continue
             if do_not_create:
                 value = kwargs.pop(name, None)
             else:
                 value = kwargs.pop(name)
             setattr(self, name, value)
-            if isinstance(nodetype, Multiple) and not isinstance(nodetype, One2One):
-                if not isinstance(value, (tuple, list)):
-                    if isinstance(value, Graphable):
-                        if not getattr(value, 'uses_tables', False):
-                            raise TypeError(f"{name} expects multiple elements")
+            if isinstance(nodetype, Multiple) and not isinstance(nodetype, (One2One, Single, Optional)):
+                if nodetype.maxnumber != 1:
+                    if not isinstance(value, (tuple, list)):
+                        if isinstance(value, Graphable):
+                            if not getattr(value, 'uses_tables', False):
+                                raise TypeError(f"{name} expects multiple elements")
             else:
                 value = [value]
             if name in children:

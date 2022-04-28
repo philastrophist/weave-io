@@ -391,8 +391,8 @@ class QueryGraph:
         statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
         return add_operation(self.G, wrt, dependency_nodes, statement), wrt
 
-    def add_getitem(self, parent_node, item):
-        statement = GetItem(self.G.nodes[parent_node]['variables'][0], item, self)
+    def add_getitem(self, parent_node, item, which=0):
+        statement = GetItem(self.G.nodes[parent_node]['variables'][which], item, self)
         return add_operation(self.G, parent_node, [], statement)
 
     def assign_to_variable(self, parent_node, only_if_op=False):
@@ -482,7 +482,7 @@ class QueryGraph:
         self.parameters[varname] = value
         return varname
 
-    def restricted(self, result_node=None):
+    def restricted(self, result_node=None) -> HashedDiGraph:
         if result_node is None:
             return nx.subgraph_view(self.G)
         return nx.subgraph_view(self.G, lambda n: nx.has_path(self.dag_G, n, result_node))
@@ -503,6 +503,7 @@ class QueryGraph:
         start_time = time.perf_counter()
         ordering = self.traverse_query(result)
         self.verify_traversal(result, ordering)
+        self.export('parser')
         statements = []
         for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
             try:

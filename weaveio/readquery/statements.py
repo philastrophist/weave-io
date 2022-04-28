@@ -71,10 +71,12 @@ class Traversal(Statement):
         self.to_node_type = to_node_type
         self.path = path
         self.to_node = self.make_variable(to_node_type)
+        self.using_edge = self.make_variable('edge')
         self.unwound = unwound
 
     def make_cypher(self, ordering: list) -> str:
-        return f'OPTIONAL MATCH ({self.from_variable}){self.path}({self.to_node}:{self.to_node_type})'
+        path = self.path.format(name=self.using_edge)
+        return f'OPTIONAL MATCH ({self.from_variable}){path}({self.to_node}:{self.to_node_type})'
 
 
 class NullStatement(Statement):
