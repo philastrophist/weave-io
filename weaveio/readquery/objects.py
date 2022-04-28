@@ -119,11 +119,12 @@ class ObjectQuery(GenericObjectQuery):
         obj['factor_string', AttributeQuery]
         obj['factora', 'factorb']
         obj['factora', obj.obj.factorb]
+        obj['factora', 'obj.factorb']
         """
         attrs = [item if isinstance(item, AttributeQuery) else self.__getitem__(item) for item in items]
         names = [item._factor_name if isinstance(item, AttributeQuery) else item for item in items]
-        n = self._G.add_results_table(self._node, [a._node for a in attrs],
-                                      [a._single for a in attrs], dropna=[self._node])
+        force_plurals = [not a._single for a in attrs]
+        n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals, dropna=[self._node])
         return TableQuery._spawn(self, n, names=names)
 
     def _traverse_to_relative_object(self, obj, index):
@@ -407,7 +408,7 @@ class AttributeQuery(BaseQuery):
             index = self._G.start
         else:
             index = self._index_node
-        r = self._G.add_results_table(index, [self._node], [self._single], dropna=[self._node])
+        r = self._G.add_results_table(index, [self._node], [not self._single], dropna=[self._node])
         return AttributeQuery._spawn(self, r, self._obj, index, self._single, factor_name=self._factor_name)
 
 
