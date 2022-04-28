@@ -30,7 +30,25 @@ class PathError(SyntaxError):
 class ObjectQuery(GenericObjectQuery):
     def _precompile(self) -> 'TableQuery':
         """
-        Automatically returns all single links to this object
+        If the object contains only one factor/product and defines no parents/children, return that
+        Otherwise, try to return just the id or error
+        """
+        Obj = self._data.class_hierarchies[self._obj]
+        if Obj.idname is not None:
+            if len(Obj.products_and_factors) == 2:
+                attr = Obj.products_and_factors[0]  # take the only data in it
+            else:
+                attr = Obj.idname
+        elif len(Obj.products_and_factors) == 1:
+            attr = Obj.products_and_factors[0]  # take the only data in it
+        else:
+            raise SyntaxError(f"{self._obj} cannot be returned/identified since it doesn't define any unique idname. "
+                              f"If you want to return all singular data for {self._obj} use ...['*']")
+        return self.__getitem__(attr)._precompile()
+
+    def _get_all_factors_table(self):
+        """
+        For use with ['*']
         """
         single_objs = self._data.all_single_links_to_hierarchy(self._obj)
         factors = {f if o.__name__ == self._obj else f"{o.singular_name}.{f}" for o in single_objs for f in o.products_and_factors}
@@ -39,7 +57,7 @@ class ObjectQuery(GenericObjectQuery):
             factors = ['id'] + sorted(factors)
         except KeyError:
             factors = sorted(factors)
-        return self._make_table(*factors)
+        return factors
 
     def _select_all_attrs(self):
         h = self._data.class_hierarchies[self._data.class_name(self._obj)]
@@ -121,8 +139,22 @@ class ObjectQuery(GenericObjectQuery):
         obj['factora', obj.obj.factorb]
         obj['factora', 'obj.factorb']
         """
-        attrs = [item if isinstance(item, AttributeQuery) else self.__getitem__(item) for item in items]
-        names = [item._factor_name if isinstance(item, AttributeQuery) else item for item in items]
+        attrs = []
+        names = []
+        for item in items:
+            if isinstance(item, AttributeQuery):
+                attrs.append(item)
+                names.append(f"{item._names[0]}")
+            else:
+                new = self.__getitem__(item)
+                if isinstance(new, list):
+                    for a in new:
+                        if a._factor_name not in names or a._factor_name is None:
+                            names.append(f"{a._names[0]}")
+                            attrs.append(a)
+                elif new._factor_name not in names or new._factor_name is None:
+                    names.append(f"{new._names[0]}")
+                    attrs.append(new)
         force_plurals = [not a._single for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals, dropna=[self._node])
         return TableQuery._spawn(self, n, names=names)
@@ -163,8 +195,10 @@ class ObjectQuery(GenericObjectQuery):
     def _getitems(self, items, by_getitem):
         if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if any(self._data.is_valid_name(i) for i in items):
+        if all(self._data.is_valid_name(i) or isinstance(AttributeQuery) for i in items):
             return self._make_table(*items)
+        if any(self._data.is_valid_name(i) for i in items):
+            raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
         # go back and be better
         return self._previous._traverse_by_object_indexes(self._obj, items)
 
@@ -180,6 +214,12 @@ class ObjectQuery(GenericObjectQuery):
             return self._filter_by_mask(item)  # a boolean_mask
         elif not isinstance(item, str):
             return self._previous._traverse_by_object_index(self._obj, item)
+        elif item == '*':
+            all_factors = self._get_all_factors_table()
+            return self._getitems(all_factors, by_getitem)
+        elif item == '**':
+            all_factors = self._data.class_hierarchies[self._obj].products_and_factors
+            return self._getitems(all_factors, by_getitem)
         else:
             try:
                 return self._select_or_traverse_to_attribute(item)
@@ -402,6 +442,9 @@ class AttributeQuery(BaseQuery):
 
     def __abs__(self):
         return self._basic_scalar_function('abs')
+
+    def __iadd__(self, other):
+        raise TypeError
 
     def _precompile(self) -> 'TableQuery':
         if self._index_node == 'start':
