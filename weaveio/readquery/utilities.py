@@ -10,3 +10,5 @@ def is_regex(other):
     """
     return (other.startswith('/') and other.endswith('/')) or \
            ('*' in other and not (other.startswith('"') and other.endswith('"')))
+
+

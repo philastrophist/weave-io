@@ -8,7 +8,7 @@ from warnings import warn
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
-from .utilities import Varname, make_plural, int_or_none
+from .utilities import Varname, make_plural, int_or_none, camelcase2snakecase
 
 
 def _convert_types_to_node(x):
@@ -117,19 +117,19 @@ class Multiple:
         return single_list + multiple_list
 
 
-class Single(Multiple):
+class OneOf(Multiple):
     def __init__(self, node, constrain=None, idname=None):
         super().__init__(node, 1, 1, constrain, idname)
 
     def __repr__(self):
-        return f"<Single({self.node})>"
+        return f"<OneOf({self.node})>"
 
     @property
     def name(self):
         return self.singular_name
 
 
-class One2One(Single):
+class One2One(OneOf):
     def __init__(self, node, constrain=None, idname=None):
         super(One2One, self).__init__(node, constrain, idname)
 
@@ -161,9 +161,8 @@ class GraphableMeta(type):
         dct.update(_dct)
         dct['aliases'] = dct.get('aliases', [])
         dct['aliases'] += [a for base in bases for a in base.aliases]
-        if dct.get('plural_name', None) is None:
-            dct['plural_name'] = make_plural(name.lower())
-        dct['singular_name'] = name.lower()
+        dct['singular_name'] = dct.get('singular_name', None) or camelcase2snakecase(name)
+        dct['plural_name'] = dct.get('plural_name', None) or make_plural(dct['singular_name'])
         if dct['plural_name'] != dct['plural_name'].lower():
             raise RuleBreakingException(f"plural_name must be lowercase")
         if dct['singular_name'] != dct['singular_name'].lower():
@@ -214,6 +213,9 @@ class GraphableMeta(type):
                 parentnames[p.singular_name] = (1, 1)
         if cls.identifier_builder is not None:
             for p in cls.identifier_builder:
+                if isinstance(p, type):
+                    if issubclass(p, Hierarchy):
+                        p = p.singular_name
                 if p in parentnames:
                     mn, mx = parentnames[p]
                     if mn == 0:
@@ -224,7 +226,8 @@ class GraphableMeta(type):
                 elif p in cls.factors:
                     pass
                 else:
-                    raise RuleBreakingException(f"Unknown identifier source {p} for {name}")
+                    raise RuleBreakingException(f"Unknown identifier source {p} for {name}. "
+                                                f"Available are: {list(parentnames.keys())+cls.factors}")
         version_parents = []
         version_factors = []
         for p in cls.version_on:
@@ -624,7 +627,7 @@ class Hierarchy(Graphable):
             else:
                 value = kwargs.pop(name)
             setattr(self, name, value)
-            if isinstance(nodetype, Multiple) and not isinstance(nodetype, (One2One, Single, Optional)):
+            if isinstance(nodetype, Multiple) and not isinstance(nodetype, (One2One, OneOf, Optional)):
                 if nodetype.maxnumber != 1:
                     if not isinstance(value, (tuple, list)):
                         if isinstance(value, Graphable):

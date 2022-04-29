@@ -10,13 +10,14 @@ from typing import Union, List, Tuple, Type, Dict, Set, Callable
 import networkx as nx
 import pandas as pd
 import py2neo
+import textdistance
 from networkx import NetworkXNoPath, NodeNotFound
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
-from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional, Single
+from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional, OneOf
 from .readquery import Query
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
@@ -118,20 +119,29 @@ def is_multiple_edge(graph, x, y):
 def add_relation_graph_edge(graph, parent, child, relation: Multiple):
     """
     if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
-    parent-(n)->object (1 object has n parents of type P)
+        P-(n)->O (1 object of type O has n parents of type P)
     it implicitly follows that:
-        object--(m)-parent (each of object's parents of type P can be used by an unknown number `m` of objects of type O = many to one)
+        O--(m)--P (each of object's parents of type P can be used by an unknown number `m` of objects of type O = many to one)
     if an object of type O requires n children of type C then this is equivalent to defining that instances of those behave as:
-        object-(n)->child (1 object has n children of type C)
+        O-(n)->C (1 object has n children of type C)
         it implicitly follows that:
-            child-[has 1]->Object (each child has maybe 1 parent of type O)
+            child-[m]->Object (each child has m parents of type O)
     """
     relation.instantate_node()
-    graph.add_edge(child, parent, singular=relation.maxnumber == 1, optional=relation.minnumber == 0, relation=relation)
-    if isinstance(relation, One2One) or relation.node is child:
+    if isinstance(relation, One2One):
+        # both edges are in the database
         graph.add_edge(parent, child, singular=True, optional=True, relation=relation)
+        graph.add_edge(child, parent, singular=True, optional=True, relation=relation)
     else:
-        graph.add_edge(parent, child, singular=False, optional=True, relation=relation)
+        # only parent-->child is in the database
+        child_defines_parents = relation.node is parent
+        if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
+            graph.add_edge(child, parent, singular=relation.minnumber == 1, optional=relation.maxnumber == 0)
+            graph.add_edge(parent, child, singular=False, optional=True, relation=relation)
+        else:  # i.e. children = [...] is set in the class for this object
+            # only parent-->child is in the database
+            graph.add_edge(parent, child, singular=relation.minnumber == 1, optional=relation.maxnumber == 0, relation=relation)
+            graph.add_edge(child, parent, singular=False, optional=True)
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
@@ -140,11 +150,11 @@ def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
         if h not in graph.nodes:
             graph.add_node(h)
         for child in h.children:
-            rel = child if isinstance(child, Multiple) else Single(child)
+            rel = child if isinstance(child, Multiple) else OneOf(child)
             child = child.node if isinstance(child, Multiple) else child
             add_relation_graph_edge(graph, h, child, rel)
         for parent in h.parents:
-            rel = parent if isinstance(parent, Multiple) else Single(parent)
+            rel = parent if isinstance(parent, Multiple) else OneOf(parent)
             parent = parent.node if isinstance(parent, Multiple) else parent
             add_relation_graph_edge(graph, parent, h, rel)
     return graph
@@ -169,20 +179,27 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
 def hierarchies_from_hierarchies(*hiers: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
     return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
 
-def make_arrows(path, forward=True, descriptor=None):
-    arrow = '' if descriptor is None else f'[{descriptor}]'
-    if forward:
-        named_arrow = last_arrow = f"-[{{name}}{arrow}]->"
-        first_arrow = arrow = f"-{arrow}->"
-    else:
-        named_arrow = first_arrow = f"<-[{{name}}{arrow}]-"
-        last_arrow = arrow = f"<-{arrow}-"
-    middle = arrow.join(map('(:{})'.format, [p.__name__ for p in path[1:-1]]))
-    if middle:
-        return "{}{}{}".format(first_arrow, middle, last_arrow)
-    return named_arrow
+def make_arrows(path: List, forwards: List[bool], descriptors=None):
+    descriptors = [descriptors]*len(forwards) if not isinstance(descriptors, (list, tuple)) else descriptors
+    descriptors = [f":{descriptor}" if descriptor is not None else "" for descriptor in descriptors]
+    assert len(forwards) == len(path) - 1
+    forward_arrow = '-[{name}{descriptor}]->'
+    backward_arrow = '<-[{name}{descriptor}]-'
+    nodes = list(map('(:{})'.format, [p.__name__ for p in path]))
+    path_list = []
+    for i, (node, forward) in enumerate(zip(nodes[1:], forwards)):
+        arrow = forward_arrow if forward else backward_arrow
+        if i == len(forwards) - 1:
+            arrow = arrow.format(name='{name}', descriptor=descriptors[i])
+        else:
+            arrow = arrow.format(name="", descriptor=descriptors[i])
+        path_list.append(arrow)
+        path_list.append(node)
+    path_list = path_list[:-1]
+    return ''.join(path_list)
 
-def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular, descriptor=None) -> Tuple[str, bool]:
+
+def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None) -> Tuple[str, bool]:
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
@@ -192,21 +209,27 @@ def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, singular, descriptor=None
     """
     singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])  # type: nx.DiGraph
     try:
+        # always try for a singular path, but will be plural later
+        path = nx.shortest_path(singles, from_obj, to_obj)
+    except NetworkXNoPath as e:
+        if force_singular:
+            raise e
         try:
-            # singular path, but will be plural later
-            return make_arrows(nx.shortest_path(singles, from_obj, to_obj)[::-1], False), True
-        except NetworkXNoPath as e:
-            if singular:
-                raise e # singular searches one get one chance
-        try:
-            # e.g. run.obs find the path ob->run is
-            return make_arrows(nx.shortest_path(singles, to_obj, from_obj)), False
+            # e.g. run.obs find the path ob->run
+            path = nx.shortest_path(singles, to_obj, from_obj)[::-1]
         except NetworkXNoPath:
-            pass
-        return make_arrows(nx.shortest_path(g, from_obj, to_obj)), False
-    except NetworkXNoPath:
-        raise NetworkXNoPath(f"A single={singular} link between {from_obj} and {to_obj} doesn't make sense. "
-                             f"Go via a another object.")
+            path = nx.shortest_path(g, from_obj, to_obj)
+    singulars = []
+    forwards = []
+    for edge in zip(path[:-1], path[1:]):
+        singular = g.edges[edge]['singular']
+        forward = 'relation' in g.edges[edge]
+        singulars.append(singular)
+        forwards.append(forward)
+    return make_arrows(path, forwards, descriptor), all(singulars)
+
+        # raise NetworkXNoPath(f"A single={singular} link between {from_obj} and {to_obj} doesn't make sense. "
+        #                      f"Go via a another object.")
 
 
 class Data:
@@ -543,17 +566,59 @@ class Data:
 
     def plural_name(self, name):
         if isinstance(name, type):
-            name = name.__name__
-        pattern = name.lower().split('.')
-        if any(map(self.is_plural_name, pattern)):
+            if issubclass(name, Hierarchy):
+                return name.plural_name
+            else:
+                raise TypeError(f'{name} is not a weaveio object or string')
+        if name in self.class_hierarchies:
+            return self.class_hierarchies[name].plural_name
+        name = name.lower()
+        if self.is_plural_name(name):
             return name
-        return '.'.join(pattern[:-1] + [make_plural(pattern[-1])])
+        if self.is_singular_name(name):
+            try:
+                return self.singular_factors[name]
+            except KeyError:
+                try:
+                    return self.singular_idnames[name]
+                except KeyError:
+                    try:
+                        return self.relative_names[name]
+                    except KeyError:
+                        return self.singular_hierarchies[name].singular_name
+        if '.' in name:
+            pattern = name.lower().split('.')
+            if any(map(self.is_plural_name, pattern)):
+                return name
+            return '.'.join(pattern[:-1] + [self.plural_name(pattern[-1])])
+        return make_plural(name)
 
     def singular_name(self, name):
         if isinstance(name, type):
-            name = name.__name__
-        pattern = name.lower().split('.')
-        return '.'.join([make_singular(p) if self.is_plural_name(p) else p for p in pattern])
+            if issubclass(name, Hierarchy):
+                return name.singular_name
+            else:
+                raise TypeError(f'{name} is not a weaveio object or string')
+        if name in self.class_hierarchies:
+            return self.class_hierarchies[name].singular_name
+        name = name.lower()
+        if self.is_singular_name(name):
+            return name
+        if self.is_plural_name(name):
+            try:
+                return self.plural_factors[name]
+            except KeyError:
+                try:
+                    return self.plural_idnames[name]
+                except KeyError:
+                    try:
+                        return self.plural_relative_names[name]
+                    except KeyError:
+                        return self.plural_hierarchies[name].singular_name
+        if '.' in name:
+            pattern = name.lower().split('.')
+            return '.'.join([self.singular_name(p) for p in pattern])
+        return make_singular(name)
 
     def is_valid_name(self, name):
         if isinstance(name, str):
@@ -602,3 +667,44 @@ class Data:
         A = to_agraph(G)
         A.layout('dot')
         A.draw(fname)
+
+    def _autosuggest(self, a, relative_to=None):
+        a = self.singular_name(a)
+        if relative_to is not None:
+            relative_to = self.singular_name(relative_to)
+        distance, distance_reverse = textdistance.jaro_winkler, True
+        suggestions = []
+
+        for h_singular_name, h in self.singular_hierarchies.items():
+            newsuggestions = []
+            if relative_to is not None:
+                try:
+                    self.path_to_hierarchy(relative_to, h_singular_name, singular=True)
+                except NetworkXNoPath:
+                    hier = h.singular_name
+                    factors = h.products_and_factors
+                else:
+                    hier = h.plural_name
+                    factors = [self.plural_name(f) for f in h.products_and_factors]
+                newsuggestions.append(hier)
+                newsuggestions += factors
+            else:
+                newsuggestions += [h.singular_name, h.plural_name] + h.products_and_factors
+                newsuggestions += [self.plural_name(f) for f in h.products_and_factors]
+            try:
+                newsuggestions.index(a)
+            except ValueError:
+                suggestions += newsuggestions
+            else:
+                return [a]
+        inorder = sorted(list(set(suggestions)), key=lambda x: distance(a, x), reverse=distance_reverse)
+        return inorder[:3]
+
+    def autosuggest(self, a: str, relative_to: str = None, exception=None):
+        suffix = ''
+        try:
+            l = self._autosuggest(a, relative_to)
+            string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
+        except ImportError:
+            raise AttributeError(f"`{a}` not understood.{suffix}") from exception
+        raise AttributeError(f"`{a}` not understood, did you mean one of:\n{string}{suffix}") from exception

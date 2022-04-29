@@ -11,6 +11,8 @@ it treats two chained expressions as one action
 """
 from typing import List, TYPE_CHECKING, Union
 
+from networkx import NetworkXNoPath
+
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex
@@ -81,7 +83,15 @@ class ObjectQuery(GenericObjectQuery):
         traversal, expands
         e.g. `ob.runs`  reads "for each ob, get its runs"
         """
-        path, single = self._get_path_to_object(obj, want_single)
+        try:
+            path, single = self._get_path_to_object(obj, want_single)
+        except NetworkXNoPath:
+            if want_single:
+                plural = self._data.plural_name(obj)
+                msg = f"There is no singular {obj} relative to {self._obj} try using its plural {plural}"
+            else:
+                msg = f"There is no {obj} relative to {self._obj}"
+            raise CardinalityError(msg)
         n = self._G.add_traversal(self._node, path, obj, single)
         return ObjectQuery._spawn(self, n, obj, single=want_single)
 
@@ -142,11 +152,15 @@ class ObjectQuery(GenericObjectQuery):
         attrs = []
         names = []
         for item in items:
+            if isinstance(item, ObjectQuery):
+                item = item._precompile()
             if isinstance(item, AttributeQuery):
                 attrs.append(item)
                 names.append(f"{item._names[0]}")
             else:
                 new = self.__getitem__(item)
+                if isinstance(new, ObjectQuery):
+                    new = new._precompile()
                 if isinstance(new, list):
                     for a in new:
                         if a._factor_name not in names or a._factor_name is None:
@@ -256,11 +270,18 @@ class ObjectQuery(GenericObjectQuery):
                     else:
                         raise KeyError(f"Unknown attribute `{item}`")
 
+    def _getitem_handled(self, item, by_getitem):
+        try:
+            return self._getitem(item, by_getitem)
+        except (KeyError, ValueError, NetworkXNoPath, CardinalityError) as e:
+            # self._data.autosuggest(item, self._obj)
+            raise e
+
     def __getattr__(self, item):
-        return self._getitem(item, False)
+        return self._getitem_handled(item, False)
 
     def __getitem__(self, item):
-        return self._getitem(item, True)
+        return self._getitem_handled(item, True)
 
     def __eq__(self, other):
         return self._select_attribute('id', True).__eq__(other)
