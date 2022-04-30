@@ -9,11 +9,11 @@ import numpy as np
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock
-from weaveio.hierarchy import unwind, collect, Multiple, One2One, Hierarchy
+from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
-    OBSpec, OB, Exposure, Run, Observation, RawSpectrum, L1SingleSpectrum, L1StackSpectrum, \
-    L1SuperstackSpectrum, L1SupertargetSpectrum, CASU, WavelengthHolder
+    OBSpec, OB, Exposure, Run, RawSpectrum, L1SingleSpectrum, \
+    L1SuperstackSpectrum, L1SupertargetSpectrum, CASU, WavelengthHolder, L1OBStackSpectrum
 from weaveio.writequery import groupby, CypherData
 
 
@@ -109,10 +109,10 @@ class HeaderFibinfoFile(File):
         obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp,
                         surveycatalogues=catalogues, subprogrammes=subprogrammes, surveys=surveys)
         ob = OB(obid=obid, obstartmjd=obstart, obspec=obspec)
-        exposure = Exposure(expmjd=expmjd, ob=ob)
+        exposure = Exposure.from_header(ob, header)
         run = Run(runid=runid, armconfig=arm, exposure=exposure)
-        observation = Observation.from_header(run, header)
-        return {'run': run, 'ob': ob, 'obspec': obspec, 'armconfig': arm, 'observation': observation}
+
+        return {'run': run, 'ob': ob, 'obspec': obspec, 'armconfig': arm}
 
     @classmethod
     def read_schema(cls, path: Path, slc: slice = None):
@@ -140,7 +140,8 @@ class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': SpectralBlockHDU, 'counts2': SpectralBlockHDU, 'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
-    produces = [One2One(Observation), One2One(RawSpectrum)]
+    children = [Run]
+    produces = [Run]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -163,7 +164,7 @@ class L1File(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'flux': SpectralRowableBlock, 'ivar': SpectralRowableBlock,
             'flux_noss': SpectralRowableBlock, 'ivar_noss': SpectralRowableBlock,
             'sensfunc': SpectralRowableBlock, 'fibtable': TableHDU}
-    parents = [One2One(WavelengthHolder)]
+    children = [WavelengthHolder]
 
     @classmethod
     def wavelengths(cls, rootdir: Path, fname: str):
@@ -181,7 +182,8 @@ class L1File(HeaderFibinfoFile):
 
 class L1SingleFile(L1File):
     match_pattern = 'single_\d+\.fit'
-    parents = L1File.parents + [One2One(RawFile), CASU]
+    parents = L1File.parents + [CASU]
+    children = [RawFile]
     produces = [L1SingleSpectrum]
     version_on = ['raw_file']
 
@@ -235,7 +237,7 @@ class L1StackedBaseFile(L1File):
 
 class L1StackFile(L1StackedBaseFile):
     match_pattern = 'stack_[0-9]+\.fit'
-    produces = [L1StackSpectrum]
+    produces = [L1OBStackSpectrum]
     parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OB, ArmConfig, CASU]
 
     @classmethod
@@ -275,7 +277,7 @@ class L1StackFile(L1StackedBaseFile):
             for singlefile in singlefiles:
                 single_spectrum = L1SingleSpectrum.find(sourcefile=str(singlefile.fname), nrow=fibrow['nspec'])
                 single_spectra.append(single_spectrum)
-            stack_spectrum = L1StackSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
+            stack_spectrum = L1OBStackSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
                                              l1singlespectra=single_spectra, ob=ob,
                                              armconfig=armconfig, fibretarget=fibretarget,
                                              casu=casu, tables=fibrow)

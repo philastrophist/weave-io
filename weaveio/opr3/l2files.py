@@ -1,4 +1,4 @@
-from collections import defaultdict
+
 from pathlib import Path
 from typing import Union, List, Dict, Type, Set, Tuple
 
@@ -9,7 +9,7 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
-from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, \
+from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2OBStack, L2SuperStack, \
     L2SuperTarget, L2Single, Exposure, WeaveTarget, L2, Fibre
 from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
@@ -215,7 +215,7 @@ class L2SingleFile(L2File):
 
 
 class L2StackFile(L2File):
-    produces = [L2Stack]
+    produces = [L2OBStack]
     parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 1, 3), OB, APS]
 
     @classmethod

@@ -7,17 +7,19 @@ from operator import and_
 from pathlib import Path
 from typing import Union, List, Tuple, Type, Dict, Set, Callable
 
+import graphviz
 import networkx as nx
 import pandas as pd
 import py2neo
 import textdistance
 from networkx import NetworkXNoPath, NodeNotFound
+from networkx.drawing.nx_pydot import to_pydot
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
-from .hierarchy import Multiple, Hierarchy, Graphable, One2One, Optional, OneOf
+from .hierarchy import Multiple, Hierarchy, Graphable, Optional, OneOf
 from .readquery import Query
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
@@ -128,20 +130,21 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
             child-[m]->Object (each child has m parents of type O)
     """
     relation.instantate_node()
-    if isinstance(relation, One2One):
-        # both edges are in the database
-        graph.add_edge(parent, child, singular=True, optional=True, relation=relation)
-        graph.add_edge(child, parent, singular=True, optional=True, relation=relation)
-    else:
-        # only parent-->child is in the database
-        child_defines_parents = relation.node is parent
-        if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
-            graph.add_edge(child, parent, singular=relation.minnumber == 1, optional=relation.maxnumber == 0)
-            graph.add_edge(parent, child, singular=False, optional=True, relation=relation)
-        else:  # i.e. children = [...] is set in the class for this object
-            # only parent-->child is in the database
-            graph.add_edge(parent, child, singular=relation.minnumber == 1, optional=relation.maxnumber == 0, relation=relation)
-            graph.add_edge(child, parent, singular=False, optional=True)
+    # only parent-->child is in the database
+    relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
+    child_defines_parents = relation.node is parent
+    if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
+        # child instance has n of type Parent, parent instance has unknown number of type Child
+        graph.add_edge(child, parent, singular=relation.maxnumber == 1,
+                       optional=relation.minnumber == 0,
+                       style=relstyle)
+        graph.add_edge(parent, child, singular=False, optional=True, style='dotted', relation=relation)
+    else:  # i.e. children = [...] is set in the class for this object
+        # parent instance has n of type Child, each child instance has one of type Parent
+        graph.add_edge(parent, child, singular=relation.maxnumber == 1,
+                       optional=relation.minnumber == 0,
+                       relation=relation, style=relstyle)
+        graph.add_edge(child, parent, singular=True, optional=True, style='solid')
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
@@ -179,7 +182,7 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
 def hierarchies_from_hierarchies(*hiers: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
     return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
 
-def make_arrows(path: List, forwards: List[bool], descriptors=None):
+def make_arrows(path, forwards: List[bool], descriptors=None):
     descriptors = [descriptors]*len(forwards) if not isinstance(descriptors, (list, tuple)) else descriptors
     descriptors = [f":{descriptor}" if descriptor is not None else "" for descriptor in descriptors]
     assert len(forwards) == len(path) - 1
@@ -199,7 +202,53 @@ def make_arrows(path: List, forwards: List[bool], descriptors=None):
     return ''.join(path_list)
 
 
-def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None) -> Tuple[str, bool]:
+def all_paths(g, from_obj, to_obj):
+    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])
+    try:
+        yield from nx.all_simple_paths(singles, from_obj, to_obj)
+    except NetworkXNoPath:
+        pass
+    try:
+        yield from (p[::-1] for p in nx.all_simple_paths(singles, to_obj, from_obj))
+    except NetworkXNoPath:
+        pass
+    forward = nx.subgraph_view(g, filter_edge=lambda a, b: 'relation' in g.edges[(a, b)])
+    backward = nx.subgraph_view(g, filter_edge=lambda a, b: 'relation' not in g.edges[(a, b)])
+    try:
+        yield from nx.all_simple_paths(forward, from_obj, to_obj)
+    except NetworkXNoPath:
+        pass
+    try:
+        yield from nx.all_simple_paths(backward, from_obj, to_obj)
+    except NetworkXNoPath:
+        pass
+
+def all_unidirectional_paths(g, from_obj, to_obj, force_singular):
+    paths = []
+    for path in all_paths(g, from_obj, to_obj):
+        path = tuple(path)
+        if path in paths:
+            continue
+        paths.append(path)
+        singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
+        if force_singular and not singular:
+            return
+        forwards = ['relation' in g.edges[edge] for edge in zip(path[:-1], path[1:])]
+        if all(forwards) or not any(forwards):
+            yield path, singular, forwards
+
+def is_a_constrained_path(g, path):
+    for i, (a, b) in enumerate(zip(path[:-1], path[1:])):
+        if 'relation' in g.edges[(a, b)]:
+            constrain = g.edges[(a, b)]['relation'].constrain
+        else:
+            constrain = g.edges[(b, a)]['relation'].constrain
+        if constrain:
+            if any(c in path for c in constrain):
+                return True
+    return False
+
+def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None):
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
@@ -207,29 +256,9 @@ def path_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular, descripto
     path: str
     path_yields_singular: bool
     """
-    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])  # type: nx.DiGraph
-    try:
-        # always try for a singular path, but will be plural later
-        path = nx.shortest_path(singles, from_obj, to_obj)
-    except NetworkXNoPath as e:
-        if force_singular:
-            raise e
-        try:
-            # e.g. run.obs find the path ob->run
-            path = nx.shortest_path(singles, to_obj, from_obj)[::-1]
-        except NetworkXNoPath:
-            path = nx.shortest_path(g, from_obj, to_obj)
-    singulars = []
-    forwards = []
-    for edge in zip(path[:-1], path[1:]):
-        singular = g.edges[edge]['singular']
-        forward = 'relation' in g.edges[edge]
-        singulars.append(singular)
-        forwards.append(forward)
-    return make_arrows(path, forwards, descriptor), all(singulars)
-
-        # raise NetworkXNoPath(f"A single={singular} link between {from_obj} and {to_obj} doesn't make sense. "
-        #                      f"Go via a another object.")
+    for path, singular, forwards in all_unidirectional_paths(g, from_obj, to_obj, force_singular):
+        if not is_a_constrained_path(g, path):
+            yield make_arrows(path, forwards, descriptor), singular, path
 
 
 class Data:
@@ -278,25 +307,26 @@ class Data:
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
-    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool):
+    def paths_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool):
         """
         Find path from one obj to another obj with the constraint that the path is singular or not
         raises NetworkXNoPath if there is no path with that constraint
         """
         a, b = map(self.singular_name, [from_obj, to_obj])
-        for i, g in enumerate(self.relation_graphs):
-            try:
-                return path_to_hierarchy(g, self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
-            except (NodeNotFound, NetworkXNoPath):
-                if i == len(self.relation_graphs)-1:
-                    if not singular:
-                        to = f"multiple `{self.plural_name(b)}`"
-                    else:
-                        to = f"only one `{self.singular_name(b)}`"
-                    from_ = self.singular_name(a.lower())
-                    raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
-                                        f"This may be because it doesn't make sense for `{from_}` to have {to}. "
-                                        f"Try checking the cardinalty of your query.")
+        paths = paths_to_hierarchy(self.relation_graphs[-1], self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
+        found_any = False
+        for path in paths:
+            yield path
+            found_any = True
+        if not found_any:
+            if not singular:
+                to = f"multiple `{self.plural_name(b)}`"
+            else:
+                to = f"only one `{self.singular_name(b)}`"
+            from_ = self.singular_name(a.lower())
+            raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
+                                f"This may be because it doesn't make sense for `{from_}` to have {to}. "
+                                f"Try checking the cardinalty of your query.")
 
     def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
         hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
@@ -652,21 +682,20 @@ class Data:
     def __getattr__(self, item):
         return self.query.__getattr__(item)
 
-    def plot_relations(self, i=-1, show_hdus=True, fname='relations.pdf', include=None):
-        from networkx.drawing.nx_agraph import to_agraph
+    def plot_relations(self, i=-1, show_hdus=True, fname='relations', format='pdf', include=None):
+        graph = self.relation_graphs[i]
         if not show_hdus:
-            G = nx.subgraph_view(self.relation_graphs[i], lambda n: not issubclass(n, HDU))  # True to get rid of templated
-        else:
-            G = self.relation_graphs[i]
+            graph = nx.subgraph_view(graph, lambda n: not issubclass(n, HDU))  # True to get rid of templated
+        # G = nx.subgraph_view(graph, filter_edge=lambda a, b: graph.edges[a, b]['style'] !=  'dotted')
+        G = graph
         if include is not None:
             include = [self.singular_hierarchies[i] for i in include]
             include_list = include.copy()
             include_list += [a for i in include for a in nx.ancestors(G, i)]
             include_list += [d for i in include for d in nx.descendants(G, i)]
             G = nx.subgraph_view(G, lambda n: n in include_list)
-        A = to_agraph(G)
-        A.layout('dot')
-        A.draw(fname)
+        graphviz.Source(to_pydot(G).to_string()).render(fname, format=format)
+
 
     def _autosuggest(self, a, relative_to=None):
         a = self.singular_name(a)

@@ -35,7 +35,7 @@ import os
 import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One, Optional, OneOf
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed, Optional, OneOf
 
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 gandalf_line_data = pd.read_csv(HERE / 'expected_lines.csv', sep=' ')
@@ -252,6 +252,7 @@ class OBSpec(Hierarchy):
     the information about when and how to observe.
     When actually observing them, an "OB" is create with its own unique obid.
     """
+    singular_name = 'obspec'
     factors = ['title']
     parents = [ObsTemp, ProgTemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
@@ -274,32 +275,13 @@ class Exposure(Hierarchy):
     These are called runs.
     """
     idname = 'mjd'  # globally unique
-    factors = ['exptime']
-    parents = [OB]
-
-
-class Run(Hierarchy):
-    """
-    A run is one observation of a set of targets for a given configuration in a specific arm (red or blue).
-    A run belongs to an exposure, which always consists of one or two runs (per arm).
-    """
-    idname = 'id'
-    parents = [ArmConfig, Exposure]
-
-
-class Observation(Hierarchy):
-    """
-    A container for actual observing conditions around a run
-    """
-    parents = [One2One(Run), CASU, Simulator, System]
-    factors = ['mjd', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
+    factors = ['exptime', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
                'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
-    products = {'primary': 'primary', 'guidinfo': 'guidinfo', 'metinfo': 'metinfo'}
-    identifier_builder = ['run', 'mjd']
-    version_on = ['run']
+    parents = [OB, CASU, Simulator, System]
+
 
     @classmethod
-    def from_header(cls, run, header):
+    def from_header(cls, ob, header):
         factors = {f: header.get(f) for f in cls.factors}
         factors['mjd'] = float(header['MJD-OBS'])
         factors['obstype'] = header['obstype'].lower()
@@ -309,7 +291,7 @@ class Observation(Hierarchy):
         except KeyError:
             sim = None
         sys = System(sysver=header['sysver'])
-        return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
+        return cls(ob=ob, casu=casu, simulator=sim, system=sys, **factors)
 
 
 class SourcedData(Hierarchy):
@@ -328,11 +310,18 @@ class RawSpectrum(Spectrum):
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
     """
     plural_name = 'rawspectra'
-    parents = [One2One(Observation), CASU]
     products = {'counts1': 'counts1', 'counts2': 'counts2'}
-    version_on = ['observation']
-    # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
+
+
+class Run(Hierarchy):
+    """
+    A run is one observation of a set of targets for a given configuration in a specific arm (red or blue).
+    A run belongs to an exposure, which always consists of one or two runs (per arm).
+    """
+    idname = 'id'
+    parents = [ArmConfig, Exposure]
+    children = [RawSpectrum]
 
 
 class WavelengthHolder(Hierarchy):
@@ -354,23 +343,27 @@ class L1(Hierarchy):
 class NoSS(Spectrum, L1):
     plural_name = 'nosses'
     singular_name = 'noss'
-    products = {'flux': Indexed('flux_noss'), 'ivar': Indexed('ivar_noss')}
+    products = {'flux': Indexed('flux'), 'ivar': Indexed('ivar')}
     children = [Optional('self', idname='adjunct')]
 
 
 class Single(Hierarchy):
     is_template = True
 
-class Stacked(Hierarchy):
+
+class Stack(Hierarchy):
     is_template = True
 
-class Stack(Stacked):
+
+class OBStack(Stack):
     is_template = True
 
-class Superstack(Stacked):
+
+class Superstack(Stack):
     is_template = True
 
-class Supertarget(Stacked):
+
+class Supertarget(Stack):
     is_template = True
 
 
@@ -378,7 +371,7 @@ class L1SpectrumRow(Spectrum, L1):
     singular_name = 'l1_spectrum_row'
     plural_name = 'l1_spectrum_rows'
     is_template = True
-    children = [Optional('self', idname='adjunct'), One2One(NoSS)] # + Multiple.from_names(MeanFlux, 'g', 'r', 'i', 'gg', 'bp', 'rp')
+    children = [Optional('self', idname='adjunct'), NoSS] # + Multiple.from_names(MeanFlux, 'g', 'r', 'i', 'gg', 'bp', 'rp')
 
     products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
                 'sensfunc': Indexed('sensfunc'), 'wvl': 'wvl'}
@@ -391,7 +384,7 @@ class L1SingleSpectrum(L1SpectrumRow, Single):
     """
     singular_name = 'l1single_spectrum'
     plural_name = 'l1single_spectra'
-    parents = L1SpectrumRow.parents + [RawSpectrum, FibreTarget, CASU]
+    parents = L1SpectrumRow.parents + [RawSpectrum, FibreTarget]
     version_on = ['raw_spectrum', 'fibre_target']
     factors = L1SpectrumRow.factors + [
         'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
@@ -401,22 +394,28 @@ class L1SingleSpectrum(L1SpectrumRow, Single):
 
 
 class L1StackSpectrum(L1SpectrumRow, Stack):
+    is_template = True
+    singular_name = 'l1stack_spectrum'
+    plural_name = 'l1stack_spectra'
+
+
+class L1OBStackSpectrum(L1StackSpectrum, OBStack):
     """
     A stacked spectrum row processed from > 1 single spectrum, belonging to one fibretarget but many runs within the same OB.
     """
-    singular_name = 'l1stack_spectrum'
-    plural_name = 'l1stack_spectra'
-    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
+    singular_name = 'l1obstack_spectrum'
+    plural_name = 'l1obstack_spectra'
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
     version_on = ['l1single_spectra', 'fibre_target']
 
 
-class L1SuperstackSpectrum(L1SpectrumRow, Superstack):
+class L1SuperstackSpectrum(L1StackSpectrum, Superstack):
     """
     A stacked spectrum row processed from > 1 single spectrum, belonging to one fibretarget but many runs within the same OBSpec.
     """
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
-    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
+    parents =[Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
     version_on = ['l1single_spectra', 'fibre_target']
 
 
@@ -426,7 +425,7 @@ class L1SupertargetSpectrum(L1SpectrumRow, Supertarget):
     """
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
-    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
     version_on = ['l1single_spectra', 'weave_target']
 
 
@@ -439,15 +438,17 @@ class L2Single(L2, Single):
     An L2 data product resulting from two or sometimes three single L1 spectra.
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
-    parents = [Multiple(L1SingleSpectrum, 2, 3), FibreTarget, APS, Exposure]
+    singular_name = 'l2single'
+    parents = [Multiple(L1SingleSpectrum, 2, 3, constrain=(FibreTarget, Exposure)), APS]
 
 
-class L2Stack(L2, Stack):
+class L2OBStack(L2, OBStack):
     """
     An L2 data product resulting from two or sometimes three stacked/single L1 spectra.
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
-    parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), FibreTarget, APS, OB]
+    singular_name = 'l2stack'
+    parents = [Multiple(L1OBStackSpectrum, 2, 3, constrain=(FibreTarget, OB)), APS]
 
 
 class L2SuperStack(L2, Superstack):
@@ -455,7 +456,8 @@ class L2SuperStack(L2, Superstack):
     An L2 data product resulting from two or sometimes three super-stacked/stacked/single L1 spectra.
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
-    parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), Multiple(L1SuperstackSpectrum, 0, 3), FibreTarget, APS, OBSpec]
+    singular_name = 'l2superstack'
+    parents = [Multiple(L1SpectrumRow, 2, 3, constrain=(FibreTarget, OBSpec)), APS]
 
 
 class L2SuperTarget(L2, Supertarget):
@@ -463,7 +465,8 @@ class L2SuperTarget(L2, Supertarget):
     An L2 data product resulting from two or sometimes three supertarget L1 spectra.
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
-    parents = [Multiple(L1SupertargetSpectrum, 2, 3), APS, WeaveTarget]
+    singular_name = 'l2supertarget'
+    parents = [Multiple(L1SupertargetSpectrum, 2, 3, constrain=(WeaveTarget,)), APS]
 
 
 class L2Spectrum(Spectrum, L2):
@@ -500,6 +503,7 @@ class GandalfL2Spectrum(L2SpectrumLogLam):
         'model': Indexed('*_spectra', 'model'), 'goodpix': Indexed('*_spectra', 'goodpix'),
         'loglambda': Indexed('*_spectra', 'loglam')
     }
+
 
 class Fitter(Author):
     factors = ['version', 'name']
@@ -548,7 +552,7 @@ class RedrockFit(Fit):
     factors = Fit.factors + ['flag', 'class', 'subclass', 'snr', 'best_chi2', 'deltachi2', 'ncoeff', 'coeff',
                              'npixels', 'srvy_class']
     children = [OneOf.from_names(RedrockTemplate, 'galaxy', 'qso', 'star_a', 'star_b', 'star_cv',
-                                  'star_f', 'star_g', 'star_k', 'star_m', 'star_wd')]
+                                 'star_f', 'star_g', 'star_k', 'star_m', 'star_wd')]
     children += [L2ModelSpectrum, OneOf(RedshiftMeasurement, idname='best_redshift')]
 
 
