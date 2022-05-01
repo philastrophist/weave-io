@@ -180,6 +180,7 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
     return hierarchies
 
 def hierarchies_from_hierarchies(*hiers: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
+    hiers += tuple(Hierarchy._hierarchies.values())
     return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
 
 def make_arrows(path, forwards: List[bool], descriptors=None):
@@ -248,7 +249,7 @@ def is_a_constrained_path(g, path):
                 return True
     return False
 
-def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None):
+def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular):
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
@@ -258,7 +259,20 @@ def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular, descript
     """
     for path, singular, forwards in all_unidirectional_paths(g, from_obj, to_obj, force_singular):
         if not is_a_constrained_path(g, path):
-            yield make_arrows(path, forwards, descriptor), singular, path
+            yield path, forwards, singular
+
+
+def paths_to_hierarchy_with_above(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None):
+    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])
+    ancestors = [from_obj] + list(nx.ancestors(singles, from_obj))
+    for ancestor in ancestors:
+        for path, forwards, singular in paths_to_hierarchy(g, ancestor, to_obj, force_singular):
+            if not any(n in path for n in ancestors):
+                yield path, forwards, singular
+
+
+def plot_graph(G, fname, format):
+    return graphviz.Source(to_pydot(G).to_string()).render(fname, format=format)
 
 
 class Data:
@@ -307,7 +321,7 @@ class Data:
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
-    def paths_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool):
+    def paths_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None):
         """
         Find path from one obj to another obj with the constraint that the path is singular or not
         raises NetworkXNoPath if there is no path with that constraint
@@ -315,8 +329,8 @@ class Data:
         a, b = map(self.singular_name, [from_obj, to_obj])
         paths = paths_to_hierarchy(self.relation_graphs[-1], self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
         found_any = False
-        for path in paths:
-            yield path
+        for path, forwards, singular in paths:
+            yield make_arrows(path, forwards, descriptor), singular, path
             found_any = True
         if not found_any:
             if not singular:
@@ -327,6 +341,16 @@ class Data:
             raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
                                 f"This may be because it doesn't make sense for `{from_}` to have {to}. "
                                 f"Try checking the cardinalty of your query.")
+
+    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None):
+        generator = self.paths_to_hierarchy(from_obj, to_obj, singular, descriptor)
+        arrows, singular, path = next(generator)
+        others = '\n'.join(['.'.join([ii.__name__ for ii in i[-1]]) for i in generator])
+        if others:
+            raise NetworkXNoPath(f"Found multiple paths between `{from_obj}` and `{to_obj}` via these paths:"
+                                 f"\n{others}")
+
+        return arrows, singular
 
     def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
         hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
@@ -694,8 +718,7 @@ class Data:
             include_list += [a for i in include for a in nx.ancestors(G, i)]
             include_list += [d for i in include for d in nx.descendants(G, i)]
             G = nx.subgraph_view(G, lambda n: n in include_list)
-        graphviz.Source(to_pydot(G).to_string()).render(fname, format=format)
-
+        plot_graph(G, fname, format)
 
     def _autosuggest(self, a, relative_to=None):
         a = self.singular_name(a)
@@ -708,7 +731,7 @@ class Data:
             newsuggestions = []
             if relative_to is not None:
                 try:
-                    self.path_to_hierarchy(relative_to, h_singular_name, singular=True)
+                    self.paths_to_hierarchy(relative_to, h_singular_name, singular=True)
                 except NetworkXNoPath:
                     hier = h.singular_name
                     factors = h.products_and_factors

@@ -8,7 +8,7 @@ from warnings import warn
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
-from .utilities import Varname, make_plural, int_or_none, camelcase2snakecase
+from .utilities import Varname, make_plural, int_or_none, camelcase2snakecase, snakecase2camelcase
 
 
 def _convert_types_to_node(x):
@@ -88,7 +88,7 @@ class Multiple:
                 self.node = hierarchies[self.node]
         self.singular_name = self.node.singular_name
         self.plural_name = self.node.plural_name
-        self.idname = self.node.idname
+
         try:
             self.factors =  self.node.factors
         except AttributeError:
@@ -221,8 +221,8 @@ class GraphableMeta(type):
                     mn, mx = parentnames[p]
                     if mn == 0:
                         raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
-                    if mx != mn:
-                        raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
+                    # if mx != mn:
+                    #     raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
                     nparents_in_id += mx
                 elif p in cls.factors:
                     pass
@@ -557,7 +557,26 @@ class Graphable(metaclass=GraphableMeta):
 class Hierarchy(Graphable):
     parents = []
     factors = []
+    _hierarchies = {}
     is_template = True
+
+    @classmethod
+    def from_name(cls, name):
+        singular_name = f"{name}_{cls.singular_name}"
+        plural_name = f"{name}_{cls.plural_name}"
+        name = snakecase2camelcase(name)
+        name = f"{name}{cls.__name__}"
+        try:
+            return cls._hierarchies[name]
+        except KeyError:
+            cls._hierarchies[name] = type(name, (cls,), {'singular_name': singular_name, 'plural_name': plural_name})
+            return cls._hierarchies[name]
+
+    @classmethod
+    def from_names(cls, *names):
+        if len(names) == 1 and isinstance(names[0], list):
+            names = names[0]
+        return [cls.from_name(name) for name in names]
 
     def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str], Dict[str, Type[Graphable]]]:
         """

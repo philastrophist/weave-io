@@ -1,7 +1,9 @@
 import logging
+import sys
 from pathlib import Path
 from typing import Union, List, Tuple, Dict
 
+import inspect
 from astropy.io import fits
 from astropy.io.fits.hdu.base import _BaseHDU
 from astropy.table import Table as AstropyTable
@@ -12,8 +14,8 @@ from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralR
 from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
-    OBSpec, OB, Exposure, Run, RawSpectrum, L1SingleSpectrum, \
-    L1SuperstackSpectrum, L1SupertargetSpectrum, CASU, WavelengthHolder, L1OBStackSpectrum
+    OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate
+from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, WavelengthHolder
 from weaveio.writequery import groupby, CypherData
 
 
@@ -315,3 +317,4 @@ class L1SuperTargetFile(L1StackedBaseFile):
         raise NotImplementedError
 
 
+hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

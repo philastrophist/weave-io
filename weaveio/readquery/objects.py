@@ -9,7 +9,7 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
-from typing import List, TYPE_CHECKING, Union
+from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
 
 from networkx import NetworkXNoPath
 
@@ -285,6 +285,16 @@ class ObjectQuery(GenericObjectQuery):
 
     def __eq__(self, other):
         return self._select_attribute('id', True).__eq__(other)
+
+
+class TemplateObjectQuery(BaseQuery):
+
+    def _traverse_to_specific_object(self, obj, want_single):
+        h = self._data.class_hierarchies[self._obj]
+        [v for k, v in h._hierarchies.items() if issubclass(v, h)]
+
+    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+        raise NotImplementedError(f"You may not compile a non specific object")
 
 
 class Query(GenericObjectQuery):
