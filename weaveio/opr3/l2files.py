@@ -1,7 +1,8 @@
-from collections import defaultdict
+import sys
 from pathlib import Path
 from typing import Union, List, Dict, Type, Set, Tuple
 
+import inspect
 from astropy.io import fits
 from astropy.io.fits.hdu.base import _BaseHDU
 from astropy.table import Table
@@ -9,8 +10,9 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
-from weaveio.opr3.hierarchy import APS, L1SpectrumRow, FibreTarget, OB, OBSpec, L2Stack, L2SuperStack, \
-    L2SuperTarget, L2Single, Exposure, WeaveTarget, L2, Fibre
+from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate
+from weaveio.opr3.l1 import L1Spectrum
+from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2SuperStack, L2SuperTarget
 from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
 
@@ -35,6 +37,7 @@ class L2File(File):
     match_pattern = '.*APS.fits'
     antimatch_pattern = '.*cube.*'
     produces = [L2]
+    children = [L2]
     parents = [Multiple(L1File, 2, 3), APS]
     hdus = {'primary': PrimaryHDU,
             'class_spectra': TableHDU,
@@ -135,7 +138,7 @@ class L2File(File):
     @classmethod
     def produce_l2(cls, sourcefile, nrow, l1spectrumrows, aps, **hierarchies):
         assert len(cls.produces) == 1
-        sdict = {p.plural_name: [] for p in cls.produces[0].parents if isinstance(p, Multiple) and issubclass(p.node, L1SpectrumRow)}  # parse the l1spectrum types separately
+        sdict = {p.plural_name: [] for p in cls.produces[0].parents if isinstance(p, Multiple) and issubclass(p.node, L1Spectrum)}  # parse the l1spectrum types separately
         for f in l1spectrumrows:
             sdict[f.plural_name].append(f)
         hierarchies.update(sdict)
@@ -206,6 +209,7 @@ class L2File(File):
 
 class L2SingleFile(L2File):
     produces = [L2Single]
+    children = [L2Single]
     parents = [Multiple(L1SingleFile, 2, 3), Exposure, APS]
 
     @classmethod
@@ -215,7 +219,8 @@ class L2SingleFile(L2File):
 
 
 class L2StackFile(L2File):
-    produces = [L2Stack]
+    produces = [L2OBStack]
+    children = [L2OBStack]
     parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 1, 3), OB, APS]
 
     @classmethod
@@ -226,6 +231,7 @@ class L2StackFile(L2File):
 
 class L2SuperStackFile(L2File):
     produces = [L2SuperStack]
+    children = [L2SuperStack]
     parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3), OBSpec, APS]
 
     @classmethod
@@ -237,6 +243,7 @@ class L2SuperStackFile(L2File):
 class L2SuperTargetFile(L2File):
     match_pattern = 'WVE_*aps.fits'
     produces = [L2SuperTarget]
+    children = [L2SuperTarget]
     parents = [Multiple(L1SuperTargetFile, 2, 3), WeaveTarget, APS]
 
     @classmethod
@@ -249,3 +256,6 @@ class L2SuperTargetFile(L2File):
         names = [i.name for i in hdus]
         cname = hdus[names.index('CLASS_TABLE')].data['CNAME'][0]
         return {'weavetarget': WeaveTarget.find(cname=cname)}
+
+
+hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

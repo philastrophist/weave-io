@@ -1,8 +1,23 @@
+import re
 import xxhash
 import inflect
 
 INFLECTOR = inflect.engine()
 PLURAL_DICT = {'spectrum': 'spectra', 'noss': 'nosses', 'use': 'uses'}
+
+def snakecase2camelcase(name):
+    """
+    Returns a string with underscores between words in camelcase name
+    """
+    return ''.join(x.capitalize() for x in name.split('_'))
+
+
+def camelcase2snakecase(name):
+    """
+    Returns a string with underscores between words in camelcase name
+    """
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
 
 def make_plural(name):
     if name.endswith('_group'):

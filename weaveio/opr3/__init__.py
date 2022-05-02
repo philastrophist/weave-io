@@ -4,4 +4,10 @@ from weaveio.opr3.l2files import L2StackFile, L2SuperStackFile, L2SingleFile, L2
 
 
 class Data(BaseData):
-    filetypes = [RawFile, L1SingleFile, L2SingleFile, L1StackFile, L2StackFile, L1SuperStackFile, L2SuperStackFile, L1SuperTargetFile, L2SuperTargetFile]
+    filetypes = [
+        RawFile,
+        L1SingleFile, L2SingleFile,
+        L1StackFile, L2StackFile,
+        L1SuperStackFile, L2SuperStackFile,
+        L1SuperTargetFile, L2SuperTargetFile
+]

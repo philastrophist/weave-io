@@ -120,13 +120,21 @@ class BaseQuery:
         return obj, obj_is_singular, attr_is_singular
 
     def _normalise_object(self, obj: str):
-        obj = obj.lower()
+        """
+        returns the __name__ of the respective class of the obj and whether it is plural/singular.
+        If not a class, raise KeyError
+        """
+        if obj in self._data.class_hierarchies:
+            return obj, True
+        singular = self._data.singular_name(obj)
+        if singular not in self._data.singular_hierarchies:
+            raise KeyError(f"{obj} is not a valid object name")
         try:
-            h = self._data.singular_hierarchies[obj]
-            singular = True
-        except KeyError:
-            h = self._data.plural_hierarchies[obj]
+            h = self._data.plural_hierarchies[obj.lower()]
             singular = False
+        except KeyError:
+            h = self._data.singular_hierarchies[obj.lower()]
+            singular = True
         return h.__name__, singular
 
     @property

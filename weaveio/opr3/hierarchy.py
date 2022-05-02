@@ -28,18 +28,21 @@ You can modify the first relation in each of the above by using:
     Optional(parent/child) == Multiple(parent/Child, 0, 1)
 
 """
+import sys
 from pathlib import Path
 
 import os
 
+import inspect
 import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed, One2One, Optional
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed
 
-HERE = Path(os.path.dirname(os.path.abspath(__file__)))
-gandalf_line_data = pd.read_csv(HERE / 'expected_lines.csv', sep=' ')
-gandalf_index_data = pd.read_csv(HERE / 'expected_line_indices.csv', sep=' ')
+
+class Measurement(Hierarchy):
+    factors = ['value', 'error']
+    indexes = ['value']
 
 
 class Author(Hierarchy):
@@ -52,7 +55,7 @@ class CASU(Author):
     The version of CASU that produces these files may change without warning and files may be duplicated.
     This CASU object breaks that potential degeneracy.
     """
-    idname = 'casuid'
+    idname = 'id'
 
 
 class APS(Author):
@@ -61,7 +64,7 @@ class APS(Author):
     The version of APS that produces these files may change without warning and files may be duplicated.
     This APS object breaks that potential degeneracy.
     """
-    idname = 'apsvers'
+    idname = 'version'
 
 
 class Simulator(Author):
@@ -69,12 +72,12 @@ class Simulator(Author):
     Data which were simulated in an operation rehearsal will be be produced by a Simulator.
     Real data will not have a Simulator.
     """
-    factors = ['simvdate', 'simver', 'simmode']
+    factors = ['date', 'version', 'mode']
     identifier_builder = factors
 
 
 class System(Author):
-    idname = 'sysver'
+    idname = 'version'
 
 
 class ArmConfig(Hierarchy):
@@ -159,7 +162,7 @@ class Fibre(Hierarchy):
     """
     A WEAVE spectrograph fibre
     """
-    idname = 'fibreid'
+    idname = 'id'
 
 
 class SubProgramme(Hierarchy):
@@ -168,7 +171,7 @@ class SubProgramme(Hierarchy):
     """
     parents = [Multiple(Survey)]
     factors = ['name']
-    idname = 'progid'
+    idname = 'id'
 
 
 class SurveyCatalogue(Hierarchy):
@@ -177,7 +180,11 @@ class SurveyCatalogue(Hierarchy):
     """
     parents = [SubProgramme]
     factors = ['name']
-    idname = 'catid'
+    idname = 'id'
+
+
+class Magnitude(Measurement):
+    pass
 
 
 class SurveyTarget(Hierarchy):
@@ -186,10 +193,9 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     """
     parents = [SurveyCatalogue, WeaveTarget]
-    factors = ['targid', 'targname', 'targra', 'targdec', 'targepoch',
-               'targpmra', 'targpmdec', 'targparal', 'mag_g', 'emag_g', 'mag_r', 'emag_r', 'mag_i', 'emag_i', 'mag_gg', 'emag_gg',
-               'mag_bp', 'emag_bp', 'mag_rp', 'emag_rp']
-    identifier_builder = ['weavetarget', 'surveycatalogue', 'targid', 'targra', 'targdec']
+    factors = ['id', 'name', 'ra', 'dec', 'epoch', 'pmra', 'pmdec', 'paral']
+    children = Magnitude.from_names('g', 'r', 'i', 'gg', 'bp', 'rp')
+    identifier_builder = ['weave_target', 'survey_catalogue', 'id', 'ra', 'dec']
 
 
 class InstrumentConfiguration(Hierarchy):
@@ -198,8 +204,8 @@ class InstrumentConfiguration(Hierarchy):
     InstrumentConfiguration holds the mode, binning, and is linked to an ArmConfig.
     """
     factors = ['mode', 'binning']
-    parents = [Multiple(ArmConfig, 2, 2, idname='camera')]
-    identifier_builder = ['armconfigs', 'mode', 'binning']
+    parents = [Multiple(ArmConfig, 2, 2)]
+    identifier_builder = ['arm_configs', 'mode', 'binning']
 
 
 class ProgTemp(Hierarchy):
@@ -211,7 +217,7 @@ class ProgTemp(Hierarchy):
     """
     parents = [InstrumentConfiguration]
     factors = ['length', 'exposure_code', 'code']
-    identifier_builder = ['instrumentconfiguration'] + factors
+    identifier_builder = ['instrument_configuration'] + factors
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -233,10 +239,9 @@ class FibreTarget(Hierarchy):
     the fibres are assigned.
     This object describes where the fibre is placed and what its status is.
     """
-    factors = ['fibrera', 'fibredec', 'status', 'xposition', 'yposition',
-               'orientat',  'retries', 'targx', 'targy', 'targuse', 'targprio']
+    factors = ['ra', 'dec', 'status', 'orientation', 'nretries', 'x', 'y', 'use', 'priority']
     parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'surveytarget', 'fibrera', 'fibredec', 'targuse']
+    identifier_builder = ['fibre', 'survey_target', 'ra', 'dec', 'use']
 
 
 class OBSpec(Hierarchy):
@@ -245,7 +250,8 @@ class OBSpec(Hierarchy):
     the information about when and how to observe.
     When actually observing them, an "OB" is create with its own unique obid.
     """
-    factors = ['obtitle']
+    singular_name = 'obspec'
+    factors = ['title']
     parents = [ObsTemp, ProgTemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
@@ -255,8 +261,8 @@ class OB(Hierarchy):
     An OB is an "observing block" which is essentially a realisation of an OBSpec.
     Many OBs can share the same xml OBSpec which describes how to do the observations.
     """
-    idname = 'obid'  # This is globally unique by obid
-    factors = ['obstartmjd']
+    idname = 'id'  # This is globally unique by obid
+    factors = ['mjd']
     parents = [OBSpec]
 
 
@@ -266,42 +272,24 @@ class Exposure(Hierarchy):
     WEAVE is structured such that an exposure is actually two sets of data, one from each arm.
     These are called runs.
     """
-    idname = 'expmjd'  # globally unique
-    parents = [OB]
-
-
-class Run(Hierarchy):
-    """
-    A run is one observation of a set of targets for a given configuration in a specific arm (red or blue).
-    A run belongs to an exposure, which always consists of one or two runs (per arm).
-    """
-    idname = 'runid'
-    parents = [ArmConfig, Exposure]
-
-
-class Observation(Hierarchy):
-    """
-    A container for actual observing conditions around a run
-    """
-    parents = [One2One(Run), CASU, Simulator, System]
-    factors = ['mjdobs', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
+    idname = 'mjd'  # globally unique
+    factors = ['exptime', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
                'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
-    products = {'primary': 'primary', 'guidinfo': 'guidinfo', 'metinfo': 'metinfo'}
-    identifier_builder = ['run', 'mjdobs']
-    version_on = ['run']
+    parents = [OB, CASU, Simulator, System]
+
 
     @classmethod
-    def from_header(cls, run, header):
+    def from_header(cls, ob, header):
         factors = {f: header.get(f) for f in cls.factors}
-        factors['mjdobs'] = float(header['MJD-OBS'])
+        factors['mjd'] = float(header['MJD-OBS'])
         factors['obstype'] = header['obstype'].lower()
-        casu = CASU(casuid=header.get('casuvers', header.get('casuid')))
+        casu = CASU(id=header.get('casuvers', header.get('casuid')))
         try:
             sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
         except KeyError:
             sim = None
         sys = System(sysver=header['sysver'])
-        return cls(run=run, casu=casu, simulator=sim, system=sys, **factors)
+        return cls(ob=ob, casu=casu, simulator=sim, system=sys, **factors)
 
 
 class SourcedData(Hierarchy):
@@ -315,16 +303,80 @@ class Spectrum(SourcedData):
     plural_name = 'spectra'
 
 
+class Spectrum1D(Spectrum):
+    is_template = True
+    products = {'flux': Indexed('flux'), 'ivar': Indexed('ivar'), 'wvl': 'wvl'}
+
+
+class Spectrum2D(Spectrum):
+    is_template = True
+
+
 class RawSpectrum(Spectrum):
     """
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
     """
     plural_name = 'rawspectra'
-    parents = [One2One(Observation), CASU]
     products = {'counts1': 'counts1', 'counts2': 'counts2'}
-    version_on = ['observation']
-    # any duplicates under a run will be versioned based on their appearance in the database
     # only one raw per run essentially
+
+
+class Run(Hierarchy):
+    """
+    A run is one observation of a set of targets for a given configuration in a specific arm (red or blue).
+    A run belongs to an exposure, which always consists of one or two runs (per arm).
+    """
+    idname = 'id'
+    parents = [ArmConfig, Exposure]
+    children = [RawSpectrum]
+
+
+class Single(Hierarchy):
+    is_template = True
+
+
+class Stack(Hierarchy):
+    is_template = True
+
+
+class OBStack(Stack):
+    is_template = True
+
+
+class Superstack(Stack):
+    is_template = True
+
+
+class Supertarget(Stack):
+    is_template = True
+
+
+def _predicate(o):
+    if inspect.isclass(o):
+        return issubclass(o, Hierarchy)
+    return False
+hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
+
+
+class MCMCMeasurement(Measurement):
+    is_template = True
+    factors = Measurement.factors + ['formal_error']
+
+
+class Line(Measurement):
+    is_template = True
+    factors = ['wvl', 'aon', 'vaccum']
+    factors += Measurement.as_factors('flux', 'redshift', 'sigma', 'ebmv', 'amp')
+    indexes = ['wvl']
+
+
+class SpectralIndex(Measurement):
+    is_template = True
+
+
+class RedshiftMeasurement(Measurement):
+    is_template = True
+    factors = Measurement.factors + ['warn']
 
 
 class WavelengthHolder(Hierarchy):
@@ -332,152 +384,8 @@ class WavelengthHolder(Hierarchy):
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
 
 
-class L1SpectrumRow(Spectrum):
-    plural_name = 'l1spectrumrows'
-    is_template = True
-    children = [Optional('self', idname='adjunct')]
-    products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
-                'flux_noss': Indexed('flux_noss'), 'ivar_noss': Indexed('ivar_noss'), 'sensfunc': Indexed('sensfunc')}
-    factors = Spectrum.factors + ['nspec', 'exptime', 'snr', 'meanflux_g', 'meanflux_r', 'meanflux_i', 'meanflux_gg', 'meanflux_bp', 'meanflux_rp']
-
-
-class L1SingleSpectrum(L1SpectrumRow):
-    """
-    A single spectrum row processed from a raw spectrum, belonging to one fibretarget and one run.
-    """
-    plural_name = 'l1singlespectra'
-    parents = L1SpectrumRow.parents + [RawSpectrum, FibreTarget, CASU]
-    version_on = ['rawspectrum', 'fibretarget']
-    factors = L1SpectrumRow.factors + [
-        'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
-        'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
-        'skyline_off1', 'skyline_rms1', 'skyline_off2', 'skyline_rms2',
-        'sky_shift', 'sky_scale']
-
-
-class L1StackSpectrum(L1SpectrumRow):
-    """
-    A stacked spectrum row processed from > 1 single spectrum, belonging to one fibretarget but many runs within the same OB.
-    """
-    plural_name = 'l1stackspectra'
-    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OB, ArmConfig, FibreTarget, CASU]
-    version_on = ['l1singlespectra', 'fibretarget']
-
-
-class L1SuperStackSpectrum(L1SpectrumRow):
-    """
-    A stacked spectrum row processed from > 1 single spectrum, belonging to one fibretarget but many runs within the same OBSpec.
-    """
-    plural_name = 'l1superstackspectra'
-    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), OBSpec, ArmConfig, FibreTarget, CASU]
-    version_on = ['l1singlespectra', 'fibretarget']
-
-
-class L1SuperTargetSpectrum(L1SpectrumRow):
-    """
-    A stacked spectrum row processed from > 1 single spectrum, belonging to one weavetarget over many different OBSpecs.
-    """
-    plural_name = 'l1supertargetspectra'
-    parents = L1SpectrumRow.parents + [Multiple(L1SingleSpectrum, 2), WeaveTarget, CASU]
-    version_on = ['l1singlespectra', 'weavetarget']
-
-
-class L2(SourcedData):
-    is_template = True
-
-
-class L2Single(L2):
-    """
-    An L2 data product resulting from two or sometimes three single L1 spectra.
-    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
-    """
-    parents = [Multiple(L1SingleSpectrum, 2, 3), FibreTarget, APS, Exposure]
-
-
-class L2Stack(L2):
-    """
-    An L2 data product resulting from two or sometimes three stacked/single L1 spectra.
-    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
-    """
-    parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), FibreTarget, APS, OB]
-
-
-class L2SuperStack(L2):
-    """
-    An L2 data product resulting from two or sometimes three super-stacked/stacked/single L1 spectra.
-    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
-    """
-    parents = [Multiple(L1SingleSpectrum, 0, 3), Multiple(L1StackSpectrum, 0, 3), Multiple(L1SuperStackSpectrum, 0, 3), FibreTarget, APS, OBSpec]
-
-
-class L2SuperTarget(L2):
-    """
-    An L2 data product resulting from two or sometimes three supertarget L1 spectra.
-    The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
-    """
-    parents = [Multiple(L1SuperTargetSpectrum, 2, 3), APS, WeaveTarget]
-
-
-class L2Spectrum(Spectrum):
-    factors = ['sourcefile', 'hduname', 'nrow']
-    identifier_builder = ['sourcefile', 'hduname', 'nrow']
-    belongs_to = ['l2']
-    parents = [L2]
-    plural_name = 'l2spectra'
-    products = {'flux': Indexed('*_spectra', 'flux'), 'ivar': Indexed('*_spectra', 'ivar'),
-                'model': Indexed('*_spectra', 'model'),
-                'lambda': Indexed('*_spectra', 'lambda')}
-
-
-class L2SpectrumLogLam(L2Spectrum):
-    products = {'flux': Indexed('*_spectra', 'flux'), 'err': Indexed('*_spectra', 'err'),
-                'model': Indexed('*_spectra', 'model'), 'goodpix': Indexed('*_spectra', 'goodpix'),
-                'loglambda': Indexed('*_spectra', 'loglam')}
-
-
-class GandalfL2Spectrum(L2SpectrumLogLam):
-    products = {
-        'flux': Indexed('*_spectra', 'flux'), 'err': Indexed('*_spectra', 'err'),
-        'flux_clean': Indexed('*_spectra', 'flux_clean'), 'model_clean': Indexed('*_spectra', 'model_clean'),
-        'emission': Indexed('*spectra', 'emission'),
-        'model': Indexed('*_spectra', 'model'), 'goodpix': Indexed('*_spectra', 'goodpix'),
-        'loglambda': Indexed('*_spectra', 'loglam')
-    }
-
-
-class Fit(Hierarchy):
-    is_template = True
-    parents = [L2Spectrum, APS]
-    factors = ['version']
-    identifier_builder = ['version', 'l2spectrum']
-
-
-class Measurement(Hierarchy):
-    is_template = True
-    factors = ['value', 'error']
-
-
-class MCMCMeasurement(Measurement):
-    is_template = True
-    factors = ['value', 'mcmc_error', 'formal_error']
-
-
-class Line(Measurement):
-    idname = 'name'
-    factors = ['wvl', 'aon', 'vaccum']
-    children = Multiple.from_names(Measurement, 'flux', 'redshift', 'sigma', 'ebmv', 'amp')
-
-
-class SpectralIndex(Measurement):
-    idname = 'name'
-
-
-class Redrock(Fit):
-    plural_name = 'redrocks'
-    factors = Fit.factors + ['flag', 'class', 'subclass', 'snr', 'chi2', 'deltachi2', 'ncoeff', 'coeff',
-               'npixels', 'srvy_class']
-    children = Multiple.from_names(Measurement, 'best_redshift')
-
-
-import sys, inspect
-hierarchies = list(filter(lambda x: issubclass(x, Hierarchy), [obj for name, obj in inspect.getmembers(sys.modules[__name__]) if inspect.isclass(obj)]))
+class MeanFlux(Hierarchy):
+    singular_name = 'mean_flux'
+    plural_name = 'mean_fluxes'
+    idname = 'band'
+    factors = ['value']
