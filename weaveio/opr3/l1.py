@@ -1,7 +1,7 @@
 import inspect
 import sys
 
-from weaveio.hierarchy import Optional, Indexed, Multiple, Hierarchy
+from weaveio.hierarchy import Optional, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Spectrum, Single, FibreTarget, Stack, \
     OBStack, OB, ArmConfig, Superstack, OBSpec, Supertarget, WeaveTarget, RawSpectrum, _predicate, Spectrum1D, MeanFlux
 
@@ -13,15 +13,14 @@ class L1(Hierarchy):
 class NoSS(Spectrum1D, L1):
     plural_name = 'nosses'
     singular_name = 'noss'
-    products = {'flux': Indexed('flux'), 'ivar': Indexed('ivar')}
+    products = ['flux', 'ivar']
     children = [Optional('self', idname='adjunct')]
 
 
 class L1Spectrum(Spectrum1D, L1):
     is_template = True
     children = [Optional('self', idname='adjunct'), NoSS]
-    products = {'primary': 'primary', 'flux': Indexed('flux'), 'ivar': Indexed('ivar'),
-                'sensfunc': Indexed('sensfunc'), 'wvl': 'wvl'}
+    products = ['primary', 'flux', 'ivar', 'sensfunc', 'wvl']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
 
 

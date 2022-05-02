@@ -4,7 +4,7 @@ import os
 import pandas as pd
 from pathlib import Path
 
-from weaveio.hierarchy import Indexed, Multiple, Hierarchy, OneOf, Optional
+from weaveio.hierarchy import Multiple, Hierarchy, OneOf, Optional
 from weaveio.opr3.hierarchy import SourcedData, Spectrum, Author, APS, Measurement, \
     Single, FibreTarget, Exposure, OBStack, OB, Superstack, \
     OBSpec, Supertarget, WeaveTarget, _predicate, MCMCMeasurement, Line, SpectralIndex, RedshiftMeasurement, Spectrum1D
@@ -26,50 +26,28 @@ class IngestedSpectrum(Spectrum1D):
     """
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
-    factors = ['sourcefile', 'hduname', 'nrow']
-    identifier_builder = ['sourcefile', 'hduname', 'nrow']
+    factors = ['sourcefile', 'nrow']
     parents = [Multiple(L1Spectrum, 1, 3), APS]
+    identifier_builder = ['sourcefile', 'nrow', 'l1_spectra']
 
 class RestFrameIngestedSpectrum(IngestedSpectrum):
     pass
 
 class RedrockIngestedSpectrum(IngestedSpectrum):
-    products = {
-        'flux': Indexed('*_spectra', 'flux'),
-        'ivar': Indexed('*_spectra', 'ivar'),
-        'wvl': Indexed('*_spectra', 'wvl'),
-    }
+    products = [ 'flux', 'ivar', 'wvl']
 
 class RVSpecFitIngestedSpectrum(IngestedSpectrum):
     singular_name = 'rvspecfit_ingested_spectrum'
-    products = {
-        'flux': Indexed('*_spectra', 'flux'),
-        'error': Indexed('*_spectra', 'error'),
-        'wvl': Indexed('*_spectra', 'wvl'),
-    }
+    products = [ 'flux', 'error', 'wvl']
 
 class FerreIngestedSpectrum(IngestedSpectrum):
-    products = {
-        'flux': Indexed('*_spectra', 'flux'),
-        'error': Indexed('*_spectra', 'error'),
-        'wvl': Indexed('*_spectra', 'wvl'),
-    }
+    products = [ 'flux', 'error', 'wvl']
 
 class PPXFIngestedSpectrum(RestFrameIngestedSpectrum):
-    products = {
-        'flux': Indexed('*_spectra', 'flux'),
-        'error': Indexed('*_spectra', 'error'),
-        'logwvl': Indexed('*_spectra', 'logwvl'),
-        'goodpix': Indexed('*_spectra', 'goodpix'),
-    }
+    products = [ 'flux', 'error', 'logwvl', 'goodpix']
 
 class GandalfIngestedSpectrum(RestFrameIngestedSpectrum):
-    products = {
-        'flux': Indexed('*_spectra', 'flux'),
-        'error': Indexed('*_spectra', 'error'),
-        'logwvl': Indexed('*_spectra', 'logwvl'),
-        'goodpix': Indexed('*_spectra', 'goodpix'),
-    }
+    products = [ 'flux', 'error', 'logwvl', 'goodpix']
 
 
 class FittingSoftware(Author):
@@ -83,7 +61,8 @@ class Fit(Hierarchy):
     otherwise, there are more.
     """
     is_template = True
-    parents = [Multiple(IngestedSpectrum, 1, 3), FittingSoftware]
+    parents = [FittingSoftware]
+    children = [Multiple(IngestedSpectrum, 1, 3)]
 
 
 class RedrockVersion(FittingSoftware):
@@ -113,7 +92,7 @@ class RedrockFit(Fit):
     factors += RedrockTemplate.as_factors('galaxy', 'qso', 'star_a', 'star_b', 'star_cv',
                                  'star_f', 'star_g', 'star_k', 'star_m', 'star_wd')
     parents = [RedrockVersion]
-    children = [Optional(RedrockIngestedSpectrum, 1, 4)]
+    children = [Multiple(RedrockIngestedSpectrum, 1, 4)]
     identifier_builder = ['redrock_version', 'redrock_ingested_spectra']
 
 
@@ -151,39 +130,35 @@ class PPXFFit(Fit):
 
 class L2ModelSpectrum(Spectrum, L2):
     is_template = True
-    factors = ['sourcefile', 'hduname', 'nrow']
-    identifier_builder = ['sourcefile', 'hduname', 'nrow']
+    factors = ['sourcefile', 'nrow']
+    identifier_builder = ['sourcefile', 'nrow']
     parents = [Fit, Multiple(IngestedSpectrum, 1, 3)]
-    products = {'model': Indexed('*_spectra', 'model'),
-                'wvl': Indexed('*_spectra', 'wvl')}
+    products = ['model', 'wvl']
 
 
 class RedrockModelSpectrum(L2ModelSpectrum):
     parents = [RedrockFit, Multiple(RedrockIngestedSpectrum, 1, 4)]
 
+
 class RVSpecFitModelSpectrum(L2ModelSpectrum):
     parents = [RVSpecFit, Multiple(RVSpecFitIngestedSpectrum, 1, 4)]
+
 
 class FerreModelSpectrum(L2ModelSpectrum):
     parents = [FerreFit, Multiple(FerreIngestedSpectrum, 1, 4)]
 
+
 class PPXFModelSpectrum(L2ModelSpectrum):
     parents = [PPXFFit, PPXFIngestedSpectrum]
+
 
 class CompositeModelSpectrum(L2ModelSpectrum):
     is_template = True
 
-class GandalfEmissionModelSpectrum(L2ModelSpectrum):
-    pass
-
-class GandalfCleanModelSpectrum(L2ModelSpectrum):
-    pass
 
 class GandalfModelSpectrum(CompositeModelSpectrum):
     parents = [GandalfFit, GandalfIngestedSpectrum]
-    products = {'model': Indexed('*_spectra', 'model'),
-                'logwvl': Indexed('*_spectra', 'logwvl')}
-    children = [GandalfEmissionModelSpectrum, GandalfCleanModelSpectrum]
+    products = ['model', 'logwvl', 'clean', 'emission', 'flux_clean']
 
 
 class L2Product(L2):

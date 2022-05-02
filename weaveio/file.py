@@ -71,7 +71,7 @@ class HDU(Hierarchy):
     parents = [File]
     factors = ['extn', 'name']
     identifier_builder = ['file', 'extn', 'name']
-    products = {'header', 'data'}
+    products = ['header', 'data']
 
     @classmethod
     def from_hdu(cls, name, hdu, extn, file):

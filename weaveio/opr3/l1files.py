@@ -10,7 +10,7 @@ from astropy.table import Table as AstropyTable
 import numpy as np
 
 from weaveio.config_tables import progtemp_config
-from weaveio.file import File, PrimaryHDU, TableHDU
+from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
 from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
@@ -139,8 +139,10 @@ class HeaderFibinfoFile(File):
 
 class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
+    hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
+            'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
-    children = [Run]
+    children = [RawSpectrum]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -159,6 +161,9 @@ class RawFile(HeaderFibinfoFile):
 
 class L1File(HeaderFibinfoFile):
     is_template = True
+    hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
+            'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
+            'sensfunc': BinaryHDU, 'fibtable': TableHDU}
     children = [WavelengthHolder]
 
     @classmethod

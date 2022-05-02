@@ -7,7 +7,7 @@ class Name(Type):
     idname = 'the_name_of_the_unique_attribute_of_this_Object'
     identifier_builder = [list_of_attributes_or_objects_that_define_uniqueness]
     factors = ['attribute1', 'attribute2']
-    products = {'name_of_product': product_object}
+    products = ['name_of_product']
     parents = [required_object_that_comes_before]
     children = [required_object_that_comes_after]
 
@@ -39,7 +39,7 @@ import numpy as np
 import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed, Optional
+from weaveio.hierarchy import Hierarchy, Multiple, Optional
 
 
 class Measurement(Hierarchy):
@@ -92,7 +92,7 @@ class ArmConfig(Hierarchy):
     - camera can be 'red' or 'blue'
     - colour can be 'red', 'blue', or 'green'
     """
-    factors = ['resolution', 'vph', 'camera', 'colour']
+    factors = ['resolution', 'vph', 'camera', 'colour', 'colour_code']
     identifier_builder = ['resolution', 'vph', 'camera']
 
     def __init__(self, tables=None, **kwargs):
@@ -100,6 +100,7 @@ class ArmConfig(Hierarchy):
             kwargs['colour'] = 'green'
         else:
             kwargs['colour'] = kwargs['camera']
+        kwargs['colour_code'] = kwargs['colour'][0].upper()
         super().__init__(tables, **kwargs)
 
     @classmethod
@@ -307,7 +308,7 @@ class Spectrum(SourcedData):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    products = {'flux': Indexed('flux'), 'ivar': Indexed('ivar'), 'wvl': 'wvl'}
+    products = ['flux', 'ivar', 'wvl']
 
 
 class Spectrum2D(Spectrum):

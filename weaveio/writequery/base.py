@@ -241,6 +241,11 @@ class CypherVariableItem(DerivedCypherVariable):
         return f"{parent}[{attr}]"
 
 
+class CypherFindReplaceStr(DerivedCypherVariable):
+    def string_formatter(self, parent, replace):
+        return f"replace({parent}, 'X', '{replace}')"
+
+
 class Collection(CypherVariable):
     pass
 

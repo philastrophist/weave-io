@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from typing import Union, List, Dict, Type, Set, Tuple
+from typing import Union, List, Dict, Type, Set, Tuple, Optional
 
 import inspect
 from astropy.io import fits
@@ -10,11 +10,13 @@ from astropy.table import Table
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
-from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate
-from weaveio.opr3.l1 import L1Spectrum
-from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2SuperStack, L2SuperTarget
+from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate, RawSpectrum, Run, ArmConfig
+from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum
+from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2SuperStack, L2SuperTarget, RedrockIngestedSpectrum, RVSpecFitIngestedSpectrum, FerreIngestedSpectrum, PPXFIngestedSpectrum, GandalfIngestedSpectrum, IngestedSpectrum, Fit, L2ModelSpectrum, RedrockFit, RedrockModelSpectrum, \
+    RVSpecFitModelSpectrum, RVSpecFitVersion, RVSpecFit, FerreFit, FerreModelSpectrum, FerreVersion, PPXFModelSpectrum, PPXFFit, PPXFVersion, GandalfFit, GandalfModelSpectrum, GandalfVersion, RedrockVersion
 from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1OBStackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
+from weaveio.writequery.base import CypherFindReplaceStr
 
 
 class MissingDataError(Exception):
@@ -36,7 +38,6 @@ class L2File(File):
     is_template = True
     match_pattern = '.*APS.fits'
     antimatch_pattern = '.*cube.*'
-    produces = [L2]
     children = [L2]
     parents = [Multiple(L1File, 2, 3), APS]
     hdus = {'primary': PrimaryHDU,
@@ -136,15 +137,65 @@ class L2File(File):
         return super().read_hdus(directory, fname, **hierarchies)
 
     @classmethod
-    def produce_l2(cls, sourcefile, nrow, l1spectrumrows, aps, **hierarchies):
-        assert len(cls.produces) == 1
-        sdict = {p.plural_name: [] for p in cls.produces[0].parents if isinstance(p, Multiple) and issubclass(p.node, L1Spectrum)}  # parse the l1spectrum types separately
-        for f in l1spectrumrows:
-            sdict[f.plural_name].append(f)
-        hierarchies.update(sdict)
-        l2 = cls.produces[0](sourcefile=sourcefile.fname, nrow=nrow, aps=aps, **hierarchies)
-        l2.attach_products(sourcefile)
-        return l2
+    def read_l2product_table(cls, this_fname, spectrum_hdu, data_hdu, parent_l1filenames,
+                               IngestedSpectrumClass: Type[IngestedSpectrum],
+                               FitClass: Type[Fit],
+                               ModelSpectrumClass: Type[L2ModelSpectrum],
+                               fit_version,
+                               uses_combined_spectrum: Optional[bool],
+                               uses_disjoint_spectra: bool,
+                               formatter: str,
+                               aps):
+        if uses_combined_spectrum is None:
+            uses_combined_spectrum = any('_C' in i for i in spectrum_hdu.data.names)
+        safe_table = filter_products_from_table(Table(data_hdu.data), 10)
+        aps_ids_nrows = CypherData({v: i for i, v in enumerate(spectrum_hdu.data['APS_ID'])})
+
+        l1files = [L1File.find(fname=fname) for fname in parent_l1filenames]  # for each l1 file that makes this L2
+        l1spectra = [L1Spectrum.find(anonymous_parents=[l1file]) for l1file in l1files]
+        singles = [L1SingleSpectrum.find(anonymous_parents=[l1spectrum]) for l1spectrum in l1spectra]
+        raws = [RawSpectrum.find(anonymous_parents=[single]) for single in singles]
+        runs = [Run.find(anonymous_parents=[raw]) for raw in raws]
+        arms = [ArmConfig.find(anonymous_parents=[run])['colour_code'] for run in runs]
+        fibretargets = [FibreTarget.find(anonymous_children=[l1spectrum]) for l1spectrum in l1spectra]
+        fibreids = [Fibre.find(anonymous_children=[fibretarget])['id'] for fibretarget in fibretargets]
+        nrow = aps_ids_nrows[fibreids[0]]
+        # we are now at the level of l1spectra/divided by file in python
+        ingested_spectra = []
+        if uses_disjoint_spectra:
+            # make an ingested spec for each apsid and arm
+            for arm, l1spectrum in zip(arms, l1spectra):
+                individual = IngestedSpectrumClass(sourcefile=this_fname, nrow=nrow,
+                                                   l1spectra=l1spectrum, aps=aps, arm=arm)
+                for product in individual.products:
+                    column_name = CypherFindReplaceStr(f'{product}_{formatter}_X', arm)
+                    individual.attach_product(product, spectrum_hdu, nrow, column_name)
+
+                ingested_spectra.append(individual)
+        if uses_combined_spectrum:
+            combined = IngestedSpectrumClass(sourcefile=this_fname, nrow=aps_ids_nrows[fibreids[0]],
+                                             l1spectra=l1spectra, aps=aps)
+            for product in combined.products:
+                column_name = f'{product}_{formatter}'
+                if IngestedSpectrumClass not in [GandalfIngestedSpectrum, PPXFIngestedSpectrum]:
+                    column_name += '_C'
+                combined.attach_product(product, spectrum_hdu, nrow, column_name)
+            ingested_spectra.append(combined)
+        fit = FitClass(**{fit_version.singular_name: fit_version,
+                          IngestedSpectrumClass.plural_name: ingested_spectra},
+                 tables=CypherData(safe_table)[aps_ids_nrows[fibreids[0]]])
+        for arm, ingested_spectrum in zip(arms, ingested_spectra):
+            individual_model = ModelSpectrumClass(sourcefile=this_fname,
+                                                  nrow=aps_ids_nrows[fibreids[0]],
+                                                  **{FitClass.singular_name:fit,
+                                                     IngestedSpectrumClass.plural_name: ingested_spectrum})
+            for product in individual_model.products:
+                column_name = CypherFindReplaceStr(f'{product}_{formatter}_X', arm)
+                individual_model.attach_product(product, spectrum_hdu, nrow, column_name)
+
+    @classmethod
+    def get_l1_filenames(cls, header):
+        return [v for k, v in header.items() if 'APS_REF' in k]
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
@@ -157,60 +208,33 @@ class L2File(File):
         aps = APS(apsvers=header['APSVERS'])
         hierarchies = cls.find_shared_hierarchy(path)
         hdu_nodes, file, astropy_hdus = cls.read_hdus(directory, fname, l1files=l1files, aps=aps, **hierarchies)
-        # find aligned L1 spectra in the database and use them to instantiate new L2 rows
-        aps_ids = fits.open(path)['CLASS_TABLE']['APS_ID']
-        with unwind(CypherData(aps_ids, 'aps_ids')) as aps_id:  # for each row/spectrum
-            fibre = Fibre.find(id=aps_id)
-            l1spectra = []
-            for l1file in l1files:
-                spectrum = l1file.produces[0].find(sourcefile=l1file.fname, anonymous_parents=[fibre])  # fix so apsid works
-                l1spectra.append(spectrum)
-            if not issubclass(cls, L2SuperTargetFile):
-                fibretarget = FibreTarget.find(anonymous_children=[l1spectra[0]])
-                hierarchies['fibretarget'] = fibretarget
-            l2 = cls.produce_l2(sourcefile=file, nrow=nspec, l1spectrumrows=l1spectra, aps=aps, **hierarchies)
-        l2s = collect(l2)
-        l2_dict = groupby(l2s, 'nrow')
-        for name in cls.corresponding_hdus.keys():
-            cls.make_data_rows(name, nspecs, file, l2_dict, astropy_hdus, hdu_nodes)
-        return file
+        fnames = cls.get_l1_filenames(header)
+        cls.read_l2product_table(path, astropy_hdus[4], astropy_hdus[1], fnames,
+                                 RedrockIngestedSpectrum, RedrockFit,
+                                 RedrockModelSpectrum, RedrockVersion.from_header(header),
+                                 None, True, 'RR', aps)
+        cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
+                                 RVSpecFitIngestedSpectrum, RVSpecFit,
+                                 RVSpecFitModelSpectrum, RVSpecFitVersion.from_header(header),
+                                 None, True, 'RVS', aps)
+        cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
+                                 FerreIngestedSpectrum, FerreFit,
+                                 FerreModelSpectrum, FerreVersion.from_header(header),
+                                 None, True, 'FR', aps)
+        cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
+                                 PPXFIngestedSpectrum, PPXFFit,
+                                 PPXFModelSpectrum, PPXFVersion.from_header(header),
+                                 True, False, 'PPXF', aps)
+        cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
+                                 GandalfIngestedSpectrum, GandalfFit,
+                                 GandalfModelSpectrum, GandalfVersion.from_header(header),
+                                 True, False, 'GAND', aps)
 
-    @classmethod
-    def read_one_hdu_l2data(cls, hdus, hduname, nspecs):
-        names = [i.name.lower().strip() for i in hdus]
-        table = Table(hdus[names.index(hduname)].data)
-        if len(table.colnames):
-            table.rename_columns(table.colnames, [i.lower() for i in table.colnames])
-            table['spec_index'] = range(len(table))
-        table = filter_products_from_table(table, 10)  # removes huge arrays that are best kept in binary files
-        if len(table):
-            table = table[[i in nspecs for i in table['nspec']]]
-        data = CypherData(table, hduname)
-        return data
-
-    @classmethod
-    def make_data_rows(cls, hduname, nspecs: List[int], file, l2_by_nrow, astropyhdulist, hdus):
-        """
-        For each L2 row, there are 2-3 L1 rows
-        Since we know the L1 files, we can identify those rows with nspec since they are the same
-        """
-        row_type = cls.corresponding_hdus[hduname]
-        table = cls.read_one_hdu_l2data(astropyhdulist, hduname, nspecs)
-        if len(table.data):  # to avoid cutting off the query
-            with unwind(table) as row:
-                nspec = row['nspec']
-                l2row = row_type(sourcefile=file.fname, nrow=nspec, hduname=hduname, l2=l2_by_nrow[nspec], tables=row)
-                if len(row_type.products):
-                    l2row.attach_products(file, index=row['spec_index'], **hdus)
-            l2rows = collect(l2row)
-            return l2rows
-        return None
 
 
 class L2SingleFile(L2File):
-    produces = [L2Single]
     children = [L2Single]
-    parents = [Multiple(L1SingleFile, 2, 3), Exposure, APS]
+    parents = [Multiple(L1SingleFile, 2, 3, constrain=(Exposure,)), APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -218,10 +242,9 @@ class L2SingleFile(L2File):
         return {'exposure': Exposure.find(obid=header['MJD-OBS'])}
 
 
-class L2StackFile(L2File):
-    produces = [L2OBStack]
+class L2OBStackFile(L2File):
     children = [L2OBStack]
-    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1OBStackFile, 1, 3), OB, APS]
+    parents = [Multiple(L1SingleFile, 0, 3, constrain=(OB,)), Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -230,9 +253,10 @@ class L2StackFile(L2File):
 
 
 class L2SuperStackFile(L2File):
-    produces = [L2SuperStack]
     children = [L2SuperStack]
-    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1OBStackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3), OBSpec, APS]
+    parents = [Multiple(L1SingleFile, 0, 3, constrain=(OBSpec,)),
+               Multiple(L1OBStackFile, 0, 3, constrain=(OBSpec,)),
+               Multiple(L1SuperStackFile, 0, 3, constrain=(OBSpec,)), APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -244,7 +268,7 @@ class L2SuperTargetFile(L2File):
     match_pattern = 'WVE_*aps.fits'
     produces = [L2SuperTarget]
     children = [L2SuperTarget]
-    parents = [Multiple(L1SuperTargetFile, 2, 3), WeaveTarget, APS]
+    parents = [Multiple(L1SuperTargetFile, 2, 3, constrain=(WeaveTarget,)), APS]
 
     @classmethod
     def parse_fname(cls, header, fname, instantiate=True) -> List[L1File]:

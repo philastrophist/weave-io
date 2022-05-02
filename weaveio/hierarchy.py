@@ -247,28 +247,13 @@ class GraphableMeta(type):
         for p in cls.indexes:
             if p not in cls.parents and p not in cls.factors:
                 raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
-        # if len(cls.hdus):
-        #     hduclasses = {}
-        #     for p, (hduname, hdu) in enumerate(cls.hdus.items()):
-        #         if hdu is not None:
-        #             typename = name+hduname[0].upper()+hduname[1:]
-        #             typename = typename.replace('_', '')
-        #             hduclass = type(typename, (hdu, ), {'chilren': [cls], 'identifier_builder': [cls.singular_name, 'extn', 'name']})
-        #             hduclasses[hduname] = hduclass
-        #             if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
-        #                 raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")
-        #             for base in bases:
-        #                 if (hduname in base.factors or hduname in base.parents or hasattr(base, hduname)) and hduname not in base.hdus:
-        #                     raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {base}->{name}")
-        #             setattr(cls, hduname, hduclass)  # add as an attribute
-        #     cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
         cls.neotypes = clses
-        cls.products_and_factors = cls.factors + list(cls.products.keys())
+        cls.products_and_factors = cls.factors + cls.products
         if cls.idname is not None:
             cls.products_and_factors.append(cls.idname)
         cls.relative_names = {}  # reset, no inheritability
@@ -293,7 +278,7 @@ class Graphable(metaclass=GraphableMeta):
     data = None
     query = None
     is_template = True
-    products = {}
+    products = []
     indexes = []
     identifier_builder = None
     version_on = []
