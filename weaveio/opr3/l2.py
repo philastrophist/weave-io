@@ -113,14 +113,14 @@ class RedrockFit(Fit):
     factors += RedrockTemplate.as_factors('galaxy', 'qso', 'star_a', 'star_b', 'star_cv',
                                  'star_f', 'star_g', 'star_k', 'star_m', 'star_wd')
     parents = [RedrockVersion]
-    children = [Multiple(RedrockIngestedSpectrum, 1, 3)]
+    children = [Optional(RedrockIngestedSpectrum, 1, 4)]
     identifier_builder = ['redrock_version', 'redrock_ingested_spectra']
 
 
 class RVSpecFit(Fit):
     singular_name = 'rvspecfit'
     parents = [RVSpecFitVersion]
-    children = [Multiple(RVSpecFitIngestedSpectrum, 1, 3)]
+    children = [Multiple(RVSpecFitIngestedSpectrum, 1, 4)]
     factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
     factors += Measurement.as_factors('vrad', 'logg', 'teff', 'feh', 'alpha')
     identifier_builder = ['rvspecfit_version', 'rvspecfit_ingested_spectra']
@@ -128,7 +128,7 @@ class RVSpecFit(Fit):
 
 class FerreFit(Fit):
     parents = [FerreVersion]
-    children = [Multiple(FerreIngestedSpectrum, 1, 3)]
+    children = [Multiple(FerreIngestedSpectrum, 1, 4)]
     factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
     factors += Measurement.as_factors('micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
     identifier_builder = ['ferre_version', 'ferre_ingested_spectra']
@@ -159,13 +159,13 @@ class L2ModelSpectrum(Spectrum, L2):
 
 
 class RedrockModelSpectrum(L2ModelSpectrum):
-    parents = [RedrockFit, Multiple(RedrockIngestedSpectrum, 1, 3)]
+    parents = [RedrockFit, Multiple(RedrockIngestedSpectrum, 1, 4)]
 
 class RVSpecFitModelSpectrum(L2ModelSpectrum):
-    parents = [RVSpecFit, Multiple(RVSpecFitIngestedSpectrum, 1, 3)]
+    parents = [RVSpecFit, Multiple(RVSpecFitIngestedSpectrum, 1, 4)]
 
 class FerreModelSpectrum(L2ModelSpectrum):
-    parents = [FerreFit, Multiple(FerreIngestedSpectrum, 1, 3)]
+    parents = [FerreFit, Multiple(FerreIngestedSpectrum, 1, 4)]
 
 class PPXFModelSpectrum(L2ModelSpectrum):
     parents = [PPXFFit, PPXFIngestedSpectrum]
@@ -189,8 +189,8 @@ class GandalfModelSpectrum(CompositeModelSpectrum):
 class L2Product(L2):
     is_template = True
     parents = [Multiple(L1Spectrum, 2, 3), APS]
-    children = [Multiple(RedrockIngestedSpectrum, 1, 3), Multiple(RVSpecFitIngestedSpectrum, 1, 3),
-                Multiple(FerreIngestedSpectrum, 1, 3),
+    children = [Multiple(RedrockIngestedSpectrum, 1, 4), Multiple(RVSpecFitIngestedSpectrum, 1, 4),
+                Multiple(FerreIngestedSpectrum, 1, 4),
                 PPXFIngestedSpectrum, GandalfIngestedSpectrum,
                 RedrockFit, RVSpecFit, FerreFit, PPXFFit, GandalfFit]
 

@@ -118,6 +118,19 @@ def shared_base_class(*classes):
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
+def expand_template_relation(relation):
+    """
+    Returns a list of relations that relate to each non-template class
+    e.g.
+    >>> expand_template_relation(Multiple(L1StackSpectrum))
+    [Multiple(L1SingleSpectrum), Multiple(L1OBStackSpectrum), Multiple(L1SuperstackSpectrum)]
+    """
+    if not relation.node.is_template:
+        return [relation]
+    subclasses = [cls for cls in get_all_subclasses(relation.node) if not cls.is_template]
+    return [Multiple(subclass, 0, relation.maxnumber, relation.constrain, relation.relation_idname) for subclass in subclasses]
+
+
 def add_relation_graph_edge(graph, parent, child, relation: Multiple):
     """
     if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
@@ -130,21 +143,25 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
             child-[m]->Object (each child has m parents of type O)
     """
     relation.instantate_node()
-    # only parent-->child is in the database
-    relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
     child_defines_parents = relation.node is parent
-    if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
-        # child instance has n of type Parent, parent instance has unknown number of type Child
-        graph.add_edge(child, parent, singular=relation.maxnumber == 1,
-                       optional=relation.minnumber == 0,
-                       style=relstyle)
-        graph.add_edge(parent, child, singular=False, optional=True, style='dotted', relation=relation)
-    else:  # i.e. children = [...] is set in the class for this object
-        # parent instance has n of type Child, each child instance has one of type Parent
-        graph.add_edge(parent, child, singular=relation.maxnumber == 1,
-                       optional=relation.minnumber == 0,
-                       relation=relation, style=relstyle)
-        graph.add_edge(child, parent, singular=True, optional=True, style='solid')
+    for relation in expand_template_relation(relation):
+        relation.instantate_node()
+        # only parent-->child is in the database
+        relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
+        if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
+            # child instance has n of type Parent, parent instance has unknown number of type Child
+            parent = relation.node  # reset from new relations
+            graph.add_edge(child, parent, singular=relation.maxnumber == 1,
+                           optional=relation.minnumber == 0,
+                           style=relstyle)
+            graph.add_edge(parent, child, singular=False, optional=True, style='dotted', relation=relation)
+        else:  # i.e. children = [...] is set in the class for this object
+            # parent instance has n of type Child, each child instance has one of type Parent
+            child = relation.node  # reset from new relations
+            graph.add_edge(parent, child, singular=relation.maxnumber == 1,
+                           optional=relation.minnumber == 0,
+                           relation=relation, style=relstyle)
+            graph.add_edge(child, parent, singular=True, optional=True, style='solid')
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
