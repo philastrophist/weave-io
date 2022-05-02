@@ -8,9 +8,11 @@ logging.basicConfig(level=logging.INFO)
 from weaveio.opr3 import Data
 
 data = Data()
+# q = data.galaxy_redrock_fit.redshifts
+
 # data.class_hierarchies['RedrockFit']
-for arrows, singular, path in data.paths_to_hierarchy('redrock_fit', 'ingested_spectrum', False):
-    print(path, singular)
+# for arrows, singular, path in data.paths_to_hierarchy('redrock_fit', 'ingested_spectrum', False):
+#     print(path, singular)
 # q = data.l2obstacks.redrock_fit.best_redshift['*']
 #
 # lines, params, names = q._compile()
@@ -18,10 +20,11 @@ for arrows, singular, path in data.paths_to_hierarchy('redrock_fit', 'ingested_s
 #     print(line)
 # print(params, names)
 import networkx as nx
-plot_graph(nx.subgraph(data.relation_graphs[-1],
-                       # set(l2.hierarchies) - set(hierarchy.hierarchies) -
-                       # set(l1.hierarchies) - {l2.L2OBStack, l2.L2SuperStack, l2.L2SuperTarget}),
-                       [RedrockFit, RedrockTemplate, RedshiftMeasurement, IngestedSpectrum, CombinedSpectrum,
-                        ] + [Hierarchy._hierarchies['GalaxyRedrockTemplate']]),
-
-           'l2', 'pdf')
+G = nx.subgraph_view(nx.subgraph(data.relation_graphs[-1],
+                       [
+                           # L1SingleSpectrum, L2Single,
+                        L2OBStack, L1OBStackSpectrum,
+                        RedrockModelSpectrum, RedrockFit, RedrockIngestedSpectrum, RedrockVersion]),
+           # filter_edge=lambda a, b: 'relation' not in data.relation_graphs[-1].edges[(a, b)])
+                     )
+plot_graph(nx.relabel.relabel_nodes(G, {n: n.__name__ for n in G.nodes}),'l2', 'pdf')

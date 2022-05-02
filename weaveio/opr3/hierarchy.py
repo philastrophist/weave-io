@@ -37,16 +37,12 @@ import inspect
 import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple
-
-HERE = Path(os.path.dirname(os.path.abspath(__file__)))
-gandalf_line_data = pd.read_csv(HERE / 'expected_lines.csv', sep=' ')
-gandalf_index_data = pd.read_csv(HERE / 'expected_line_indices.csv', sep=' ')
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed
 
 
 class Measurement(Hierarchy):
-    factors = ['name', 'value', 'error']
-    indexes = ['name', 'value']
+    factors = ['value', 'error']
+    indexes = ['value']
 
 
 class Author(Hierarchy):
@@ -307,6 +303,15 @@ class Spectrum(SourcedData):
     plural_name = 'spectra'
 
 
+class Spectrum1D(Spectrum):
+    is_template = True
+    products = {'flux': Indexed('flux'), 'ivar': Indexed('ivar'), 'wvl': 'wvl'}
+
+
+class Spectrum2D(Spectrum):
+    is_template = True
+
+
 class RawSpectrum(Spectrum):
     """
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
@@ -351,3 +356,36 @@ def _predicate(o):
         return issubclass(o, Hierarchy)
     return False
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
+
+
+class MCMCMeasurement(Measurement):
+    is_template = True
+    factors = Measurement.factors + ['formal_error']
+
+
+class Line(Measurement):
+    is_template = True
+    factors = ['wvl', 'aon', 'vaccum']
+    factors += Measurement.as_factors('flux', 'redshift', 'sigma', 'ebmv', 'amp')
+    indexes = ['wvl']
+
+
+class SpectralIndex(Measurement):
+    is_template = True
+
+
+class RedshiftMeasurement(Measurement):
+    is_template = True
+    factors = Measurement.factors + ['warn']
+
+
+class WavelengthHolder(Hierarchy):
+    factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
+    identifier_builder = ['cd1_1', 'crval1', 'naxis1']
+
+
+class MeanFlux(Hierarchy):
+    singular_name = 'mean_flux'
+    plural_name = 'mean_fluxes'
+    idname = 'band'
+    factors = ['value']

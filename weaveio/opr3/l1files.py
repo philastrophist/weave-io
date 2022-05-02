@@ -14,8 +14,8 @@ from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralR
 from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
-    OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate
-from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, WavelengthHolder
+    OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder
+from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum
 from weaveio.writequery import groupby, CypherData
 
 

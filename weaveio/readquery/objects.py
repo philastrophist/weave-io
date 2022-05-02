@@ -287,16 +287,6 @@ class ObjectQuery(GenericObjectQuery):
         return self._select_attribute('id', True).__eq__(other)
 
 
-class TemplateObjectQuery(BaseQuery):
-
-    def _traverse_to_specific_object(self, obj, want_single):
-        h = self._data.class_hierarchies[self._obj]
-        [v for k, v in h._hierarchies.items() if issubclass(v, h)]
-
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
-        raise NotImplementedError(f"You may not compile a non specific object")
-
-
 class Query(GenericObjectQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
         super().__init__(data, G, node, previous, obj, start, 'start')

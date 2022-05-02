@@ -172,8 +172,8 @@ class GraphableMeta(type):
         if name[0] != name.capitalize()[0] or '_' in name:
             raise RuleBreakingException(f"{name} must have `CamelCaseName` style name")
         for factor in dct.get('factors', []) + ['idname'] + [dct['singular_name'], dct['plural_name']]:
-            if factor != factor.lower():
-                raise RuleBreakingException(f"{name}.{factor} must have `lower_snake_case` style name")
+            # if factor != factor.lower():
+            #     raise RuleBreakingException(f"{name}.{factor} must have `lower_snake_case` style name")
             if factor in FORBIDDEN_PROPERTY_NAMES:
                 raise RuleBreakingException(f"The name {factor} is not allowed for class {name}")
             if any(factor.startswith(p) for p in FORBIDDEN_PROPERTY_PREFIXES):
@@ -198,6 +198,12 @@ class GraphableMeta(type):
                 for n in c.constrain:
                     if n not in cls.children:
                         cls.children.append(n)
+                if c.maxnumber == 1:
+                    parentnames[c.singular_name] = (c.minnumber, c.maxnumber)
+                else:
+                    parentnames[c.plural_name] = (c.minnumber, c.maxnumber)
+            else:
+                parentnames[c.singular_name] = (1, 1)
         for i, p in enumerate(cls.parents):
             if isinstance(p, Multiple):
                 if p._isself:
@@ -559,6 +565,14 @@ class Hierarchy(Graphable):
     factors = []
     _hierarchies = {}
     is_template = True
+
+    @classmethod
+    def as_factors(cls, *names):
+        if len(names) == 1 and isinstance(names[0], list):
+            names = names[0]
+        if cls.parents+cls.children:
+            raise TypeError(f"Cannot use {cls} as factors {names} since it has defined parents and children")
+        return [f"{name}_{factor}" if factor != 'value' else name for name in names for factor in cls.factors]
 
     @classmethod
     def from_name(cls, name):

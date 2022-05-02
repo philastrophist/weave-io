@@ -11,6 +11,7 @@ def snakecase2camelcase(name):
     """
     return ''.join(x.capitalize() for x in name.split('_'))
 
+
 def camelcase2snakecase(name):
     """
     Returns a string with underscores between words in camelcase name

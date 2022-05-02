@@ -11,7 +11,7 @@ from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
 from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate
-from weaveio.opr3.l1 import L1SpectrumRow
+from weaveio.opr3.l1 import L1Spectrum
 from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2SuperStack, L2SuperTarget
 from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
@@ -138,7 +138,7 @@ class L2File(File):
     @classmethod
     def produce_l2(cls, sourcefile, nrow, l1spectrumrows, aps, **hierarchies):
         assert len(cls.produces) == 1
-        sdict = {p.plural_name: [] for p in cls.produces[0].parents if isinstance(p, Multiple) and issubclass(p.node, L1SpectrumRow)}  # parse the l1spectrum types separately
+        sdict = {p.plural_name: [] for p in cls.produces[0].parents if isinstance(p, Multiple) and issubclass(p.node, L1Spectrum)}  # parse the l1spectrum types separately
         for f in l1spectrumrows:
             sdict[f.plural_name].append(f)
         hierarchies.update(sdict)
