@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .utilities import mask_infs
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
-from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind
+from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct
 
 
 class ParserError(Exception):
@@ -397,6 +397,10 @@ class QueryGraph:
 
     def add_getitem(self, parent_node, item, which=0):
         statement = GetItem(self.G.nodes[parent_node]['variables'][which], item, self)
+        return add_operation(self.G, parent_node, [], statement)
+
+    def add_getproduct(self, parent_node, item):
+        statement = GetProduct(self.G.nodes[parent_node]['variables'][0], item, self)
         return add_operation(self.G, parent_node, [], statement)
 
     def assign_to_variable(self, parent_node, only_if_op=False):

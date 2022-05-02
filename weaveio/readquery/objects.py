@@ -121,6 +121,11 @@ class ObjectQuery(GenericObjectQuery):
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
+    def _select_product(self, attr, want_single):
+        attr = self._data.singular_name(attr)
+        n = self._G.add_getproduct(self._node, attr)
+        return ProductAttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
+
     def _select_attribute(self, attr, want_single):
         """
         # obj['factor'], obj.factor
@@ -130,6 +135,8 @@ class ObjectQuery(GenericObjectQuery):
              `run.mjd` returns the mjd by a run's exposure (still only one mjd per run though)
              `run.cnames` returns the cname of each target in a run (this is a list per run)
         """
+        if self._data.is_product(attr, self._obj):
+            return self._select_product(attr, want_single)
         attr = self._data.singular_name(attr)
         n = self._G.add_getitem(self._node, attr)
         return AttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
@@ -476,6 +483,12 @@ class AttributeQuery(BaseQuery):
             index = self._index_node
         r = self._G.add_results_table(index, [self._node], [not self._single], dropna=[self._node])
         return AttributeQuery._spawn(self, r, self._obj, index, self._single, factor_name=self._factor_name)
+
+
+class ProductAttributeQuery(AttributeQuery):
+    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None):
+        raise TypeError(f"Binary data products cannot be operated upon. "
+                        f"This is because they are not stored in the database")
 
 
 class TableQuery(BaseQuery):

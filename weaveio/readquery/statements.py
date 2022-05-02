@@ -110,6 +110,26 @@ class GetItem(Operation):
         self.name = name
 
 
+class GetProduct(Statement):
+    """
+    Products are binary data that are not stored in the database.
+    They are represented as a a relation between the parent node and an HDU of a fits file
+    The relationship in neo4j will have the following properties: (product_name, column_name, index)
+    Therefore, we return those properties after matching (node)<-[:PRODUCT {product_name:product_name}]-(hdu)
+    """
+    def __init__(self, input_variable, name, graph: 'QueryGraph'):
+        super().__init__([input_variable], graph)
+        self.name = name
+        self.output = self.make_variable(name)
+        self.hdu = self.make_variable('hdu')
+        self.rel = self.make_variable('rel')
+        self.file = self.make_variable('file')
+
+    def make_cypher(self, ordering: list):
+        rel = f"({self.inputs[0]})<-[{self.rel}:product {{{{name: '{self.name}'}}}}]-({self.hdu}: HDU)<--({self.file}: File)"
+        return f" WITH *, [{rel} | [{self.file}.fname, {self.hdu}.extn, {self.rel}.index, {self.rel}.column_name]] as {self.output}"
+
+
 class AssignToVariable(Statement):
     def __init__(self, input_variable, graph: 'QueryGraph'):
         super().__init__([input_variable], graph)

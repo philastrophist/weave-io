@@ -608,6 +608,9 @@ class Data:
             print(schema_violations)
         return duplicates, schema_violations
 
+    def is_product(self, factor_name, hierarchy_name):
+        return self.singular_name(factor_name) in self.singular_hierarchies[self.singular_name(hierarchy_name)]
+
     def is_factor_name(self, name):
         if name in self.factor_hierarchies:
             return True

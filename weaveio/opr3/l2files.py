@@ -13,7 +13,7 @@ from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
 from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate
 from weaveio.opr3.l1 import L1Spectrum
 from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2SuperStack, L2SuperTarget
-from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1StackFile, L1SingleFile, L1SuperTargetFile
+from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1OBStackFile, L1SingleFile, L1SuperTargetFile
 from weaveio.writequery import CypherData, groupby
 
 
@@ -55,7 +55,7 @@ class L2File(File):
 
     @classmethod
     def decide_filetype(cls, l1filetypes: List[Type[File]]) -> Type[File]:
-        l1precedence = [L1SingleFile, L1StackFile, L1SuperStackFile, L1SuperTargetFile]
+        l1precedence = [L1SingleFile, L1OBStackFile, L1SuperStackFile, L1SuperTargetFile]
         l2precedence = [L2SingleFile, L2StackFile, L2SuperStackFile, L2SuperTargetFile]
         highest = max(l1precedence.index(l1filetype) for l1filetype in l1filetypes)
         return l2precedence[highest]
@@ -88,7 +88,7 @@ class L2File(File):
         """
         ftype_dict = {
             'single': L1SingleFile,
-            'stacked': L1StackFile, 'stack': L1StackFile,
+            'stacked': L1OBStackFile, 'stack': L1OBStackFile,
             'superstack': L1SuperStackFile, 'superstacked': L1SuperStackFile
         }
         split = fname.name.lower().replace('aps.fits', '').replace('aps.fit', '').strip('_.').split('__')
@@ -221,7 +221,7 @@ class L2SingleFile(L2File):
 class L2StackFile(L2File):
     produces = [L2OBStack]
     children = [L2OBStack]
-    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 1, 3), OB, APS]
+    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1OBStackFile, 1, 3), OB, APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -232,7 +232,7 @@ class L2StackFile(L2File):
 class L2SuperStackFile(L2File):
     produces = [L2SuperStack]
     children = [L2SuperStack]
-    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1StackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3), OBSpec, APS]
+    parents = [Multiple(L1SingleFile, 0, 3), Multiple(L1OBStackFile, 0, 3), Multiple(L1SuperStackFile, 0, 3), OBSpec, APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:

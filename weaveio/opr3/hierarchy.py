@@ -34,10 +34,12 @@ from pathlib import Path
 import os
 
 import inspect
+
+import numpy as np
 import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed
+from weaveio.hierarchy import Hierarchy, Multiple, Indexed, Optional
 
 
 class Measurement(Hierarchy):
@@ -108,7 +110,7 @@ class ArmConfig(Hierarchy):
         return red, blue
 
 
-class ObsTemp(Hierarchy):
+class Obstemp(Hierarchy):
     """
     Whilst ProgTemp deals with "how" a target is observed, OBSTEMP deals with "when" a target is observed,
     namely setting the observational constraints required to optimally extract scientific information from the observation.
@@ -165,7 +167,7 @@ class Fibre(Hierarchy):
     idname = 'id'
 
 
-class SubProgramme(Hierarchy):
+class Subprogramme(Hierarchy):
     """
     A submitted programme of observation which was written by multiple surveys.
     """
@@ -178,7 +180,7 @@ class SurveyCatalogue(Hierarchy):
     """
     A catalogue which was submitted by a subprogramme.
     """
-    parents = [SubProgramme]
+    parents = [Subprogramme]
     factors = ['name']
     idname = 'id'
 
@@ -198,6 +200,17 @@ class SurveyTarget(Hierarchy):
     identifier_builder = ['weave_target', 'survey_catalogue', 'id', 'ra', 'dec']
 
 
+class FibreTarget(Hierarchy):
+    """
+    A fibretarget is the combination of fibre and surveytarget which is created after submission when
+    the fibres are assigned.
+    This object describes where the fibre is placed and what its status is.
+    """
+    factors = ['ra', 'dec', 'status', 'orientation', 'nretries', 'x', 'y', 'use', 'priority']
+    parents = [Fibre, SurveyTarget]
+    identifier_builder = ['fibre', 'survey_target', 'x', 'y', 'use']
+
+
 class InstrumentConfiguration(Hierarchy):
     """
     The WEAVE instrument can be configured into MOS/LIFU/mIFU modes and the spectral binning in pixels.
@@ -208,7 +221,7 @@ class InstrumentConfiguration(Hierarchy):
     identifier_builder = ['arm_configs', 'mode', 'binning']
 
 
-class ProgTemp(Hierarchy):
+class Progtemp(Hierarchy):
     """
     The ProgTemp code is an integral part of describing a WEAVE target.
     This parameter encodes the requested instrument configuration, OB length, exposure time,
@@ -233,17 +246,6 @@ class ProgTemp(Hierarchy):
                    instrumentconfiguration=config)
 
 
-class FibreTarget(Hierarchy):
-    """
-    A fibretarget is the combination of fibre and surveytarget which is created after submission when
-    the fibres are assigned.
-    This object describes where the fibre is placed and what its status is.
-    """
-    factors = ['ra', 'dec', 'status', 'orientation', 'nretries', 'x', 'y', 'use', 'priority']
-    parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'survey_target', 'ra', 'dec', 'use']
-
-
 class OBSpec(Hierarchy):
     """
     When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
@@ -252,7 +254,7 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
+    parents = [Obstemp, Progtemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(Subprogramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
@@ -281,7 +283,7 @@ class Exposure(Hierarchy):
     @classmethod
     def from_header(cls, ob, header):
         factors = {f: header.get(f) for f in cls.factors}
-        factors['mjd'] = float(header['MJD-OBS'])
+        factors['mjd'] = np.round(float(header['MJD-OBS']), 6)
         factors['obstype'] = header['obstype'].lower()
         casu = CASU(id=header.get('casuvers', header.get('casuid')))
         try:
@@ -312,15 +314,6 @@ class Spectrum2D(Spectrum):
     is_template = True
 
 
-class RawSpectrum(Spectrum):
-    """
-    A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
-    """
-    plural_name = 'rawspectra'
-    products = {'counts1': 'counts1', 'counts2': 'counts2'}
-    # only one raw per run essentially
-
-
 class Run(Hierarchy):
     """
     A run is one observation of a set of targets for a given configuration in a specific arm (red or blue).
@@ -328,7 +321,16 @@ class Run(Hierarchy):
     """
     idname = 'id'
     parents = [ArmConfig, Exposure]
-    children = [RawSpectrum]
+
+
+class RawSpectrum(Spectrum):
+    """
+    A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
+    """
+    parents = [CASU]
+    children = [Run]
+    products = ['counts1', 'counts2']
+    # only one raw per run essentially
 
 
 class Single(Hierarchy):
