@@ -148,20 +148,23 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
         relation.instantate_node()
         # only parent-->child is in the database
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
+        hard_weight = 10_000_000
+        weight = hard_weight if relation.maxnumber is None else relation.maxnumber
         if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
             # child instance has n of type Parent, parent instance has unknown number of type Child
             parent = relation.node  # reset from new relations
             graph.add_edge(child, parent, singular=relation.maxnumber == 1,
-                           optional=relation.minnumber == 0,
+                           optional=relation.minnumber == 0, weight=weight,
                            style=relstyle)
-            graph.add_edge(parent, child, singular=False, optional=True, style='dotted', relation=relation)
+            graph.add_edge(parent, child, singular=False, optional=True, style='dotted',
+                           relation=relation, weight=hard_weight)
         else:  # i.e. children = [...] is set in the class for this object
             # parent instance has n of type Child, each child instance has one of type Parent
             child = relation.node  # reset from new relations
             graph.add_edge(parent, child, singular=relation.maxnumber == 1,
-                           optional=relation.minnumber == 0,
+                           optional=relation.minnumber == 0, weight=weight,
                            relation=relation, style=relstyle)
-            graph.add_edge(child, parent, singular=True, optional=True, style='solid')
+            graph.add_edge(child, parent, singular=True, optional=True, weight=1, style='solid')
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
@@ -266,7 +269,7 @@ def is_a_constrained_path(g, path):
                 return True
     return False
 
-def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular):
+def _paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular):
     """
     Find path from one obj to another obj with the constraint that the path is singular or not
     raises NetworkXNoPath if there is no path with that constraint
@@ -274,19 +277,22 @@ def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular):
     path: str
     path_yields_singular: bool
     """
-    for path, singular, forwards in all_unidirectional_paths(g, from_obj, to_obj, force_singular):
-        if not is_a_constrained_path(g, path):
-            yield path, forwards, singular
+    if force_singular:
+        g = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])
+    parents = [o for o in g.nodes if to_obj in o.children]
+    if len(parents) == 0:
+        path = nx.shortest_path(g, from_obj, to_obj, weight='weight')
+        yield path
+    else:
+        for p in parents:
+            for path in paths_to_hierarchy(g, from_obj, p, force_singular):
+                yield path + [to_obj]
 
-
-def paths_to_hierarchy_with_above(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None):
-    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])
-    ancestors = [from_obj] + list(nx.ancestors(singles, from_obj))
-    for ancestor in ancestors:
-        for path, forwards, singular in paths_to_hierarchy(g, ancestor, to_obj, force_singular):
-            if not any(n in path for n in ancestors):
-                yield path, forwards, singular
-
+def paths_to_hierarchy(g, from_obj, to_obj, force_singular):
+    for path in _paths_to_hierarchy(g, from_obj, to_obj, force_singular):
+        forwards = ['relation' in g.edges[edge] for edge in zip(path[:-1], path[1:])]
+        singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
+        yield path, forwards, singular
 
 def plot_graph(G, fname, format):
     return graphviz.Source(to_pydot(G).to_string()).render(fname, format=format)
@@ -344,11 +350,14 @@ class Data:
         raises NetworkXNoPath if there is no path with that constraint
         """
         a, b = map(self.singular_name, [from_obj, to_obj])
-        paths = paths_to_hierarchy(self.relation_graphs[-1], self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
-        found_any = False
-        for path, forwards, singular in paths:
-            yield make_arrows(path, [not f for f in forwards], descriptor), singular, path
-            found_any = True
+        for g in self.relation_graphs:
+            paths = paths_to_hierarchy(g, self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
+            found_any = False
+            for path, forwards, singular in paths:
+                yield make_arrows(path, [not f for f in forwards], descriptor), singular, path
+                found_any = True
+            if found_any:
+                return
         if not found_any:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
