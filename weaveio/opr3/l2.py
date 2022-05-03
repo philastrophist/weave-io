@@ -93,7 +93,7 @@ class RedrockFit(Fit):
                                  'star_f', 'star_g', 'star_k', 'star_m', 'star_wd')
     parents = [RedrockVersion]
     children = [Multiple(RedrockIngestedSpectrum, 1, 4)]
-    identifier_builder = ['redrock_version', 'redrock_ingested_spectra']
+    identifier_builder = ['redrock_version', 'redrock_ingested_spectra', 'snr']
 
 
 class RVSpecFit(Fit):
@@ -102,7 +102,7 @@ class RVSpecFit(Fit):
     children = [Multiple(RVSpecFitIngestedSpectrum, 1, 4)]
     factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
     factors += Measurement.as_factors('vrad', 'logg', 'teff', 'feh', 'alpha')
-    identifier_builder = ['rvspecfit_version', 'rvspecfit_ingested_spectra']
+    identifier_builder = ['rvspecfit_version', 'rvspecfit_ingested_spectra', 'snr']
 
 
 class FerreFit(Fit):
@@ -110,7 +110,7 @@ class FerreFit(Fit):
     children = [Multiple(FerreIngestedSpectrum, 1, 4)]
     factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
     factors += Measurement.as_factors('micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
-    identifier_builder = ['ferre_version', 'ferre_ingested_spectra']
+    identifier_builder = ['ferre_version', 'ferre_ingested_spectra', 'snr']
 
 
 class GandalfFit(Fit):
@@ -118,14 +118,14 @@ class GandalfFit(Fit):
     children = [GandalfIngestedSpectrum]
     factors = Fit.factors + ['fwhm_flag'] + Measurement.as_factors('zcorr')
     factors += Line.as_factors(gandalf_line_names) + SpectralIndex.as_factors(gandalf_index_names)
-    identifier_builder = ['gandalf_version', 'gandalf_ingested_spectrum']
+    identifier_builder = ['gandalf_version', 'gandalf_ingested_spectrum', 'zcorr']
 
 
 class PPXFFit(Fit):
     parents = [PPXFVersion]
     children = [PPXFIngestedSpectrum]
     factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6')
-    identifier_builder = ['ppxf_version', 'ppxf_ingested_spectrum']
+    identifier_builder = ['ppxf_version', 'ppxf_ingested_spectrum', 'v']
 
 
 class L2ModelSpectrum(Spectrum, L2):

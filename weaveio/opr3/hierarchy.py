@@ -196,9 +196,8 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     """
     parents = [SurveyCatalogue, WeaveTarget]
-    factors = ['id', 'name', 'ra', 'dec', 'epoch', 'pmra', 'pmdec', 'paral']
-    children = Magnitude.from_names('g', 'r', 'i', 'gg', 'bp', 'rp')
-    identifier_builder = ['weave_target', 'survey_catalogue', 'id', 'ra', 'dec']
+    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'pmra', 'pmdec', 'paral'] + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
+    identifier_builder = ['weave_target', 'survey_catalogue', 'targid', 'targra', 'targdec']
 
 
 class FibreTarget(Hierarchy):
@@ -207,9 +206,9 @@ class FibreTarget(Hierarchy):
     the fibres are assigned.
     This object describes where the fibre is placed and what its status is.
     """
-    factors = ['ra', 'dec', 'status', 'orientation', 'nretries', 'x', 'y', 'use', 'priority']
+    factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition', 'targuse', 'targprio']
     parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'survey_target', 'x', 'y', 'use']
+    identifier_builder = ['fibre', 'survey_target', 'xposition', 'yposition', 'targuse']
 
 
 class InstrumentConfiguration(Hierarchy):
@@ -240,11 +239,11 @@ class Progtemp(Hierarchy):
         configs = ArmConfig.from_progtemp_code(progtemp_code_list)
         mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
         binning = progtemp_code_list[3]
-        config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
+        config = InstrumentConfiguration(arm_configs=configs, mode=mode, binning=binning)
         exposure_code = progtemp_code[2:4]
         length = progtemp_code_list[1]
         return cls(code=progtemp_code, length=length, exposure_code=exposure_code,
-                   instrumentconfiguration=config)
+                   instrument_configuration=config)
 
 
 class OBSpec(Hierarchy):
@@ -291,7 +290,7 @@ class Exposure(Hierarchy):
             sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
         except KeyError:
             sim = None
-        sys = System(sysver=header['sysver'])
+        sys = System(version=header['sysver'])
         return cls(ob=ob, casu=casu, simulator=sim, system=sys, **factors)
 
 
@@ -328,8 +327,7 @@ class RawSpectrum(Spectrum):
     """
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
     """
-    parents = [CASU]
-    children = [Run]
+    parents = [CASU, Run]
     products = ['counts1', 'counts2']
     # only one raw per run essentially
 

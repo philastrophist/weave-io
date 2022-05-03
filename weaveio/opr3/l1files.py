@@ -45,23 +45,23 @@ class HeaderFibinfoFile(File):
         return df_svryinfo
 
     @classmethod
-    def read_fibretargets(cls, obspec, df_svryinfo, df_fibinfo):
+    def read_fibretargets(cls, df_svryinfo, df_fibinfo):
         srvyinfo = CypherData(df_svryinfo)
         fibinfo = CypherData(df_fibinfo)
         with unwind(srvyinfo) as svryrow:
             with unwind(svryrow['targsrvy']) as surveyname:
                 survey = Survey(name=surveyname)
             surveys = collect(survey)
-            prog = Subprogramme(name=svryrow['targprog'], progid=svryrow['progid'], surveys=surveys)
-            cat = SurveyCatalogue(name=svryrow['targcat'], catid=svryrow['catid'], subprogramme=prog)
+            prog = Subprogramme(name=svryrow['targprog'], id=svryrow['progid'], surveys=surveys)
+            cat = SurveyCatalogue(name=svryrow['targcat'], id=svryrow['catid'], subprogramme=prog)
         cat_collection = collect(cat)
         cats = groupby(cat_collection, 'name')
         with unwind(fibinfo) as fibrow:
-            fibre = Fibre(fibreid=fibrow['fibreid'])  #  must be up here for some reason otherwise, there will be duplicates
+            fibre = Fibre(id=fibrow['fibreid'])  #  must be up here for some reason otherwise, there will be duplicates
             cat = cats[fibrow['targcat']]
             weavetarget = WeaveTarget(cname=fibrow['cname'])
-            surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
-            fibtarget = FibreTarget(surveytarget=surveytarget, fibre=fibre, tables=fibrow)
+            surveytarget = SurveyTarget(survey_catalogue=cat, weave_target=weavetarget, tables=fibrow)
+            fibtarget = FibreTarget(survey_target=surveytarget, fibre=fibre, tables=fibrow)
         return collect(fibtarget, fibrow)
 
     @classmethod
@@ -79,20 +79,20 @@ class HeaderFibinfoFile(File):
             with unwind(row['targsrvy']) as survey_name:
                 survey = survey_dict[survey_name]
             surveys = collect(survey)
-            subprogramme = Subprogramme(surveys=surveys, name=row['targprog'][0], progid=row['progid'])
+            subprogramme = Subprogramme(surveys=surveys, name=row['targprog'][0], id=row['progid'])
         subprogramme_list = collect(subprogramme)
-        subprogramme_dict = groupby(subprogramme_list, 'progid')
+        subprogramme_dict = groupby(subprogramme_list, 'id')
 
         # catalogue has 1 programme
         # programme can have many catalogues
         rows = CypherData(df_svryinfo[['targcat', 'progid', 'catid']].drop_duplicates(), 'targcat_rows')
         with unwind(rows) as row:
-            catalogue = SurveyCatalogue(subprogramme=subprogramme_dict[row['progid']], name=row['targcat'], catid=row['catid'])
+            catalogue = SurveyCatalogue(subprogramme=subprogramme_dict[row['progid']], name=row['targcat'], id=row['catid'])
         catalogue_list = collect(catalogue)
         return survey_list, subprogramme_list, catalogue_list
 
     @classmethod
-    def read_hierarchy(cls, header, df_svryinfo):
+    def read_hierarchy(cls, header, df_svryinfo, fibretarget_collection):
         surveys, subprogrammes, catalogues = cls.read_distinct_survey_info(df_svryinfo)
         runid = int(header['RUN'])
         camera = str(header['CAMERA'].lower()[len('WEAVE'):])
@@ -104,11 +104,11 @@ class HeaderFibinfoFile(File):
         casu = CASU(id=header['CASUID'])
 
         progtemp = Progtemp.from_progtemp_code(header['PROGTEMP'])
-        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrumentconfiguration.mode)
+        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrument_configuration.mode)
                                   & (progtemp_config['resolution'] == res.lower().replace('res', ''))][f'{camera}_vph'].iloc[0])
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = Obstemp.from_header(header)
-        obspec = OBSpec(xml=xml, title=obtitle, obstemp=obstemp, progtemp=progtemp,
+        obspec = OBSpec(xml=xml, title=obtitle, obstemp=obstemp, progtemp=progtemp, fibre_targets=fibretarget_collection,
                         survey_catalogues=catalogues, subprogrammes=subprogrammes, surveys=surveys)
         ob = OB(id=obid, mjd=obstart, obspec=obspec)
         exposure = Exposure.from_header(ob, header)
@@ -120,8 +120,8 @@ class HeaderFibinfoFile(File):
         header = cls.read_header(path)
         fibinfo = cls.read_fibinfo_dataframe(path, slc)
         srvyinfo = cls.read_surveyinfo(fibinfo)
-        hiers = cls.read_hierarchy(header, srvyinfo)
-        fibretarget_collection, fibrows = cls.read_fibretargets(hiers['obspec'], srvyinfo, fibinfo)
+        fibretarget_collection, fibrows = cls.read_fibretargets(srvyinfo, fibinfo)
+        hiers = cls.read_hierarchy(header, srvyinfo, fibretarget_collection)
         return hiers, header, fibinfo, fibretarget_collection, fibrows
 
     @classmethod
@@ -152,8 +152,8 @@ class RawFile(HeaderFibinfoFile):
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         path = Path(directory) / Path(fname)
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
-        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, **hiers)
-        hdus, file, _ = cls.read_hdus(directory, fname, **hiers)
+        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, run=hiers['run'], casu=hiers['casu'])
+        hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'])
         for product in raw.products:
             raw.attach_product(product, hdus[product])
         return file

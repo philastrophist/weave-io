@@ -75,17 +75,18 @@ class HDU(Hierarchy):
 
     @classmethod
     def from_hdu(cls, name, hdu, extn, file):
-        input_dict = cls._from_hdu(hdu)
+        input_dict = {}
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
-        input_dict['sourcefile'] = file.fname
         input_dict['name'] = name
-        return cls(**input_dict)
+        hdu = cls(**input_dict)
+        for product in cls.products:
+            hdu.attach_product(product, hdu)
+        return hdu
 
 
 class BaseDataHDU(HDU):
     is_template = True
-    factors = HDU.factors + ['nrows', 'ncols']
 
 
 class PrimaryHDU(HDU):
@@ -93,28 +94,8 @@ class PrimaryHDU(HDU):
 
 
 class TableHDU(BaseDataHDU):
-    factors = BaseDataHDU.factors + ['columns']
-
-    @classmethod
-    def _from_hdu(cls, hdu):
-        input_dict = {}
-        if hdu.data is None:
-            input_dict['columns'] = []
-            input_dict['nrows'] = 0
-            input_dict['ncols'] = 0
-        else:
-            colnames = [str(i) for i in hdu.data.names]
-            input_dict['columns'] = colnames
-            input_dict['nrows'], input_dict['ncols'] = hdu.data.shape[0], len(colnames)
-        return input_dict
+    pass
 
 
 class BinaryHDU(BaseDataHDU):
-    @classmethod
-    def _from_hdu(cls, hdu):
-        input_dict = {}
-        if hdu.data is None:
-            input_dict['nrows'], input_dict['ncols'] = 0, 0
-        else:
-            input_dict['nrows'], input_dict['ncols'] = hdu.data.shape
-        return input_dict
+    pass

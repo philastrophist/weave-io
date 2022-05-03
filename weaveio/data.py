@@ -347,7 +347,7 @@ class Data:
         paths = paths_to_hierarchy(self.relation_graphs[-1], self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
         found_any = False
         for path, forwards, singular in paths:
-            yield make_arrows(path, forwards, descriptor), singular, path
+            yield make_arrows(path, [not f for f in forwards], descriptor), singular, path
             found_any = True
         if not found_any:
             if not singular:
@@ -609,7 +609,7 @@ class Data:
         return duplicates, schema_violations
 
     def is_product(self, factor_name, hierarchy_name):
-        return self.singular_name(factor_name) in self.singular_hierarchies[self.singular_name(hierarchy_name)]
+        return self.singular_name(factor_name) in self.singular_hierarchies[self.singular_name(hierarchy_name)].products
 
     def is_factor_name(self, name):
         if name in self.factor_hierarchies:
