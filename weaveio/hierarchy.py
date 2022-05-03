@@ -143,12 +143,6 @@ class Optional(Multiple):
         return self.singular_name
 
 
-class Indexed:
-    def __init__(self, hdu_name, column_name=None):
-        self.name = hdu_name
-        self.column_name = column_name
-
-
 class GraphableMeta(type):
     def __new__(meta, name: str, bases, _dct):
         dct = {'is_template': False}
@@ -253,28 +247,13 @@ class GraphableMeta(type):
         for p in cls.indexes:
             if p not in cls.parents and p not in cls.factors:
                 raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
-        # if len(cls.hdus):
-        #     hduclasses = {}
-        #     for p, (hduname, hdu) in enumerate(cls.hdus.items()):
-        #         if hdu is not None:
-        #             typename = name+hduname[0].upper()+hduname[1:]
-        #             typename = typename.replace('_', '')
-        #             hduclass = type(typename, (hdu, ), {'chilren': [cls], 'identifier_builder': [cls.singular_name, 'extn', 'name']})
-        #             hduclasses[hduname] = hduclass
-        #             if hduname in cls.factors or hduname in [p.singular_name if isinstance(p, type) else p.name for p in cls.parents]:
-        #                 raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {name}")
-        #             for base in bases:
-        #                 if (hduname in base.factors or hduname in base.parents or hasattr(base, hduname)) and hduname not in base.hdus:
-        #                     raise RuleBreakingException(f"There is already a factor/parent called {hduname} defined in {base}->{name}")
-        #             setattr(cls, hduname, hduclass)  # add as an attribute
-        #     cls.hdus = hduclasses  # overwrite hdus
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
         clses = clses[:clses.index('Graphable')]
         cls.neotypes = clses
-        cls.products_and_factors = cls.factors + list(cls.products.keys())
+        cls.products_and_factors = cls.factors + cls.products
         if cls.idname is not None:
             cls.products_and_factors.append(cls.idname)
         cls.relative_names = {}  # reset, no inheritability
@@ -299,11 +278,10 @@ class Graphable(metaclass=GraphableMeta):
     data = None
     query = None
     is_template = True
-    products = {}
+    products = []
     indexes = []
     identifier_builder = None
     version_on = []
-    hdus = {}
     produces = []
     concatenation_constants = []
     belongs_to = []
@@ -507,23 +485,17 @@ class Graphable(metaclass=GraphableMeta):
                 return 'NODE+RELATIONSHIP'
         return 'NODE FIRST'
 
-    def attach_products(self, file=None, index=None, **hdus):
+    def attach_product(self, product_name, hdu, index=None, column_name=None):
         """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
+        if product_name not in self.products:
+            raise TypeError(f"{product_name} is not a product of {self.__class__.__name__}")
         collision_manager = CypherQuery.get_context().collision_manager
-        for productname, name in self.products.items():
-            props = {}
-            if isinstance(name, Indexed):
-                if name.column_name is not None:
-                    props['column_name'] = name.column_name
-                name = name.name
-                if index is None:
-                    raise IndexError(f"{self} requires an index for {file} product {name}")
-                props['index'] = index
-            props['name'] = productname
-            hdu = hdus[name]
-            merge_relationship(hdu, self, 'product', props, {}, collision_manager=collision_manager)
-        if file is not None:
-            merge_relationship(file, self, 'is_required_by', {'name': 'file'}, {}, collision_manager=collision_manager)
+        props = {'name': product_name}
+        if index is not None:
+            props['index'] = index
+        if column_name is not None:
+            props['column_name'] = column_name
+        merge_relationship(hdu, self, 'product', props, {}, collision_manager=collision_manager)
 
     @classmethod
     def without_creation(cls, **kwargs):

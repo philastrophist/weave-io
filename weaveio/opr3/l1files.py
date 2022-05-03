@@ -10,10 +10,10 @@ from astropy.table import Table as AstropyTable
 import numpy as np
 
 from weaveio.config_tables import progtemp_config
-from weaveio.file import File, PrimaryHDU, TableHDU, SpectralBlockHDU, SpectralRowableBlock
+from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
 from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy
-from weaveio.opr3.hierarchy import Survey, SubProgramme, SurveyCatalogue, \
-    WeaveTarget, SurveyTarget, Fibre, FibreTarget, ProgTemp, ArmConfig, ObsTemp, \
+from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
+    WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
     OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder
 from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum
 from weaveio.writequery import groupby, CypherData
@@ -45,23 +45,23 @@ class HeaderFibinfoFile(File):
         return df_svryinfo
 
     @classmethod
-    def read_fibretargets(cls, obspec, df_svryinfo, df_fibinfo):
+    def read_fibretargets(cls, df_svryinfo, df_fibinfo):
         srvyinfo = CypherData(df_svryinfo)
         fibinfo = CypherData(df_fibinfo)
         with unwind(srvyinfo) as svryrow:
             with unwind(svryrow['targsrvy']) as surveyname:
                 survey = Survey(name=surveyname)
             surveys = collect(survey)
-            prog = SubProgramme(name=svryrow['targprog'], progid=svryrow['progid'], surveys=surveys)
-            cat = SurveyCatalogue(name=svryrow['targcat'], catid=svryrow['catid'], subprogramme=prog)
+            prog = Subprogramme(name=svryrow['targprog'], id=svryrow['progid'], surveys=surveys)
+            cat = SurveyCatalogue(name=svryrow['targcat'], id=svryrow['catid'], subprogramme=prog)
         cat_collection = collect(cat)
         cats = groupby(cat_collection, 'name')
         with unwind(fibinfo) as fibrow:
-            fibre = Fibre(fibreid=fibrow['fibreid'])  #  must be up here for some reason otherwise, there will be duplicates
+            fibre = Fibre(id=fibrow['fibreid'])  #  must be up here for some reason otherwise, there will be duplicates
             cat = cats[fibrow['targcat']]
             weavetarget = WeaveTarget(cname=fibrow['cname'])
-            surveytarget = SurveyTarget(surveycatalogue=cat, weavetarget=weavetarget, tables=fibrow)
-            fibtarget = FibreTarget(obspec=obspec, surveytarget=surveytarget, fibre=fibre, tables=fibrow)
+            surveytarget = SurveyTarget(survey_catalogue=cat, weave_target=weavetarget, tables=fibrow)
+            fibtarget = FibreTarget(survey_target=surveytarget, fibre=fibre, tables=fibrow)
         return collect(fibtarget, fibrow)
 
     @classmethod
@@ -79,50 +79,49 @@ class HeaderFibinfoFile(File):
             with unwind(row['targsrvy']) as survey_name:
                 survey = survey_dict[survey_name]
             surveys = collect(survey)
-            subprogramme = SubProgramme(surveys=surveys, name=row['targprog'][0], progid=row['progid'])
+            subprogramme = Subprogramme(surveys=surveys, name=row['targprog'][0], id=row['progid'])
         subprogramme_list = collect(subprogramme)
-        subprogramme_dict = groupby(subprogramme_list, 'progid')
+        subprogramme_dict = groupby(subprogramme_list, 'id')
 
         # catalogue has 1 programme
         # programme can have many catalogues
         rows = CypherData(df_svryinfo[['targcat', 'progid', 'catid']].drop_duplicates(), 'targcat_rows')
         with unwind(rows) as row:
-            catalogue = SurveyCatalogue(subprogramme=subprogramme_dict[row['progid']], name=row['targcat'], catid=row['catid'])
+            catalogue = SurveyCatalogue(subprogramme=subprogramme_dict[row['progid']], name=row['targcat'], id=row['catid'])
         catalogue_list = collect(catalogue)
         return survey_list, subprogramme_list, catalogue_list
 
     @classmethod
-    def read_hierarchy(cls, header, df_svryinfo):
+    def read_hierarchy(cls, header, df_svryinfo, fibretarget_collection):
         surveys, subprogrammes, catalogues = cls.read_distinct_survey_info(df_svryinfo)
         runid = int(header['RUN'])
         camera = str(header['CAMERA'].lower()[len('WEAVE'):])
-        expmjd = np.round(float(header['MJD-OBS']), 6)
         obstart = np.round(float(header['OBSTART']), 6)
         res = str(header['VPH']).rstrip('123').lower().replace('res', '')
         obtitle = str(header['OBTITLE'])
         xml = str(header['CAT-NAME']).replace('./', '') if 'xml' in header['CAT-NAME'] else str(header['INFILE'])  # stack files do this
         obid = float(header['OBID'])
+        casu = CASU(id=header['CASUID'])
 
-        progtemp = ProgTemp.from_progtemp_code(header['PROGTEMP'])
-        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrumentconfiguration.mode)
+        progtemp = Progtemp.from_progtemp_code(header['PROGTEMP'])
+        vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrument_configuration.mode)
                                   & (progtemp_config['resolution'] == res.lower().replace('res', ''))][f'{camera}_vph'].iloc[0])
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
-        obstemp = ObsTemp.from_header(header)
-        obspec = OBSpec(xml=xml, obtitle=obtitle, obstemp=obstemp, progtemp=progtemp,
-                        surveycatalogues=catalogues, subprogrammes=subprogrammes, surveys=surveys)
-        ob = OB(obid=obid, obstartmjd=obstart, obspec=obspec)
+        obstemp = Obstemp.from_header(header)
+        obspec = OBSpec(xml=xml, title=obtitle, obstemp=obstemp, progtemp=progtemp, fibre_targets=fibretarget_collection,
+                        survey_catalogues=catalogues, subprogrammes=subprogrammes, surveys=surveys)
+        ob = OB(id=obid, mjd=obstart, obspec=obspec)
         exposure = Exposure.from_header(ob, header)
-        run = Run(runid=runid, armconfig=arm, exposure=exposure)
-
-        return {'run': run, 'ob': ob, 'obspec': obspec, 'armconfig': arm}
+        run = Run(id=runid, arm_config=arm, exposure=exposure)
+        return {'ob': ob, 'obspec': obspec, 'armconfig': arm, 'exposure': exposure, 'run': run, 'casu': casu}
 
     @classmethod
     def read_schema(cls, path: Path, slc: slice = None):
         header = cls.read_header(path)
         fibinfo = cls.read_fibinfo_dataframe(path, slc)
         srvyinfo = cls.read_surveyinfo(fibinfo)
-        hiers = cls.read_hierarchy(header, srvyinfo)
-        fibretarget_collection, fibrows = cls.read_fibretargets(hiers['obspec'], srvyinfo, fibinfo)
+        fibretarget_collection, fibrows = cls.read_fibretargets(srvyinfo, fibinfo)
+        hiers = cls.read_hierarchy(header, srvyinfo, fibretarget_collection)
         return hiers, header, fibinfo, fibretarget_collection, fibrows
 
     @classmethod
@@ -140,10 +139,10 @@ class HeaderFibinfoFile(File):
 
 class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
-    hdus = {'primary': PrimaryHDU, 'counts1': SpectralBlockHDU, 'counts2': SpectralBlockHDU, 'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
+    hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
+            'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
-    children = [Run]
-    produces = [Run]
+    children = [RawSpectrum]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -153,19 +152,18 @@ class RawFile(HeaderFibinfoFile):
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         path = Path(directory) / Path(fname)
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
-        observation = hiers['observation']
-        hdus, file, _ = cls.read_hdus(directory, fname, casu=observation.casu)
-        raw = RawSpectrum(sourcefile=str(fname), casu=observation.casu, observation=observation, nrow=-1)
-        raw.attach_products(file, **hdus)
-        observation.attach_products(file, **hdus)
+        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, run=hiers['run'], casu=hiers['casu'])
+        hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'])
+        for product in raw.products:
+            raw.attach_product(product, hdus[product])
         return file
 
 
 class L1File(HeaderFibinfoFile):
     is_template = True
-    hdus = {'primary': PrimaryHDU, 'flux': SpectralRowableBlock, 'ivar': SpectralRowableBlock,
-            'flux_noss': SpectralRowableBlock, 'ivar_noss': SpectralRowableBlock,
-            'sensfunc': SpectralRowableBlock, 'fibtable': TableHDU}
+    hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
+            'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
+            'sensfunc': BinaryHDU, 'fibtable': TableHDU}
     children = [WavelengthHolder]
 
     @classmethod
@@ -181,12 +179,16 @@ class L1File(HeaderFibinfoFile):
                   **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
         return super().read_hdus(directory, fname, **hierarchies, wavelengthholder=cls.wavelengths(directory, fname))
 
+    @classmethod
+    def attach_products_to_spectrum(cls, spectrum, index, hdus):
+        for product in spectrum.products:
+            spectrum.attach_product(product, hdus[product], index=index)
+
 
 class L1SingleFile(L1File):
     match_pattern = 'single_\d+\.fit'
-    parents = L1File.parents + [CASU]
-    children = [RawFile]
-    produces = [L1SingleSpectrum]
+    parents = L1File.parents + [CASU, RawFile]
+    children = [L1SingleSpectrum]
     version_on = ['raw_file']
 
     @classmethod
@@ -199,8 +201,7 @@ class L1SingleFile(L1File):
         directory = Path(directory)
         path = directory / fname
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
-        observation = hiers['observation']
-        casu = observation.casu
+        casu = hiers['casu']
         inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
         matched_files = list(directory.rglob(inferred_raw_fname.name))
         if not matched_files:
@@ -212,14 +213,14 @@ class L1SingleFile(L1File):
                                   f"\n{matched_files}")
         else:
             inferred_raw_fname = str(matched_files[0])
-        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, observation=observation, nrow=-1)
+        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1)
         rawfile = RawFile(inferred_raw_fname, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
         hdus, file, _ = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             single_spectrum = L1SingleSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
                                                rawspectrum=raw, fibretarget=fibretarget,
                                                casu=casu, tables=fibrow)
-            single_spectrum.attach_products(file, index=fibrow['spec_index'], **hdus)
+            cls.attach_products_to_spectrum(single_spectrum, fibrow['spec_index'], hdus)
         single_spectra = collect(single_spectrum)  # must collect at the end
         return file
 
@@ -237,10 +238,10 @@ class L1StackedBaseFile(L1File):
         return runids
 
 
-class L1StackFile(L1StackedBaseFile):
+class L1OBStackFile(L1StackedBaseFile):
     match_pattern = 'stack_[0-9]+\.fit'
     produces = [L1OBStackSpectrum]
-    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OB, ArmConfig, CASU]
+    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(OB, ArmConfig)), CASU]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -267,10 +268,9 @@ class L1StackFile(L1StackedBaseFile):
         path = directory / fname
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
 
-        observation = hiers['observation']
         ob = hiers['ob']
         armconfig = hiers['armconfig']
-        casu = observation.casu
+        casu = hiers['casu']
         singlefiles = cls.get_single_files(directory, fname)
         hdus, file, _ = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
                                    armconfig=armconfig, casu=casu)
@@ -283,7 +283,7 @@ class L1StackFile(L1StackedBaseFile):
                                              l1singlespectra=single_spectra, ob=ob,
                                              armconfig=armconfig, fibretarget=fibretarget,
                                              casu=casu, tables=fibrow)
-            stack_spectrum.attach_products(file, index=fibrow['spec_index'], **hdus)
+            cls.attach_products_to_spectrum(stack_spectrum, fibrow['spec_index'], hdus)
         stack_spectra = collect(stack_spectrum)  # must collect at the end
         return file
 

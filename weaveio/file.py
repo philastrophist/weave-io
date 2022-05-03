@@ -6,7 +6,7 @@ from astropy.io import fits
 from astropy.io.fits.hdu.base import _BaseHDU
 
 from weaveio.graph import Graph
-from weaveio.hierarchy import Hierarchy
+from weaveio.hierarchy import Hierarchy, Multiple
 
 
 class File(Hierarchy):
@@ -14,8 +14,6 @@ class File(Hierarchy):
     idname = 'fname'
     match_pattern = '*.file'
     antimatch_pattern = '^$'
-    hdus = {}
-    produces = []
     recommended_batchsize = None
 
     def open(self):
@@ -71,79 +69,33 @@ class File(Hierarchy):
 class HDU(Hierarchy):
     is_template = True
     parents = [File]
-    factors = ['sourcefile', 'extn', 'name']
-    identifier_builder = ['sourcefile', 'extn', 'name']
-    binaries = ['header', 'data']
-    concatenation_constants = None
-
-    @classmethod
-    def _from_hdu(cls, hdu):
-        return {}
+    factors = ['extn', 'name']
+    identifier_builder = ['file', 'extn', 'name']
+    products = ['header', 'data']
 
     @classmethod
     def from_hdu(cls, name, hdu, extn, file):
-        input_dict = cls._from_hdu(hdu)
+        input_dict = {}
         input_dict[cls.parents[0].singular_name] = file
         input_dict['extn'] = extn
-        input_dict['sourcefile'] = file.fname
         input_dict['name'] = name
-        if cls.concatenation_constants is not None:
-            if len(cls.concatenation_constants):
-                for c in cls.concatenation_constants:
-                    if c not in input_dict:
-                        input_dict[c] = hdu.header[c]
-                input_dict['concatenation_constants'] = cls.concatenation_constants
-        return cls(**input_dict)
-
-
-class PrimaryHDU(HDU):
-    is_template = True
-    binaries = ['header']
-    concatenation_constants = []
+        hdu = cls(**input_dict)
+        for product in cls.products:
+            hdu.attach_product(product, hdu)
+        return hdu
 
 
 class BaseDataHDU(HDU):
     is_template = True
-    concatenation_constants = ['ncols']
-    factors = HDU.factors + ['nrows', 'ncols']
+
+
+class PrimaryHDU(HDU):
+    products = ['header']
 
 
 class TableHDU(BaseDataHDU):
-    is_template = True
-    concatenation_constants = ['columns']
-
-    @classmethod
-    def _from_hdu(cls, hdu):
-        input_dict = BaseDataHDU._from_hdu(hdu)
-        if hdu.data is None:
-            input_dict['columns'] = []
-            input_dict['nrows'] = 0
-            input_dict['ncols'] = 0
-        else:
-            colnames = [str(i) for i in hdu.data.names]
-            input_dict['columns'] = colnames
-            input_dict['nrows'], input_dict['ncols'] = hdu.data.shape[0], len(colnames)
-        return input_dict
+    pass
 
 
 class BinaryHDU(BaseDataHDU):
-    is_template = True
-
-    @classmethod
-    def _from_hdu(cls, hdu):
-        input_dict = BaseDataHDU._from_hdu(hdu)
-        if hdu.data is None:
-            input_dict['nrows'], input_dict['ncols'] = 0, 0
-        else:
-            input_dict['nrows'], input_dict['ncols'] = hdu.data.shape
-        return input_dict
-
-
-class SpectralBlockHDU(BinaryHDU):
-    is_template = True
-    concatenation_constants = ['naxis1', 'naxis2']
-
-
-class SpectralRowableBlock(BinaryHDU):
-    is_template = True
-    concatenation_constants = ['naxis1', 'crval1', 'cd1_1']
+    pass

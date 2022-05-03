@@ -7,7 +7,7 @@ class Name(Type):
     idname = 'the_name_of_the_unique_attribute_of_this_Object'
     identifier_builder = [list_of_attributes_or_objects_that_define_uniqueness]
     factors = ['attribute1', 'attribute2']
-    products = {'name_of_product': product_object}
+    products = ['name_of_product']
     parents = [required_object_that_comes_before]
     children = [required_object_that_comes_after]
 
@@ -34,10 +34,12 @@ from pathlib import Path
 import os
 
 import inspect
+
+import numpy as np
 import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Indexed
+from weaveio.hierarchy import Hierarchy, Multiple, Optional
 
 
 class Measurement(Hierarchy):
@@ -90,7 +92,7 @@ class ArmConfig(Hierarchy):
     - camera can be 'red' or 'blue'
     - colour can be 'red', 'blue', or 'green'
     """
-    factors = ['resolution', 'vph', 'camera', 'colour']
+    factors = ['resolution', 'vph', 'camera', 'colour', 'colour_code']
     identifier_builder = ['resolution', 'vph', 'camera']
 
     def __init__(self, tables=None, **kwargs):
@@ -98,6 +100,7 @@ class ArmConfig(Hierarchy):
             kwargs['colour'] = 'green'
         else:
             kwargs['colour'] = kwargs['camera']
+        kwargs['colour_code'] = kwargs['colour'][0].upper()
         super().__init__(tables, **kwargs)
 
     @classmethod
@@ -108,7 +111,7 @@ class ArmConfig(Hierarchy):
         return red, blue
 
 
-class ObsTemp(Hierarchy):
+class Obstemp(Hierarchy):
     """
     Whilst ProgTemp deals with "how" a target is observed, OBSTEMP deals with "when" a target is observed,
     namely setting the observational constraints required to optimally extract scientific information from the observation.
@@ -165,7 +168,7 @@ class Fibre(Hierarchy):
     idname = 'id'
 
 
-class SubProgramme(Hierarchy):
+class Subprogramme(Hierarchy):
     """
     A submitted programme of observation which was written by multiple surveys.
     """
@@ -178,7 +181,7 @@ class SurveyCatalogue(Hierarchy):
     """
     A catalogue which was submitted by a subprogramme.
     """
-    parents = [SubProgramme]
+    parents = [Subprogramme]
     factors = ['name']
     idname = 'id'
 
@@ -193,9 +196,19 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     """
     parents = [SurveyCatalogue, WeaveTarget]
-    factors = ['id', 'name', 'ra', 'dec', 'epoch', 'pmra', 'pmdec', 'paral']
-    children = Magnitude.from_names('g', 'r', 'i', 'gg', 'bp', 'rp')
-    identifier_builder = ['weave_target', 'survey_catalogue', 'id', 'ra', 'dec']
+    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'pmra', 'pmdec', 'paral'] + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
+    identifier_builder = ['weave_target', 'survey_catalogue', 'targid', 'targra', 'targdec']
+
+
+class FibreTarget(Hierarchy):
+    """
+    A fibretarget is the combination of fibre and surveytarget which is created after submission when
+    the fibres are assigned.
+    This object describes where the fibre is placed and what its status is.
+    """
+    factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition', 'targuse', 'targprio']
+    parents = [Fibre, SurveyTarget]
+    identifier_builder = ['fibre', 'survey_target', 'xposition', 'yposition', 'targuse']
 
 
 class InstrumentConfiguration(Hierarchy):
@@ -208,7 +221,7 @@ class InstrumentConfiguration(Hierarchy):
     identifier_builder = ['arm_configs', 'mode', 'binning']
 
 
-class ProgTemp(Hierarchy):
+class Progtemp(Hierarchy):
     """
     The ProgTemp code is an integral part of describing a WEAVE target.
     This parameter encodes the requested instrument configuration, OB length, exposure time,
@@ -226,22 +239,11 @@ class ProgTemp(Hierarchy):
         configs = ArmConfig.from_progtemp_code(progtemp_code_list)
         mode = progtemp_config.loc[progtemp_code_list[0]]['mode']
         binning = progtemp_code_list[3]
-        config = InstrumentConfiguration(armconfigs=configs, mode=mode, binning=binning)
+        config = InstrumentConfiguration(arm_configs=configs, mode=mode, binning=binning)
         exposure_code = progtemp_code[2:4]
         length = progtemp_code_list[1]
         return cls(code=progtemp_code, length=length, exposure_code=exposure_code,
-                   instrumentconfiguration=config)
-
-
-class FibreTarget(Hierarchy):
-    """
-    A fibretarget is the combination of fibre and surveytarget which is created after submission when
-    the fibres are assigned.
-    This object describes where the fibre is placed and what its status is.
-    """
-    factors = ['ra', 'dec', 'status', 'orientation', 'nretries', 'x', 'y', 'use', 'priority']
-    parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'survey_target', 'ra', 'dec', 'use']
+                   instrument_configuration=config)
 
 
 class OBSpec(Hierarchy):
@@ -252,7 +254,7 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [ObsTemp, ProgTemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(SubProgramme), Multiple(Survey)]
+    parents = [Obstemp, Progtemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(Subprogramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
@@ -281,14 +283,14 @@ class Exposure(Hierarchy):
     @classmethod
     def from_header(cls, ob, header):
         factors = {f: header.get(f) for f in cls.factors}
-        factors['mjd'] = float(header['MJD-OBS'])
+        factors['mjd'] = np.round(float(header['MJD-OBS']), 6)
         factors['obstype'] = header['obstype'].lower()
         casu = CASU(id=header.get('casuvers', header.get('casuid')))
         try:
             sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
         except KeyError:
             sim = None
-        sys = System(sysver=header['sysver'])
+        sys = System(version=header['sysver'])
         return cls(ob=ob, casu=casu, simulator=sim, system=sys, **factors)
 
 
@@ -305,20 +307,11 @@ class Spectrum(SourcedData):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    products = {'flux': Indexed('flux'), 'ivar': Indexed('ivar'), 'wvl': 'wvl'}
+    products = ['flux', 'ivar', 'wvl']
 
 
 class Spectrum2D(Spectrum):
     is_template = True
-
-
-class RawSpectrum(Spectrum):
-    """
-    A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
-    """
-    plural_name = 'rawspectra'
-    products = {'counts1': 'counts1', 'counts2': 'counts2'}
-    # only one raw per run essentially
 
 
 class Run(Hierarchy):
@@ -328,7 +321,15 @@ class Run(Hierarchy):
     """
     idname = 'id'
     parents = [ArmConfig, Exposure]
-    children = [RawSpectrum]
+
+
+class RawSpectrum(Spectrum):
+    """
+    A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
+    """
+    parents = [CASU, Run]
+    products = ['counts1', 'counts2']
+    # only one raw per run essentially
 
 
 class Single(Hierarchy):
