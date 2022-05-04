@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Union, List, Dict, Type, Set, Tuple, Optional
 
 import inspect
+
 from astropy.io import fits
 from astropy.io.fits.hdu.base import _BaseHDU
 from astropy.table import Table
@@ -12,9 +13,9 @@ from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
 from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate, RawSpectrum, Run, ArmConfig
 from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum
-from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2SuperStack, L2SuperTarget, RedrockIngestedSpectrum, RVSpecFitIngestedSpectrum, FerreIngestedSpectrum, PPXFIngestedSpectrum, GandalfIngestedSpectrum, IngestedSpectrum, Fit, L2ModelSpectrum, RedrockFit, RedrockModelSpectrum, \
+from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2Superstack, L2Supertarget, RedrockIngestedSpectrum, RVSpecFitIngestedSpectrum, FerreIngestedSpectrum, PPXFIngestedSpectrum, GandalfIngestedSpectrum, IngestedSpectrum, Fit, L2ModelSpectrum, RedrockFit, RedrockModelSpectrum, \
     RVSpecFitModelSpectrum, RVSpecFitVersion, RVSpecFit, FerreFit, FerreModelSpectrum, FerreVersion, PPXFModelSpectrum, PPXFFit, PPXFVersion, GandalfFit, GandalfModelSpectrum, GandalfVersion, RedrockVersion
-from weaveio.opr3.l1files import L1File, L1SuperStackFile, L1OBStackFile, L1SingleFile, L1SuperTargetFile
+from weaveio.opr3.l1files import L1File, L1SuperstackFile, L1OBStackFile, L1SingleFile, L1SupertargetFile
 from weaveio.writequery import CypherData, groupby
 from weaveio.writequery.base import CypherFindReplaceStr
 
@@ -35,11 +36,14 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
 
 
 class L2File(File):
+    singular_name = 'l2file'
     is_template = True
     match_pattern = '.*APS.fits'
     antimatch_pattern = '.*cube.*'
-    children = [L2]
+    software_versions = [RedrockVersion, PPXFVersion, GandalfVersion, FerreVersion, RVSpecFitVersion]
     parents = [Multiple(L1File, 2, 3), APS]
+    children = [L2]
+    produces = software_versions
     hdus = {'primary': PrimaryHDU,
             'class_spectra': TableHDU,
             'galaxy_spectra': TableHDU,
@@ -56,8 +60,8 @@ class L2File(File):
 
     @classmethod
     def decide_filetype(cls, l1filetypes: List[Type[File]]) -> Type[File]:
-        l1precedence = [L1SingleFile, L1OBStackFile, L1SuperStackFile, L1SuperTargetFile]
-        l2precedence = [L2SingleFile, L2StackFile, L2SuperStackFile, L2SuperTargetFile]
+        l1precedence = [L1SingleFile, L1OBStackFile, L1SuperstackFile, L1SupertargetFile]
+        l2precedence = [L2SingleFile, L2OBStackFile, L2SuperstackFile, L2SupertargetFile]
         highest = max(l1precedence.index(l1filetype) for l1filetype in l1filetypes)
         return l2precedence[highest]
 
@@ -90,7 +94,7 @@ class L2File(File):
         ftype_dict = {
             'single': L1SingleFile,
             'stacked': L1OBStackFile, 'stack': L1OBStackFile,
-            'superstack': L1SuperStackFile, 'superstacked': L1SuperStackFile
+            'superstack': L1SuperstackFile, 'superstacked': L1SuperstackFile
         }
         split = fname.name.lower().replace('aps.fits', '').replace('aps.fit', '').strip('_.').split('__')
         runids = []
@@ -231,10 +235,11 @@ class L2File(File):
                                  True, False, 'GAND', aps)
 
 
-
 class L2SingleFile(L2File):
-    children = [L2Single]
+    singular_name = 'l2single_file'
+    children = [Multiple(L2Single)]
     parents = [Multiple(L1SingleFile, 2, 3, constrain=(Exposure,)), APS]
+
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -243,8 +248,9 @@ class L2SingleFile(L2File):
 
 
 class L2OBStackFile(L2File):
-    children = [L2OBStack]
-    parents = [Multiple(L1SingleFile, 0, 3, constrain=(OB,)), Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS]
+    singular_name = 'l2obstack_file'
+    children = [Multiple(L2OBStack)]
+    parents = [Multiple(L1SingleFile, 0, 2, constrain=(OB,)), Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -252,11 +258,12 @@ class L2OBStackFile(L2File):
         return {'ob': OB.find(obid=header['OBID'])}
 
 
-class L2SuperStackFile(L2File):
-    children = [L2SuperStack]
+class L2SuperstackFile(L2File):
+    singular_name = 'l2superstack_file'
+    children = [Multiple(L2Superstack)]
     parents = [Multiple(L1SingleFile, 0, 3, constrain=(OBSpec,)),
                Multiple(L1OBStackFile, 0, 3, constrain=(OBSpec,)),
-               Multiple(L1SuperStackFile, 0, 3, constrain=(OBSpec,)), APS]
+               Multiple(L1SuperstackFile, 0, 3, constrain=(OBSpec,)), APS]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -264,11 +271,11 @@ class L2SuperStackFile(L2File):
         return {'obspec': OBSpec.find(xml=str(header['cat-name']))}
 
 
-class L2SuperTargetFile(L2File):
+class L2SupertargetFile(L2File):
+    singular_name = 'l2supertarget_file'
     match_pattern = 'WVE_*aps.fits'
-    produces = [L2SuperTarget]
-    children = [L2SuperTarget]
-    parents = [Multiple(L1SuperTargetFile, 2, 3, constrain=(WeaveTarget,)), APS]
+    children = [L2Supertarget]
+    parents = [Multiple(L1SupertargetFile, 2, 3, constrain=(WeaveTarget,)), APS]
 
     @classmethod
     def parse_fname(cls, header, fname, instantiate=True) -> List[L1File]:

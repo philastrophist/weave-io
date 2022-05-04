@@ -10,7 +10,7 @@ class L1(Hierarchy):
     is_template = True
 
 
-class NoSS(Spectrum1D, L1):
+class NoSS(Spectrum1D):
     plural_name = 'nosses'
     singular_name = 'noss'
     products = ['flux', 'ivar']
@@ -52,7 +52,7 @@ class L1OBStackSpectrum(L1StackSpectrum, OBStack):
     singular_name = 'l1obstack_spectrum'
     plural_name = 'l1obstack_spectra'
     parents = [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
-    version_on = ['l1single_spectra', 'fibre_target']
+    version_on = ['l1single_spectra']
 
 
 class L1SuperstackSpectrum(L1StackSpectrum, Superstack):
@@ -62,7 +62,7 @@ class L1SuperstackSpectrum(L1StackSpectrum, Superstack):
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
     parents =[Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
-    version_on = ['l1single_spectra', 'fibre_target']
+    # version_on = ['l1single_spectra', 'fibre_target']
 
 
 class L1SupertargetSpectrum(L1Spectrum, Supertarget):
@@ -72,7 +72,7 @@ class L1SupertargetSpectrum(L1Spectrum, Supertarget):
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
     parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
-    version_on = ['l1single_spectra', 'weave_target']
+    # version_on = ['l1single_spectra', 'weave_target']
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

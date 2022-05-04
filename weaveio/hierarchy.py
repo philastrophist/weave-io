@@ -1,5 +1,6 @@
 import inspect
 import logging
+from collections import OrderedDict
 from copy import deepcopy
 from functools import wraps, partial, reduce
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
@@ -61,12 +62,13 @@ def all_subclasses(cls):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None):
+    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False):
         self.node = node
         self.minnumber = int_or_none(minnumber) or 0
         self.maxnumber = int_or_none(maxnumber)
         self.constrain = [] if constrain is None else (constrain, ) if not isinstance(constrain, (list, tuple)) else tuple(constrain)
         self.relation_idname = idname
+        self.one2one = one2one
         self._isself = self.node == 'self'
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
@@ -85,7 +87,12 @@ class Multiple:
                 if include_hierarchies is not None:
                     for h in include_hierarchies:
                         hierarchies[h.__name__] = h  # this overrides the default
-                self.node = hierarchies[self.node]
+                try:
+                    self.node = hierarchies[self.node]
+                except KeyError:
+                    # require hierarchy doesnt exist yet
+                    Hierarchy._waiting.append(self)
+                    return
         self.singular_name = self.node.singular_name
         self.plural_name = self.node.plural_name
 
@@ -97,6 +104,9 @@ class Multiple:
             self.parents = self.node.parents
         except AttributeError:
             self.parents = []
+        while Hierarchy._waiting:
+            h = Hierarchy._waiting.pop()
+            h.instantate_node(include_hierarchies)
 
     def __repr__(self):
         return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}] id={self.relation_idname})>"
@@ -120,8 +130,8 @@ class Multiple:
 
 
 class OneOf(Multiple):
-    def __init__(self, node, constrain=None, idname=None):
-        super().__init__(node, 1, 1, constrain, idname)
+    def __init__(self, node, constrain=None, idname=None, one2one=False):
+        super().__init__(node, 1, 1, constrain, idname, one2one)
 
     def __repr__(self):
         return f"<OneOf({self.node})>"
@@ -132,8 +142,8 @@ class OneOf(Multiple):
 
 
 class Optional(Multiple):
-    def __init__(self, node, constrain=None, idname=None):
-        super(Optional, self).__init__(node, 0, 1, constrain, idname)
+    def __init__(self, node, constrain=None, idname=None, one2one=False):
+        super(Optional, self).__init__(node, 0, 1, constrain, idname, one2one)
 
     def __repr__(self):
         return f"<Optional({self.node})>"
@@ -172,6 +182,15 @@ class GraphableMeta(type):
                 raise RuleBreakingException(f"The name {factor} is not allowed for class {name}")
             if any(factor.startswith(p) for p in FORBIDDEN_PROPERTY_PREFIXES):
                 raise RuleBreakingException(f"The name {factor} may not start with any of {FORBIDDEN_PROPERTY_PREFIXES} for {name}")
+        # remove duplicates from the list dct['parents'] whilst maintaining its order
+        if 'parents' in dct:
+            dct['parents'] = list(OrderedDict.fromkeys(dct['parents']))
+        if 'children' in dct:
+            dct['children'] = list(OrderedDict.fromkeys(dct['children']))
+        if 'factors' in dct:
+            dct['factors'] = list(OrderedDict.fromkeys(dct['factors']))
+        if 'produces' in dct:
+            dct['produces'] = list(OrderedDict.fromkeys(dct['produces']))
         r = super(GraphableMeta, meta).__new__(meta, name, bases, dct)
         return r
 
@@ -535,6 +554,7 @@ class Graphable(metaclass=GraphableMeta):
 class Hierarchy(Graphable):
     parents = []
     factors = []
+    _waiting = []
     _hierarchies = {}
     is_template = True
 

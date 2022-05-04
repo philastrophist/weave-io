@@ -11,11 +11,11 @@ import numpy as np
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
-from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy
+from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf
 from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
     OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder
-from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum
+from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, L1Spectrum
 from weaveio.writequery import groupby, CypherData
 
 
@@ -142,6 +142,7 @@ class RawFile(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
             'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
+    produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
     children = [RawSpectrum]
 
     @classmethod
@@ -160,11 +161,14 @@ class RawFile(HeaderFibinfoFile):
 
 
 class L1File(HeaderFibinfoFile):
+    singular_name = 'l1file'
     is_template = True
     hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
             'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
-    children = [WavelengthHolder]
+    children = [WavelengthHolder, Multiple(L1Spectrum)]
+    parents = [CASU]
+    produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
     def wavelengths(cls, rootdir: Path, fname: str):
@@ -186,9 +190,10 @@ class L1File(HeaderFibinfoFile):
 
 
 class L1SingleFile(L1File):
+    singular_name = 'l1single_file'
     match_pattern = 'single_\d+\.fit'
-    parents = L1File.parents + [CASU, RawFile]
-    children = [L1SingleSpectrum]
+    parents = [CASU, OneOf(RawFile, one2one=True)]
+    children = [Multiple(L1SingleSpectrum)]
     version_on = ['raw_file']
 
     @classmethod
@@ -226,6 +231,7 @@ class L1SingleFile(L1File):
 
 
 class L1StackedBaseFile(L1File):
+    singular_name = 'l1stacked_basefile'
     is_template = True
 
     @classmethod
@@ -239,9 +245,10 @@ class L1StackedBaseFile(L1File):
 
 
 class L1OBStackFile(L1StackedBaseFile):
+    singular_name = 'l1obstack_file'
     match_pattern = 'stack_[0-9]+\.fit'
-    produces = [L1OBStackSpectrum]
-    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(OB, ArmConfig)), CASU]
+    parents = [CASU, Multiple(L1SingleFile, constrain=(OB, ArmConfig))]
+    children = [Multiple(L1OBStackSpectrum)]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -288,10 +295,11 @@ class L1OBStackFile(L1StackedBaseFile):
         return file
 
 
-class L1SuperStackFile(L1StackedBaseFile):
+class L1SuperstackFile(L1StackedBaseFile):
+    singular_name = 'l1superstack_file'
     match_pattern = 'superstack_[0-9]+\.fit'
-    produces = [L1SuperstackSpectrum]
-    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile), OBSpec, ArmConfig, CASU]
+    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(OBSpec, ArmConfig)), CASU]
+    children = [Multiple(L1SuperstackSpectrum)]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -306,10 +314,11 @@ class L1SuperStackFile(L1StackedBaseFile):
         raise NotImplementedError
 
 
-class L1SuperTargetFile(L1StackedBaseFile):
+class L1SupertargetFile(L1StackedBaseFile):
+    singular_name = 'l1supertarget_file'
     match_pattern = 'WVE_.+\.fit'
-    parents = L1StackedBaseFile.parents + [WeaveTarget, Multiple(L1SingleFile, 2), CASU]
-    produces = [L1SupertargetSpectrum]
+    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(WeaveTarget, ArmConfig)), CASU]
+    children = [L1SupertargetSpectrum]
     recommended_batchsize = None
 
     @classmethod
