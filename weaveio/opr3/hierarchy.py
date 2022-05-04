@@ -28,18 +28,13 @@ You can modify the first relation in each of the above by using:
     Optional(parent/child) == Multiple(parent/Child, 0, 1)
 
 """
-import sys
-from pathlib import Path
-
-import os
-
 import inspect
+import sys
 
 import numpy as np
-import pandas as pd
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, Optional
+from weaveio.hierarchy import Hierarchy, Multiple, OneOf
 
 
 class Measurement(Hierarchy):
@@ -196,19 +191,10 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     """
     parents = [SurveyCatalogue, WeaveTarget]
-    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'pmra', 'pmdec', 'paral'] + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
+    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch',
+               'targclass', 'targpmra', 'targpdec', 'targparal', 'targrio'] \
+              + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
     identifier_builder = ['weave_target', 'survey_catalogue', 'targid', 'targra', 'targdec']
-
-
-class FibreTarget(Hierarchy):
-    """
-    A fibretarget is the combination of fibre and surveytarget which is created after submission when
-    the fibres are assigned.
-    This object describes where the fibre is placed and what its status is.
-    """
-    factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition', 'targuse', 'targprio']
-    parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'survey_target', 'xposition', 'yposition', 'targuse']
 
 
 class InstrumentConfiguration(Hierarchy):
@@ -246,6 +232,18 @@ class Progtemp(Hierarchy):
                    instrument_configuration=config)
 
 
+class FibreTarget(Hierarchy):
+    """
+    A fibretarget is the combination of fibre and surveytarget which is created after submission when
+    the fibres are assigned.
+    This object describes where the fibre is placed and what its status is.
+    """
+    factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition',
+               'targx', 'targy']
+    parents = [Fibre, SurveyTarget]
+    identifier_builder = ['fibre', 'survey_target', 'xposition', 'yposition']
+
+
 class OBSpec(Hierarchy):
     """
     When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
@@ -254,7 +252,8 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [Obstemp, Progtemp, Multiple(FibreTarget), Multiple(SurveyCatalogue), Multiple(Subprogramme), Multiple(Survey)]
+    parents = [Obstemp, Progtemp, Multiple(FibreTarget, one2one=True),  # each OB has a defined number of fibre_targets
+               Multiple(SurveyCatalogue), Multiple(Subprogramme), Multiple(Survey)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
@@ -323,13 +322,12 @@ class Run(Hierarchy):
     parents = [ArmConfig, Exposure]
 
 
-class RawSpectrum(Spectrum):
+class RawSpectrum(Spectrum2D):
     """
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
     """
-    parents = [CASU, Run]
+    parents = [CASU, OneOf(Run, one2one=True)]
     products = ['counts1', 'counts2']
-    # only one raw per run essentially
 
 
 class Single(Hierarchy):
@@ -350,13 +348,6 @@ class Superstack(Stack):
 
 class Supertarget(Stack):
     is_template = True
-
-
-def _predicate(o):
-    if inspect.isclass(o):
-        return issubclass(o, Hierarchy)
-    return False
-hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
 
 
 class MCMCMeasurement(Measurement):
@@ -390,3 +381,10 @@ class MeanFlux(Hierarchy):
     plural_name = 'mean_fluxes'
     idname = 'band'
     factors = ['value']
+
+
+def _predicate(o):
+    if inspect.isclass(o):
+        return issubclass(o, Hierarchy)
+    return False
+hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

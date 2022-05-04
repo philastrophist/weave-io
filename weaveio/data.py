@@ -20,7 +20,9 @@ from tqdm import tqdm
 from .file import File, HDU
 from .graph import Graph
 from .hierarchy import Multiple, Hierarchy, Graphable, Optional, OneOf
+from .path_finding import find_path
 from .readquery import Query
+from .readquery.digraph import partial_reverse
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
 
@@ -152,9 +154,13 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
             # child instance has n of type Parent, parent instance has unknown number of type Child
             parent = relation.node  # reset from new relations
             graph.add_edge(child, parent, singular=relation.maxnumber == 1,
-                           optional=relation.minnumber == 0,
-                           style=relstyle)
-            graph.add_edge(parent, child, singular=False, optional=True, style='dotted', relation=relation)
+                           optional=relation.minnumber == 0, style=relstyle)
+            if relation.one2one:
+                graph.add_edge(parent, child, singular=True, optional=True, style='solid',
+                               relation=relation)
+            else:
+                graph.add_edge(parent, child, singular=False, optional=True, style='dotted',
+                               relation=relation)
         else:  # i.e. children = [...] is set in the class for this object
             # parent instance has n of type Child, each child instance has one of type Parent
             child = relation.node  # reset from new relations
@@ -183,7 +189,8 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
     if done is None:
         done = []
     hierarchies = set()
-    todo = set(hier.parents + hier.children + hier.produces)
+    todo = {h.node if isinstance(h, Multiple) else h for h in hier.parents + hier.children + hier.produces}
+    todo = {h for h in todo if not h.is_template}
     for new in todo:
         if isinstance(new, Multiple):
             new.instantate_node()
@@ -196,8 +203,10 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
     hierarchies.add(hier)
     return hierarchies
 
-def hierarchies_from_hierarchies(*hiers: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
-    hiers += tuple(Hierarchy._hierarchies.values())
+def hierarchies_from_files(*files: Type[File]) -> Set[Type[Hierarchy]]:
+    hiers = {h.node if isinstance(h, Multiple) else h for file in files for h in file.children + file.produces}
+    hiers = {h for h in hiers if not h.is_template}
+    hiers.update(set(files))
     return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
 
 def make_arrows(path, forwards: List[bool], descriptors=None):
@@ -218,74 +227,6 @@ def make_arrows(path, forwards: List[bool], descriptors=None):
         path_list.append(node)
     path_list = path_list[:-1]
     return ''.join(path_list)
-
-
-def all_paths(g, from_obj, to_obj):
-    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])
-    try:
-        yield from nx.all_simple_paths(singles, from_obj, to_obj)
-    except NetworkXNoPath:
-        pass
-    try:
-        yield from (p[::-1] for p in nx.all_simple_paths(singles, to_obj, from_obj))
-    except NetworkXNoPath:
-        pass
-    forward = nx.subgraph_view(g, filter_edge=lambda a, b: 'relation' in g.edges[(a, b)])
-    backward = nx.subgraph_view(g, filter_edge=lambda a, b: 'relation' not in g.edges[(a, b)])
-    try:
-        yield from nx.all_simple_paths(forward, from_obj, to_obj)
-    except NetworkXNoPath:
-        pass
-    try:
-        yield from nx.all_simple_paths(backward, from_obj, to_obj)
-    except NetworkXNoPath:
-        pass
-
-def all_unidirectional_paths(g, from_obj, to_obj, force_singular):
-    paths = []
-    for path in all_paths(g, from_obj, to_obj):
-        path = tuple(path)
-        if path in paths:
-            continue
-        paths.append(path)
-        singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
-        if force_singular and not singular:
-            return
-        forwards = ['relation' in g.edges[edge] for edge in zip(path[:-1], path[1:])]
-        if all(forwards) or not any(forwards):
-            yield path, singular, forwards
-
-def is_a_constrained_path(g, path):
-    for i, (a, b) in enumerate(zip(path[:-1], path[1:])):
-        if 'relation' in g.edges[(a, b)]:
-            constrain = g.edges[(a, b)]['relation'].constrain
-        else:
-            constrain = g.edges[(b, a)]['relation'].constrain
-        if constrain:
-            if any(c in path for c in constrain):
-                return True
-    return False
-
-def paths_to_hierarchy(g: nx.DiGraph, from_obj, to_obj, force_singular):
-    """
-    Find path from one obj to another obj with the constraint that the path is singular or not
-    raises NetworkXNoPath if there is no path with that constraint
-    :returns:
-    path: str
-    path_yields_singular: bool
-    """
-    for path, singular, forwards in all_unidirectional_paths(g, from_obj, to_obj, force_singular):
-        if not is_a_constrained_path(g, path):
-            yield path, forwards, singular
-
-
-def paths_to_hierarchy_with_above(g: nx.DiGraph, from_obj, to_obj, force_singular, descriptor=None):
-    singles = nx.subgraph_view(g, filter_edge=lambda a, b: g.edges[a, b]['singular'])
-    ancestors = [from_obj] + list(nx.ancestors(singles, from_obj))
-    for ancestor in ancestors:
-        for path, forwards, singular in paths_to_hierarchy(g, ancestor, to_obj, force_singular):
-            if not any(n in path for n in ancestors):
-                yield path, forwards, singular
 
 
 def plot_graph(G, fname, format):
@@ -312,10 +253,8 @@ class Data:
         self.rootdir = Path(rootdir)
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
-            fs = self.filetypes[:i+1]
-            self.relation_graphs.append(make_relation_graph(hierarchies_from_hierarchies(*fs)))
+            self.relation_graphs.append(make_relation_graph(hierarchies_from_files(*self.filetypes[:i+1])))
         self.hierarchies = {h for g in self.relation_graphs for h in g.nodes}
-
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -338,18 +277,94 @@ class Data:
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
-    def paths_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None):
+    def _conditional_path_to_hierarchy(self, from_obj: Type[Hierarchy], given_previous_obj: Type[Hierarchy],
+                                       to_obj: Type[Hierarchy], singular:bool):
         """
-        Find path from one obj to another obj with the constraint that the path is singular or not
-        raises NetworkXNoPath if there is no path with that constraint
+        Given a path from `given_previous_obj` to `from_obj`, find a path from `from_obj` to `to_obj`.
+        This finder is used for when the source node is defined as a child by some other node.
+        In this case, `from_obj->to_obj` is not enough, we need to know the path from `given_previous_obj` to `from_obj`.
         """
+        # remove all other nodes which define `from_obj` as a child
+        excluded = {node for node in set(self.relation_graphs[-1].nodes) if from_obj in
+                    [c.node if isinstance(c, Multiple) else c for c in node.children]}
+        excluded -= {given_previous_obj, from_obj, to_obj}
+        g = nx.subgraph_view(self.relation_graphs[-1], lambda n: n not in excluded)
+        return find_path(g, from_obj, to_obj, singular)
+
+    def _path_to_hierarchy(self, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
+        """
+        When searching for a path, the target is either above or below the source in one direction only
+        If the target is defined as a child by another, then the search is redefined as for the predecessors of that child
+            i.e. ob.nosses => [ob.l1single_spectra.noss, ob.l1stack_spectra.noss, ob.l1superstack_spectra.noss, ...]
+                 this is then an error since it is an ambiguous path
+        If the source is defined as a child by another, then additionally, the other node is required to define a path
+            i.e. ...noss.obs requires that ... is known.
+                 this is therefore an error since it is an ambiguous path
+        If force_single, use only single edges
+        for {singles, multiples}:
+            Find the shortest path in one direction, but search both directions, both are equally valid
+            If more than one path is returned, throw an ambiguous path exception
+
+        """
+        g = self.relation_graphs[-1]
+        return find_path(g, from_obj, to_obj, singular)
+
+    def parents_of_defined_child(self, potential_child: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
+        parents = {h for h in self.hierarchies if potential_child in [c.node if isinstance(c, Multiple) else c for c in h.children]}
+        return {p for p in parents if not issubclass(p, File) and p is not potential_child}
+
+    def get_possible_intermediate_paths(self, source: Type[Hierarchy], target: Type[Hierarchy]):
+        """
+        A specific query is when all nodes are not templtes/children such as ob.runs
+        This type of query has exactly one path
+        A generic query is when one or both of `source` and `target` are templates/children
+        such as:
+            l1single_spectra.noss (target is child)
+            runs.l1spectra (target is template)
+            l1spectra.run (source is template)
+            redrock_fits.runs (source is child)
+            l1spectra.noss
+            noss.l1spectra
+
+        A template can be expanded into multiple choices: l1spectra -> [l1single_spectra, l1obstack_spectra, ...]
+        A child must be expanded into multiple choices: noss -> [l1single_spectra.noss, l1obstack_spectra.noss, ...]
+        For a child, if the preceding node matches one of the choices, that choice is chosen (not expanded)
+                        i.e. l1single_spectra.noss -> [l1single_spectra.noss]
+        Order of operations for a pair of (source, target):
+            - Templates are expanded into their non-templated forms
+            - target children choose from the possible sources if available, otherwise expanded to all options
+            - source children are expanded to all options
+        """
+
+
+    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, given_previous_obj: str = None, descriptor=None, return_objs=False):
         a, b = map(self.singular_name, [from_obj, to_obj])
-        paths = paths_to_hierarchy(self.relation_graphs[-1], self.singular_hierarchies[a], self.singular_hierarchies[b], singular)
-        found_any = False
-        for path, forwards, singular in paths:
-            yield make_arrows(path, [not f for f in forwards], descriptor), singular, path
-            found_any = True
-        if not found_any:
+        if given_previous_obj is not None:
+            c = self.singular_name(given_previous_obj)
+            given_previous_obj = self.singular_hierarchies[c]
+        from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
+        parents_of_a = self.parents_of_defined_child(from_obj)
+        parents_of_b = self.parents_of_defined_child(to_obj)
+        if parents_of_a and given_previous_obj is None:
+            raise TypeError(f"{from_obj} is a child of {parents_of_a}. The previously traversed node must be given as well")
+        if given_previous_obj not in parents_of_b and parents_of_b:
+            raise NotImplementedError(f"{b} can be a child of any of {parents_of_b}. Currently generic traversal is not implemented")
+        try:
+            if parents_of_b:
+                # e.g. ob.l2singles.galaxy_redshifts
+                path = self._path_to_hierarchy(from_obj, given_previous_obj, singular) + [to_obj]
+            elif parents_of_a:
+                path = self._conditional_path_to_hierarchy(from_obj, given_previous_obj, to_obj, singular)
+            else:
+                path = self._path_to_hierarchy(from_obj, to_obj, singular)
+            g = self.relation_graphs[-1]
+            singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
+            forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
+            arrows = make_arrows(path, [not f for f in forwards], descriptor)
+            if return_objs:
+                return arrows, singular, path
+            return arrows, singular
+        except nx.NetworkXNoPath:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
             else:
@@ -358,16 +373,6 @@ class Data:
             raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
                                 f"This may be because it doesn't make sense for `{from_}` to have {to}. "
                                 f"Try checking the cardinalty of your query.")
-
-    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None):
-        generator = self.paths_to_hierarchy(from_obj, to_obj, singular, descriptor)
-        arrows, singular, path = next(generator)
-        others = '\n'.join(['.'.join([ii.__name__ for ii in i[-1]]) for i in generator])
-        if others:
-            raise NetworkXNoPath(f"Found multiple paths between `{from_obj}` and `{to_obj}` via these paths:"
-                                 f"\n{others}")
-
-        return arrows, singular
 
     def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
         hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
@@ -751,7 +756,7 @@ class Data:
             newsuggestions = []
             if relative_to is not None:
                 try:
-                    self.paths_to_hierarchy(relative_to, h_singular_name, singular=True)
+                    self.path_to_hierarchy(relative_to, h_singular_name, singular=True)
                 except NetworkXNoPath:
                     hier = h.singular_name
                     factors = h.products_and_factors

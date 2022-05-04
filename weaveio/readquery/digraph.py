@@ -144,7 +144,7 @@ def subgraph_view(graph: HashedDiGraph, excluded_edge_type=None, only_edge_type=
     return r
 
 
-def partial_reverse(G: HashedDiGraph, edges: List[Tuple]) -> HashedDiGraph:
+def partial_reverse(G: nx.DiGraph, edges: List[Tuple]) -> HashedDiGraph:
     newG = generic_graph_view(G).copy()
     succ = {}
     pred = {}
