@@ -11,7 +11,7 @@ import numpy as np
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
-from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf
+from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf, Optional
 from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
     OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder
@@ -112,8 +112,9 @@ class HeaderFibinfoFile(File):
                         survey_catalogues=catalogues, subprogrammes=subprogrammes, surveys=surveys)
         ob = OB(id=obid, mjd=obstart, obspec=obspec)
         exposure = Exposure.from_header(ob, header)
-        run = Run(id=runid, arm_config=arm, exposure=exposure)
-        return {'ob': ob, 'obspec': obspec, 'armconfig': arm, 'exposure': exposure, 'run': run, 'casu': casu}
+        adjunct_run = Run.find(anonymous_parents=[exposure])
+        run = Run(id=runid, arm_config=arm, exposure=exposure, adjunct=adjunct_run)
+        return {'ob': ob, 'obspec': obspec, 'armconfig': arm, 'exposure': exposure, 'run': run, 'adjunct_run': adjunct_run, 'casu': casu}
 
     @classmethod
     def read_schema(cls, path: Path, slc: slice = None):
@@ -143,7 +144,7 @@ class RawFile(HeaderFibinfoFile):
             'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
     parents = [CASU]
     produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
-    children = [RawSpectrum]
+    children = [RawSpectrum, Optional('self', idname='adjunct')]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -153,8 +154,11 @@ class RawFile(HeaderFibinfoFile):
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
         path = Path(directory) / Path(fname)
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
-        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, run=hiers['run'], casu=hiers['casu'])
-        hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'])
+        adjunct_run =hiers['adjunct_run']
+        adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
+        adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
+        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
+        hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'], adjunct=adjunct_rawfile)
         for product in raw.products:
             raw.attach_product(product, hdus[product])
         return file
@@ -167,7 +171,7 @@ class L1File(HeaderFibinfoFile):
             'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
     children = [WavelengthHolder, Multiple(L1Spectrum)]
-    parents = [CASU]
+    parents = [CASU, Optional('self', idname='adjunct')]
     produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
@@ -181,19 +185,19 @@ class L1File(HeaderFibinfoFile):
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
                   **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
-        return super().read_hdus(directory, fname, **hierarchies, wavelengthholder=cls.wavelengths(directory, fname))
+        return super().read_hdus(directory, fname, **hierarchies, wavelength_holder=cls.wavelengths(directory, fname))
 
     @classmethod
-    def attach_products_to_spectrum(cls, spectrum, index, hdus):
-        for product in spectrum.products:
-            spectrum.attach_product(product, hdus[product], index=index)
+    def attach_products_to_spectrum(cls, Type, spectrum_var, index, hdus):
+        for product in Type.products:
+            Type.attach_product(product, hdus[product], index=index)
 
 
 class L1SingleFile(L1File):
     singular_name = 'l1single_file'
     match_pattern = 'single_\d+\.fit'
     parents = [CASU, OneOf(RawFile, one2one=True)]
-    children = [Multiple(L1SingleSpectrum)]
+    children = [Multiple(L1SingleSpectrum), Optional('self', idname='adjunct'), WavelengthHolder]
     version_on = ['raw_file']
 
     @classmethod
@@ -218,14 +222,23 @@ class L1SingleFile(L1File):
                                   f"\n{matched_files}")
         else:
             inferred_raw_fname = str(matched_files[0])
-        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1)
-        rawfile = RawFile(inferred_raw_fname, casu=casu)  # merge this one instead of finding, then we can start from single or raw files
-        hdus, file, _ = cls.read_hdus(directory, fname, rawfile=rawfile, casu=casu)
+        adjunct_run = hiers['adjunct_run']
+        adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
+        adjunct_raw_file = RawFile.find(anonymous_children=[adjunct_raw])
+        adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
+        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1, run=hiers['run'])
+        rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file)  # merge this one instead of finding, then we can start from single or raw files
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
+            adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)
             single_spectrum = L1SingleSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
-                                               rawspectrum=raw, fibretarget=fibretarget,
-                                               casu=casu, tables=fibrow)
-            cls.attach_products_to_spectrum(single_spectrum, fibrow['spec_index'], hdus)
+                                               raw_spectrum=raw, fibre_target=fibretarget,
+                                               tables=fibrow, adjunct=adjunct)
+        single_spectra, fibrows = collect(single_spectrum, fibrow)
+        hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
+                                      l1single_spectra=single_spectra,
+                                      casu=casu)
+        with unwind(single_spectra, fibrows) as (single_spectrum, fibrow):
+            cls.attach_products_to_spectrum(single_spectrum, fibrow['spec_index'], hdus, L1SingleSpectrum.products)
         single_spectra = collect(single_spectrum)  # must collect at the end
         return file
 
@@ -247,8 +260,8 @@ class L1StackedBaseFile(L1File):
 class L1OBStackFile(L1StackedBaseFile):
     singular_name = 'l1obstack_file'
     match_pattern = 'stack_[0-9]+\.fit'
-    parents = [CASU, Multiple(L1SingleFile, constrain=(OB, ArmConfig))]
-    children = [Multiple(L1OBStackSpectrum)]
+    parents = [CASU, Multiple(L1SingleFile, constrain=(OB, ArmConfig)), Optional('self', idname='adjunct')]
+    children = [Multiple(L1OBStackSpectrum), WavelengthHolder]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -279,17 +292,22 @@ class L1OBStackFile(L1StackedBaseFile):
         armconfig = hiers['armconfig']
         casu = hiers['casu']
         singlefiles = cls.get_single_files(directory, fname)
+        adjunct_raw = RawSpectrum.find(anonymous_parents=[hiers['adjunct_run']])
+        adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
+        adjunct_l1single_file = L1SingleFile.find(anonymous_parents=[adjunct_rawfile])
+        adjunct_file = cls.find(anonymous_parents=[adjunct_l1single_file])
         hdus, file, _ = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
-                                   armconfig=armconfig, casu=casu)
+                                   armconfig=armconfig, casu=casu, adjunct=adjunct_file)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             single_spectra = []
             for singlefile in singlefiles:
                 single_spectrum = L1SingleSpectrum.find(sourcefile=str(singlefile.fname), nrow=fibrow['nspec'])
                 single_spectra.append(single_spectrum)
+            adjunct = L1OBStackSpectrum.find(fibretarget=fibretarget, ob=ob)
             stack_spectrum = L1OBStackSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
-                                             l1singlespectra=single_spectra, ob=ob,
-                                             armconfig=armconfig, fibretarget=fibretarget,
-                                             casu=casu, tables=fibrow)
+                                                 l1singlespectra=single_spectra, ob=ob,
+                                                 armconfig=armconfig, fibretarget=fibretarget,
+                                                 casu=casu, tables=fibrow, adjunct=adjunct)
             cls.attach_products_to_spectrum(stack_spectrum, fibrow['spec_index'], hdus)
         stack_spectra = collect(stack_spectrum)  # must collect at the end
         return file
@@ -299,7 +317,7 @@ class L1SuperstackFile(L1StackedBaseFile):
     singular_name = 'l1superstack_file'
     match_pattern = 'superstack_[0-9]+\.fit'
     parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(OBSpec, ArmConfig)), CASU]
-    children = [Multiple(L1SuperstackSpectrum)]
+    children = [Multiple(L1SuperstackSpectrum), Optional('self', idname='adjunct'), WavelengthHolder]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -318,7 +336,7 @@ class L1SupertargetFile(L1StackedBaseFile):
     singular_name = 'l1supertarget_file'
     match_pattern = 'WVE_.+\.fit'
     parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(WeaveTarget, ArmConfig)), CASU]
-    children = [L1SupertargetSpectrum]
+    children = [L1SupertargetSpectrum, Optional('self', idname='adjunct'), WavelengthHolder]
     recommended_batchsize = None
 
     @classmethod

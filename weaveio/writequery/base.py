@@ -74,9 +74,8 @@ class CypherQuery(metaclass=ContextMeta):
         self.make_variable_names()
         qs = [s.to_cypher() for s in self.statements]
         for i, q in enumerate(qs):
-            if q.lower().startswith('with'):
-                q = re.sub('\$[\w\d]+,', '', q)
-                q = re.sub(',\$[\w\d]+', '', q)
+            if q.lower().startswith('with') and '$' in q:
+                q = re.sub('\$[\w\d]+ as \$[\w\d]+,', '', q)
                 qs[i] = q
         # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
         q = '\n'.join(qs)
