@@ -4,7 +4,7 @@ from typing import List, Tuple
 import networkx as nx
 from pathlib import Path
 
-from .utilities import mask_infs
+from .utilities import mask_infs, remove_successive_duplicate_lines
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct
 
@@ -524,4 +524,4 @@ class QueryGraph:
                 pass
         end_time = time.perf_counter()
         timed = end_time - start_time
-        return statements
+        return remove_successive_duplicate_lines(statements)

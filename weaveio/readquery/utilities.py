@@ -1,3 +1,6 @@
+from typing import List
+
+
 def mask_infs(x):
     return f"CASE WHEN {x} > apoc.math.maxLong() THEN null ELSE {x} END"
 
@@ -12,3 +15,14 @@ def is_regex(other):
            ('*' in other and not (other.startswith('"') and other.endswith('"')))
 
 
+def remove_successive_duplicate_lines(cypher: List[str]):
+    """
+    Given a list of cypher statements, remove any lines that appear more than once in succession only
+    """
+    if not cypher:
+        return []
+    deduplicated = [cypher[0]]
+    for line in cypher[1:]:
+        if line != deduplicated[-1]:
+            deduplicated.append(line)
+    return deduplicated
