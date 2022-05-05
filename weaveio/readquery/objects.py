@@ -9,6 +9,7 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
+from functools import reduce
 from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
 
 from networkx import NetworkXNoPath
@@ -16,20 +17,138 @@ from networkx import NetworkXNoPath
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex
+from ..basequery.common import NotYetImplementedError
 from ..opr3.hierarchy import Exposure
 
 if TYPE_CHECKING:
     from weaveio.data import Data
 
-class GenericObjectQuery(BaseQuery):
-    pass
-
-
 class PathError(SyntaxError):
     pass
 
 
-class ObjectQuery(GenericObjectQuery):
+class BaseObjectQuery(BaseQuery):
+    def _traverse_to_specific_object(self, obj, want_single):
+        raise NotImplementedError
+
+    def _traverse_to_template_object(self, obj, want_single):
+        """
+        Template objects are those that are not instantiated in the database, but have subclasses
+        which are instantiated in the database.
+        """
+        obj, obj_is_singular = self._normalise_object(obj)
+        options = self._data.expand_template_object(obj, self._obj)  # list of paths of specifics
+
+    def _traverse_dependent_object(self, obj, want_single):
+        """
+        Dependent objects are instantiated in the database, but they have a variety of parent objects
+        e.g. L1SingleSpectrum.NOSS, L1StackSpectrum.NOSS... NOSS is a dependent object since it does
+        not define its parents itself
+        """
+        obj, obj_is_singular = self._normalise_object(obj)
+        options = self._data.expand_dependent_object(obj, self._obj)  # list of paths of specifics
+
+    def _traverse_to_generic_object(self, obj, want_single):
+        """
+        each generic query can have multiple queries
+        when a generic query is spawned, its possible options are spawned as well and stored in the generic one
+        if the generic is turned into a specific e.g. data.l1spectra['single'], the relevant options are passed on (in this case, one option)
+        if the generic is traversed from e.g. data.l1spectra.run, then a traversal of {UNION paths} is added to the query and we continue
+
+        when traversing from a generic,
+            it is singular only if all options are singular: l1spectra.noss, l1spectra.adjunct
+        when traversing to a generic [this function]!
+            if is singular only if there is only one option: run.l1spectra, weavetarget.l1spectra, l1single_spectrum.noss
+        """
+        obj, obj_is_singular = self._normalise_object(obj)
+        options = self._data.expand_generic_object(obj, self._obj)  # list of paths of specifics
+        if len(options) > 1 and want_single and not self._subqueries:
+            raise SyntaxError(f"{obj} is a generic object and cannot be used as a single object")
+        specifics = []
+        for path in options:
+            if len(path) == 1:
+                start = self._traverse_to_specific_object(path[0], want_single, not_generic=True)
+                specifics.append(start)
+            else:
+                try:
+                    start = self._subqueries[path[0]]
+                except KeyError:
+                    start = self._traverse_to_specific_object(path[0], want_single, not_generic=True)
+                specifics.append(reduce(lambda a, b: a._traverse_to_specific_object(b, want_single, not_generic=True), path[1:], start))
+        if self._previous is None:
+            n = self._G.add_start_node(obj)
+        else:
+            paths = {s._obj: list(self._G.G.in_edges(s._node, data=True))[0][-1]['statement'].path for s in specifics}
+            n = self._G.add_union_traversal(self._node, paths, obj, single=False)
+        return TemplateObjectQuery._spawn(self, n, obj=obj, subqueries={s._obj: s for s in specifics}, single=want_single)
+
+
+class SpecificObjectQuery(BaseObjectQuery):
+    def _traverse_to_specific_object(self, obj, want_single, not_generic=False):
+        """
+        obj.obj
+        traversal, expands
+        e.g. `ob.runs`  reads "for each ob, get its runs"
+        """
+        if self._data.is_template_object(obj) and not not_generic:
+            return self._traverse_to_template_object(obj, want_single)
+        elif self._data.is_dependent_object(obj) and not not_generic:
+            return self._traverse_to_dependent_object(obj, want_single)
+        try:
+            path, single = self._get_path_to_object(obj, want_single)
+        except NetworkXNoPath:
+            if want_single:
+                plural = self._data.plural_name(obj)
+                msg = f"There is no singular {obj} relative to {self._obj} try using its plural {plural}"
+            else:
+                msg = f"There is no {obj} relative to {self._obj}"
+            raise CardinalityError(msg)
+        n = self._G.add_traversal(self._node, path, obj, single)
+        return SpecificObjectQuery._spawn(self, n, obj, single=want_single)
+
+    def _traverse_to_template_object(self, obj, want_single):
+        options = self._data.expand_template_object(obj)  # specific options
+        # check whether there is exactly one option which has a singular path
+        if want_single:
+            singles = [specific_option for specific_option in options if self._get_path_to_object(specific_option, False)[1]]
+            if len(singles) == 1:
+                return self._traverse_to_specific_object(singles[0], want_single)
+            else:
+                raise CardinalityError(f"{self._obj} has multiple {obj}: {options}. Check the cardinality of your query")
+        specifics = []
+        for specific_obj in options:
+            start = self._traverse_to_specific_object(specific_obj, want_single, not_generic=True)
+            specifics.append(start)
+        if self._previous is None:
+            n = self._G.add_start_node(obj)
+        else:
+            paths = {s._obj: list(self._G.G.in_edges(s._node, data=True))[0][-1]['statement'].path for s in specifics}
+            n = self._G.add_union_traversal(self._node, paths, obj, single=False)
+        return TemplateObjectQuery._spawn(self, n, obj=obj, subqueries={s._obj: s for s in specifics}, single=want_single)
+
+    def _traverse_to_dependent_object(self, obj, want_single):
+        options = self._data.expand_dependent_object(obj)  # specific intermediate options
+        # if no options match this query's object, then use all options
+        # if exactly one option matches this query's object, then use that option
+        if self._obj in options:
+            return self._traverse_to_specific_object(obj, want_single, not_generic=True)
+        elif want_single:
+            raise CardinalityError(f"{self._obj} more than one {obj}: {options}. Check the cardinality of your query")
+        else:
+            specifics = {}
+            for specific_obj in options:
+                start = self._traverse_to_specific_object(specific_obj, want_single, not_generic=True)
+                end = start._traverse_to_specific_object(obj, False, not_generic=True)
+                specifics[specific_obj] = end
+            if self._previous is None:
+                n = self._G.add_start_node(obj)
+            else:
+                final_path = list(self._G.G.in_edges(end._node, data=True))[0][-1]['statement'].path
+                paths = {specific_obj: self._get_path_to_object(specific_obj, False)[0] for specific_obj in options}
+                intermediate = self._G.add_union_traversal(self._node, paths, obj, single=False)
+                n = self._G.add_traversal(intermediate, final_path, obj, single=False)
+            return DependentObjectQuery._spawn(self, n, obj=obj, subqueries=specifics, single=want_single)
+
     def _precompile(self) -> 'TableQuery':
         """
         If the object contains only one factor/product and defines no parents/children, return that
@@ -65,36 +184,6 @@ class ObjectQuery(GenericObjectQuery):
         h = self._data.class_hierarchies[self._data.class_name(self._obj)]
         return self.__getitem__(h.products_and_factors)
 
-    def _traverse_to_generic_object(self):
-        """
-        obj.generic_obj['specific_type_name']
-        filter, shrinks, destructive
-        filters based on the type of object to make it more specific
-        only shared factors can be accessed
-        e.g. `obj.spectra` could be l1singlespectra, l1stackedspectra, l2modelspectra etc
-             but `obj.spectra['l1']` ensures that it is only `l1` and only `l1` factors can be accessed
-                 `obj.spectra['single']`
-        """
-        raise NotImplementedError
-
-    def _traverse_to_specific_object(self, obj, want_single):
-        """
-        obj.obj
-        traversal, expands
-        e.g. `ob.runs`  reads "for each ob, get its runs"
-        """
-        try:
-            path, single = self._get_path_to_object(obj, want_single)
-        except NetworkXNoPath:
-            if want_single:
-                plural = self._data.plural_name(obj)
-                msg = f"There is no singular {obj} relative to {self._obj} try using its plural {plural}"
-            else:
-                msg = f"There is no {obj} relative to {self._obj}"
-            raise CardinalityError(msg)
-        n = self._G.add_traversal(self._node, path, obj, single)
-        return ObjectQuery._spawn(self, n, obj, single=want_single)
-
     def _traverse_by_object_index(self, obj, index):
         """
         obj['obj_id']
@@ -109,7 +198,7 @@ class ObjectQuery(GenericObjectQuery):
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj, single=True)
+        return SpecificObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         param = self._G.add_parameter(indexes)
@@ -119,7 +208,7 @@ class ObjectQuery(GenericObjectQuery):
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj, single=True)
+        return SpecificObjectQuery._spawn(self, n, obj, single=True)
 
     def _select_product(self, attr, want_single):
         attr = self._data.singular_name(attr)
@@ -159,14 +248,14 @@ class ObjectQuery(GenericObjectQuery):
         attrs = []
         names = []
         for item in items:
-            if isinstance(item, ObjectQuery):
+            if isinstance(item, SpecificObjectQuery):
                 item = item._precompile()
             if isinstance(item, AttributeQuery):
                 attrs.append(item)
                 names.append(f"{item._names[0]}")
             else:
                 new = self.__getitem__(item)
-                if isinstance(new, ObjectQuery):
+                if isinstance(new, SpecificObjectQuery):
                     new = new._precompile()
                 if isinstance(new, list):
                     for a in new:
@@ -201,7 +290,7 @@ class ObjectQuery(GenericObjectQuery):
         name = self._G.add_parameter(singular_name)
         eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id')
         f = self._G.add_filter(n, eq, direct=True)
-        return ObjectQuery._spawn(self, f, obj, single=single)
+        return SpecificObjectQuery._spawn(self, f, obj, single=single)
 
     def _filter_by_relative_index(self):
         """
@@ -216,7 +305,7 @@ class ObjectQuery(GenericObjectQuery):
     def _getitems(self, items, by_getitem):
         if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(AttributeQuery) for i in items):
+        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in items):
             return self._make_table(*items)
         if any(self._data.is_valid_name(i) for i in items):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
@@ -294,19 +383,80 @@ class ObjectQuery(GenericObjectQuery):
         return self._select_attribute('id', True).__eq__(other)
 
 
-class Query(GenericObjectQuery):
+class DependentObjectQuery(SpecificObjectQuery):
+    def _traverse_to_specific_object(self, obj, want_single, not_generic=False):
+        specifics = []
+        for specific_obj, subquery in self._subqueries.items():
+            specifics.append(subquery._traverse_to_specific_object(obj, want_single, not_generic))
+        paths = {s._obj: list(self._G.G.in_edges(s._node, data=True))[0][-1]['statement'].path for s in specifics}
+        n = self._G.add_union_traversal(self._node, paths, obj, single=False)
+        return TemplateObjectQuery._spawn(self, n, obj=obj, subqueries={s._obj: s for s in specifics}, single=want_single)
+
+    def _traverse_to_template_object(self, obj, want_single):
+        options = self._data.expand_template_object(obj)
+        specifics = {}
+        for specific_obj, subquery in self._subqueries.items():
+            paths = []
+            for option in options:
+                obj_path = subquery._get_path_to_object(option, False, True)[-1]
+                if specific_obj in obj_path:
+                    paths.append(obj_path)
+            if len(paths) == 0:  # does rely on the dependency, so accept all
+                specifics[specific_obj] = subquery._traverse_to_template_object(obj, want_single)
+            elif want_single:
+                if len(paths) != 1:
+                    raise CardinalityError(f"traversing from {self} to {obj} is ambiguous")
+                # match the only path
+                # e.g. l1singlespectrum.noss.l1single
+                specifics[specific_obj] = subquery._traverse_to_specific_object([o for o in options if o in paths[0]][0], want_single)
+            else:
+                specifics[specific_obj] = subquery._traverse_to_template_object(obj, want_single)
+        # specifics is a dictionary of {specific_obj: query}
+        specifics = [s for q in specifics.values() for s in q._subqueries.values()]
+        paths = {s._obj: list(self._G.G.in_edges(s._node, data=True))[0][-1]['statement'].path for s in specifics}
+        n = self._G.add_union_traversal(self._node, paths, obj, single=False)
+        return TemplateObjectQuery._spawn(self, n, obj=obj, subqueries={s._obj: s for s in specifics}, single=want_single)
+
+
+    def _traverse_to_dependent_object(self, obj, want_single):
+        return super()._traverse_to_dependent_object(obj, want_single)
+
+
+class TemplateObjectQuery(SpecificObjectQuery):
+    def _filter_by_type(self, htype: str):
+        """
+        Choose from the generic options by htype
+        """
+        htype = self._normalise_object(htype)
+        types = {self._data.class_hierarchies[self._normalise_object(k)]: q for k, q in self._subqueries.items()}
+        matched = {t: q for t, q in types.items() if issubclass(t, htype) or issubclass(htype, t)}
+        if len(matched) == 0:
+            raise SyntaxError(f"No objects of type `{htype}` found in {self._obj}")
+        elif len(matched) == 1:
+            return matched[list(matched.keys())[0]]  # return the only matched query
+        else:
+            specifics = list(matched.values())
+            paths = {s._obj: self._G.G.edges[(self._node, s._node)]['statement'].path for s in specifics}
+            n = self._G.add_union_traversal(self._node, paths, self._obj, single=False)
+            return BaseObjectQuery._spawn(self, n, obj=self._obj, subqueries={s.__name__: s for s in matched}, single=False)
+
+
+
+class Query(BaseObjectQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
         super().__init__(data, G, node, previous, obj, start, 'start')
 
     def _compile(self):
         raise NotImplementedError(f"{self.__class__} is not compilable")
 
-    def _traverse_to_specific_object(self, obj):
-        obj, single = self._normalise_object(obj)
-        if single:
+    def _traverse_to_specific_object(self, obj, want_single=False, not_generic=False):
+        if want_single:
             raise CardinalityError(f"Cannot start query with a single object `{obj}`")
+        obj, single = self._normalise_object(obj)
+        if self._data.is_generic_object(obj) and not not_generic:
+            return self._traverse_to_generic_object(obj, False)
         n = self._G.add_start_node(obj)
-        return ObjectQuery._spawn(self, n, obj, single=False)
+        return SpecificObjectQuery._spawn(self, n, obj, single=False)
 
     def _traverse_by_object_index(self, obj, index):
         obj, single = self._normalise_object(obj)
@@ -315,7 +465,7 @@ class Query(GenericObjectQuery):
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj, single=True)
+        return SpecificObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         param = self._G.add_parameter(indexes)
@@ -324,7 +474,7 @@ class Query(GenericObjectQuery):
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj, single=True)
+        return SpecificObjectQuery._spawn(self, n, obj, single=True)
 
     def __getitem__(self, item):
         return self.__getattr__(item)
@@ -335,9 +485,9 @@ class Query(GenericObjectQuery):
                 raise CardinalityError(f"Cannot start a query with a single object `{item}`")
             obj = self._get_object_of(item)[0]
             obj = self._data.plural_name(obj)
-            return self._traverse_to_specific_object(obj)._select_attribute(item, True)
+            return self._traverse_to_specific_object(obj, False)._select_attribute(item, True)
         except (KeyError, ValueError):
-            return self._traverse_to_specific_object(item)
+            return self._traverse_to_specific_object(item, False)
 
 
 class AttributeQuery(BaseQuery):
@@ -346,7 +496,7 @@ class AttributeQuery(BaseQuery):
     def __repr__(self):
         return f'<{self.__class__.__name__}({self._obj}.{self._factor_name})>'
 
-    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'SpecificObjectQuery'] = None,
                  obj: str = None, start: Query = None, index_node=None,
                  single=False, factor_name: str = None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index_node, single, [factor_name], *args, **kwargs)
@@ -365,7 +515,7 @@ class AttributeQuery(BaseQuery):
         e.g. sum(ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red'].snr, wrt=ob) > ob.l1stackedspectra.snr is allowed since there is a shared parent,
              we take ob.l1stackedspectra as the hierarchy level in order to continue
         """
-        if isinstance(other, ObjectQuery):
+        if isinstance(other, SpecificObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
         if expected_dtype is not None:
             op_string = op_string.replace('{0}', f'to{expected_dtype}({{0}})')
@@ -493,7 +643,7 @@ class ProductAttributeQuery(AttributeQuery):
 
 class TableQuery(BaseQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None,
-                 previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None, obj: str = None,
+                 previous: Union['Query', 'AttributeQuery', 'SpecificObjectQuery'] = None, obj: str = None,
                  start: Query = None, index_node=None,
                  single=False, attr_queries=None, names=None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, *args, **kwargs)

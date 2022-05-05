@@ -79,6 +79,26 @@ class Traversal(Statement):
         return f'OPTIONAL MATCH ({self.from_variable}){path}({self.to_node}:{self.to_node_type})'
 
 
+class UnionTraversal(Statement):
+    ids = ['to_node_type', 'path_names', 'path_values', 'from_variable', 'unwound']
+
+    def __init__(self, from_variable, paths, to_node_type, unwound, graph):
+        super().__init__([from_variable], graph)
+        self.from_variable = from_variable
+        self.to_node_type = to_node_type
+        self.paths = paths
+        self.path_names = list(paths.keys())
+        self.path_values = list(paths.values())
+        self.to_node = self.make_variable('node')
+        self.using_edge = self.make_variable('edge')
+        self.unwound = unwound
+
+    def make_cypher(self, ordering: list) -> str:
+        paths = [(n, path.format(name=self.using_edge)) for n, path in self.paths.items()]
+        matches = 'UNION\n'.join([f'OPTIONAL MATCH ({self.from_variable}){path}({self.to_node}:{n})' for n, path in paths])
+        return f"CALL {{WITH {self.from_variable}\n{matches}\nRETURN {self.to_node}\n}}"
+
+
 class NullStatement(Statement):
     def __init__(self, input_variables, graph: 'QueryGraph'):
         super().__init__(input_variables, graph)
@@ -126,8 +146,9 @@ class GetProduct(Statement):
         self.file = self.make_variable('file')
 
     def make_cypher(self, ordering: list):
-        rel = f"({self.inputs[0]})<-[{self.rel}:product {{{{name: '{self.name}'}}}}]-({self.hdu}: HDU)<--({self.file}: File)"
-        return f" WITH *, [{rel} | [{self.file}.fname, {self.hdu}.extn, {self.rel}.index, {self.rel}.column_name]] as {self.output}"
+        rel = f"({self.inputs[0]})<-[{self.rel}:product {{name: '{self.name}'}}]-({self.hdu}: HDU)<--({self.file}: File)"
+        found = f" WITH *, [{rel} | [{self.file}.fname, {self.hdu}.extn, {self.rel}.index, {self.rel}.column_name]] as {self.output}"
+        return f"{found}\nWITH *, CASE WHEN size({self.output}) = 0 THEN NULL ELSE {self.output} END as {self.output}"
 
 
 class AssignToVariable(Statement):

@@ -19,18 +19,16 @@ from weaveio.opr3 import *
 # data.read_directory('raw_file')
 data = Data(dbname='playground')
 
-# pprint(data.get_possible_intermediate_paths(L1SingleSpectrum, NoSS))
+q = data.l1_spectra.noss['flux', 'wvl']
 
-# q = data.l1single_spectra.l2singles.galaxy_redshifts
-#
-# lines, params, names = q._compile()
-# for line in lines:
-#     print(line)
-# print(params, names)
+lines, params, names = q._compile()
+for line in lines:
+    print(line)
+print(params, names)
 #
 #
 
-#
-pprint(data.path_to_hierarchy('L1SupertargetSpectrum', 'WeaveTarget', False,
-                                                  descriptor='is_required_by',
-                                                  return_objs=True))
+# #
+# pprint(data.path_to_hierarchy('L1SupertargetSpectrum', 'NoSS', False,
+#                                                   descriptor='is_required_by',
+#                                                   return_objs=True))

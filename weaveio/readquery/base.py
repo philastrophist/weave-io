@@ -1,14 +1,32 @@
 import logging
 import time
 from contextlib import contextmanager
-from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
+from functools import reduce
+from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING, Set, Type
+
+import networkx as nx
 
 from .parser import QueryGraph
 
 if TYPE_CHECKING:
-    from .objects import ObjectQuery, Query, AttributeQuery
+    from .objects import SpecificObjectQuery, Query, AttributeQuery
     from ..data import Data
 
+def get_all_class_bases(cls) -> Set[Type]:
+    new = set()
+    for b in cls.__bases__:
+        new.add(b)
+        new.update(get_all_class_bases(b))
+    return new
+
+def get_all_subclasses(cls: Type) -> List[Type]:
+    if issubclass(cls, type):
+        return []
+    all_subclasses = []
+    for subclass in cls.__subclasses__():
+        all_subclasses.append(subclass)
+        all_subclasses.extend(get_all_subclasses(subclass))
+    return all_subclasses
 
 class AmbiguousPathError(Exception):
     pass
@@ -46,10 +64,10 @@ class BaseQuery:
             return self._precompile()._to_cypher()
 
 
-    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'SpecificObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node = None,
-                 single=False, names=None, *args, **kwargs) -> None:
-        from .objects import ObjectQuery
+                 single=False, names=None, subqueries=None, *args, **kwargs) -> None:
+        from .objects import SpecificObjectQuery
         self._single = single
         self._data = data
         if G is None:
@@ -66,7 +84,7 @@ class BaseQuery:
         self._obj = obj
         if previous is not None:
             if self._index_node is None:
-                if isinstance(previous, ObjectQuery):
+                if isinstance(previous, SpecificObjectQuery):
                     self._index_node = previous._node
                 elif self._index_node != 'start':
                     self._index_node = previous._index_node
@@ -79,6 +97,7 @@ class BaseQuery:
         if self._obj is not None:
             self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
+        self._subqueries = {} if subqueries is None else subqueries
 
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
         """
@@ -96,14 +115,30 @@ class BaseQuery:
         if self._obj in hs:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
         if len(hs) > 1:
-            raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
-                                     f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
+            singular_hs = set()
+            for h in hs:
+                try:
+                     if self._get_path_to_object(h, False)[1]:
+                         singular_hs.add(h)
+                except (nx.NetworkXNoPath, nx.NodeNotFound):
+                    pass
+            shared = reduce(set.intersection, [get_all_class_bases(self._data.class_hierarchies[h]) for h in singular_hs])
+            if len(singular_hs) == 1:
+                hs = singular_hs
+            elif shared:
+                hs = {min(shared, key=lambda h: len(get_all_subclasses(h))).__name__}
+            else:
+                raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
+                                         f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
         obj = hs.pop()
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
-        path, obj_is_singular = self._data.path_to_hierarchy(self._obj, obj, False)
+        if self._data.class_hierarchies[obj].is_template:
+            obj_is_singular = False
+        else:
+            _, obj_is_singular = self._data.path_to_hierarchy(self._obj, obj, False)
         attr_is_singular = self._data.is_singular_name(maybe_attribute)
         if obj_is_singular and attr_is_singular:
             pass  # run.obid -> run.ob.obid
@@ -154,8 +189,8 @@ class BaseQuery:
     def _spawn(cls, parent: 'BaseQuery', node, obj=None, index_node=None, single=False, *args, **kwargs):
         return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
-    def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool]:
-        return self._data.path_to_hierarchy(self._obj, obj, want_single)
+    def _get_path_to_object(self, obj, want_single, return_objs=return_objs) -> Tuple[str, bool]:
+        return self._data.path_to_hierarchy(self._obj, obj, want_single, return_objs=return_objs)
 
     def _slice(self, slc):
         """
