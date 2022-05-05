@@ -248,11 +248,27 @@ class MergeRelationship(CollisionManager):
         self.child = child
         self.reltype = reltype
         out = CypherVariable(reltype)
+        self.value = CypherVariable('value')
         super().__init__(out, identproperties, properties, collision_manager)
+        self.output_variables.append(self.value)
+
+    def to_cypher(self):
+        return super().to_cypher()
 
     @property
     def merge_statement(self):
-        return f'MERGE ({self.parent})-[{self.out}:{self.reltype} {self.identproperties}]->({self.child})'
+        return f'call apoc.merge.relationship($parent, "{self.reltype}", $ident, $props, $child, $onmatch) yield rel as {self.out}'
+
+
+    @property
+    def merge_paragraph(self):
+        return f"""{self.pre_merge} 
+        call apoc.do.when({self.parent} is null or {self.child} is null, 'return null as {self.out}','
+        {self.merge_statement}
+        RETURN {self.out}', {{parent: {self.parent}, child:{self.child}, ident:{self.identproperties}, 
+                              props: {self.propvar}, onmatch: {{}}}}) yield value as {self.value}
+        OPTIONAL MATCH ({self.parent})-[{self.out}:{self.reltype} {self.identproperties}]->({self.child})
+        """
 
     @property
     def collision_record(self):

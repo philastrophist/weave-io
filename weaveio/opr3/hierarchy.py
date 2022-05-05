@@ -34,7 +34,7 @@ import sys
 import numpy as np
 
 from weaveio.config_tables import progtemp_config
-from weaveio.hierarchy import Hierarchy, Multiple, OneOf
+from weaveio.hierarchy import Hierarchy, Multiple, OneOf, Optional
 
 
 class Measurement(Hierarchy):
@@ -62,15 +62,6 @@ class APS(Author):
     This APS object breaks that potential degeneracy.
     """
     idname = 'version'
-
-
-class Simulator(Author):
-    """
-    Data which were simulated in an operation rehearsal will be be produced by a Simulator.
-    Real data will not have a Simulator.
-    """
-    factors = ['date', 'version', 'mode']
-    identifier_builder = factors
 
 
 class System(Author):
@@ -276,7 +267,7 @@ class Exposure(Hierarchy):
     idname = 'mjd'  # globally unique
     factors = ['exptime', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
                'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
-    parents = [OB, CASU, Simulator, System]
+    parents = [OB, CASU, System]
 
 
     @classmethod
@@ -285,12 +276,8 @@ class Exposure(Hierarchy):
         factors['mjd'] = np.round(float(header['MJD-OBS']), 6)
         factors['obstype'] = header['obstype'].lower()
         casu = CASU(id=header.get('casuvers', header.get('casuid')))
-        try:
-            sim = Simulator(simver=header['simver'], simmode=header['simmode'], simvdate=header['simvdate'])
-        except KeyError:
-            sim = None
         sys = System(version=header['sysver'])
-        return cls(ob=ob, casu=casu, simulator=sim, system=sys, **factors)
+        return cls(ob=ob, casu=casu, system=sys, **factors)
 
 
 class SourcedData(Hierarchy):
@@ -320,6 +307,7 @@ class Run(Hierarchy):
     """
     idname = 'id'
     parents = [ArmConfig, Exposure]
+    children = [Optional('self', idname='adjunct')]
 
 
 class RawSpectrum(Spectrum2D):
@@ -328,6 +316,7 @@ class RawSpectrum(Spectrum2D):
     """
     parents = [CASU, OneOf(Run, one2one=True)]
     products = ['counts1', 'counts2']
+    children = [Optional('self', idname='adjunct')]
 
 
 class Single(Hierarchy):

@@ -2,11 +2,20 @@ from contextlib import contextmanager
 from typing import List, Callable, Union
 
 from .base import CypherQuery, CypherVariable, Collection, CustomStatement
-from .statements import Unwind, Collect, GroupBy
+from .statements import Unwind, Collect, GroupBy, Copy
+
+
+def copy(*variables: CypherVariable):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    g = Copy(*variables)
+    query.add_statement(g)
+    return g.output_variables
 
 
 @contextmanager
-def unwind(*args, enumerated=False):
+def unwind(*args, enumerated=False, use_copy=True):
+    if use_copy:
+        args = copy(*args)
     query = CypherQuery.get_context()  # type: CypherQuery
     unwinder = Unwind(*args, enumerated=enumerated)
     query.open_context()  # allow this context to accumulate variables

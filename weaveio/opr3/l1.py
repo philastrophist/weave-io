@@ -3,7 +3,7 @@ import sys
 
 from weaveio.hierarchy import Optional, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Spectrum, Single, FibreTarget, Stack, \
-    OBStack, OB, ArmConfig, Superstack, OBSpec, Supertarget, WeaveTarget, RawSpectrum, _predicate, Spectrum1D, MeanFlux
+    OBStack, OB, ArmConfig, Superstack, OBSpec, Supertarget, WeaveTarget, RawSpectrum, _predicate, Spectrum1D, MeanFlux, WavelengthHolder
 
 
 class L1(Hierarchy):
@@ -20,7 +20,8 @@ class NoSS(Spectrum1D):
 class L1Spectrum(Spectrum1D, L1):
     is_template = True
     children = [Optional('self', idname='adjunct'), NoSS]
-    products = ['primary', 'flux', 'ivar', 'sensfunc', 'wvl']
+    parents = [WavelengthHolder]
+    products = ['primary', 'flux', 'ivar', 'sensfunc']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
 
 
@@ -51,7 +52,7 @@ class L1OBStackSpectrum(L1StackSpectrum, OBStack):
     """
     singular_name = 'l1obstack_spectrum'
     plural_name = 'l1obstack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
+    parents = L1StackSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
     version_on = ['l1single_spectra']
 
 
@@ -61,7 +62,7 @@ class L1SuperstackSpectrum(L1StackSpectrum, Superstack):
     """
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
-    parents =[Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
+    parents = L1StackSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
     # version_on = ['l1single_spectra', 'fibre_target']
 
 
@@ -71,7 +72,7 @@ class L1SupertargetSpectrum(L1Spectrum, Supertarget):
     """
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
+    parents = L1Spectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
     # version_on = ['l1single_spectra', 'weave_target']
 
 
