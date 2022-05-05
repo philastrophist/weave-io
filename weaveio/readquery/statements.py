@@ -127,7 +127,7 @@ class GetProduct(Statement):
 
     def make_cypher(self, ordering: list):
         rel = f"({self.inputs[0]})<-[{self.rel}:product {{{{name: '{self.name}'}}}}]-({self.hdu}: HDU)<--({self.file}: File)"
-        return f" WITH *, [{rel} | [{self.file}.fname, {self.hdu}.extn, {self.rel}.index, {self.rel}.column_name]] as {self.output}"
+        return f" WITH *, [{rel} | [{self.file}.path, {self.hdu}.extn, {self.rel}.index, {self.rel}.column_name, False]] as {self.output}"
 
 
 class AssignToVariable(Statement):
