@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
 from .parser import QueryGraph
+from .utilities import safe_name
 
 if TYPE_CHECKING:
     from .objects import ObjectQuery, Query, AttributeQuery
@@ -35,20 +36,46 @@ class BaseQuery:
     def _precompile(self) -> 'BaseQuery':
         return self
 
-    def _to_cypher(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+    def _to_cypher(self) -> Tuple[List[str], Dict[str, Any]]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
-        return self._G.cypher_lines(self._node), self._G.parameters, self._names
+        return self._G.cypher_lines(self._node), self._G.parameters
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any], List[str]]:
+    def _compile(self) -> Tuple[List[str], Dict[str, Any]]:
         with logtime('compiling'):
             return self._precompile()._to_cypher()
+
+    def _execute(self, skip=0, limit=None):
+        with logtime('executing'):
+            lines, params = self._compile()
+            if skip > 0:
+                lines.append(f"SKIP {skip}")
+            if limit is not None:
+                lines.append(f"LIMIT {limit}")
+            cursor = self._data.graph.execute('\n'.join(lines), params)
+            return cursor
+
+    def _iterate(self, skip=0, limit=None):
+        yield from self._data.rowparser.iterate_cursor(self._execute(skip, limit), list(map(safe_name, self._names)), self._is_products)
+
+    def __iter__(self):
+        yield from self._iterate()
+
+    def _to_table(self, skip=0, limit=None):
+        with logtime('streaming'):
+            return self._data.rowparser.parse_to_table(self._execute(skip, limit), list(map(safe_name, self._names)), self._is_products)
+
+    def _post_process(self, result):
+        return result
+
+    def __call__(self, skip=0, limit=None, **kwargs):
+        return self._post_process(self._to_table(skip, limit))
 
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node = None,
-                 single=False, names=None, *args, **kwargs) -> None:
+                 single=False, names=None, is_products=None, attrs=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
         self._single = single
         self._data = data
@@ -79,6 +106,8 @@ class BaseQuery:
         if self._obj is not None:
             self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
+        self._is_products = [False]*len(names) if is_products is None else is_products
+        self.attrs = attrs
 
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
         """

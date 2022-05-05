@@ -177,8 +177,9 @@ class ObjectQuery(GenericObjectQuery):
                     names.append(f"{new._names[0]}")
                     attrs.append(new)
         force_plurals = [not a._single for a in attrs]
+        is_products = [a._is_products[0] for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals, dropna=[self._node])
-        return TableQuery._spawn(self, n, names=names)
+        return TableQuery._spawn(self, n, names=names, is_products=is_products, attrs=attrs)
 
     def _traverse_to_relative_object(self, obj, index):
         """
@@ -486,6 +487,11 @@ class AttributeQuery(BaseQuery):
 
 
 class ProductAttributeQuery(AttributeQuery):
+
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
+                 obj: str = None, start: Query = None, index_node=None, single=False, factor_name: str = None, *args, **kwargs) -> None:
+        super().__init__(data, G, node, previous, obj, start, index_node, single, factor_name, is_product=[True], *args, **kwargs)
+
     def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None):
         raise TypeError(f"Binary data products cannot be operated upon. "
                         f"This is because they are not stored in the database")

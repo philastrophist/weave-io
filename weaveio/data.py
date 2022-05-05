@@ -23,6 +23,7 @@ from .hierarchy import Multiple, Hierarchy, Graphable, Optional, OneOf
 from .path_finding import find_path
 from .readquery import Query
 from .readquery.digraph import partial_reverse
+from .readquery.results import RowParser
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
 
@@ -242,6 +243,7 @@ class Data:
         if verbose:
             logging.basicConfig(level=logging.INFO)
         self.query = Query(self)
+        self.rowparser = RowParser(self.rootdir)
         self.host = host
         self.port = port
         self.write_allowed = write

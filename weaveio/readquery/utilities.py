@@ -26,3 +26,7 @@ def remove_successive_duplicate_lines(cypher: List[str]):
         if line != deduplicated[-1]:
             deduplicated.append(line)
     return deduplicated
+
+
+def safe_name(name):
+    return '__dot__'.join(name.split('.'))
