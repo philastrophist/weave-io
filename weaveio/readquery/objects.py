@@ -179,7 +179,7 @@ class ObjectQuery(GenericObjectQuery):
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals, dropna=[self._node])
-        return TableQuery._spawn(self, n, names=names, is_products=is_products)
+        return TableQuery._spawn(self, n, names=names, is_products=is_products, attrs=attrs)
 
     def _traverse_to_relative_object(self, obj, index):
         """

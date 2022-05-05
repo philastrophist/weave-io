@@ -75,7 +75,7 @@ class BaseQuery:
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node = None,
-                 single=False, names=None, is_products=None, *args, **kwargs) -> None:
+                 single=False, names=None, is_products=None, attrs=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
         self._single = single
         self._data = data
@@ -107,6 +107,7 @@ class BaseQuery:
             self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
         self._is_products = [False]*len(names) if is_products is None else is_products
+        self.attrs = attrs
 
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
         """
