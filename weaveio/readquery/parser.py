@@ -1,12 +1,12 @@
 from collections import defaultdict
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import networkx as nx
 from pathlib import Path
 
 from .utilities import mask_infs, remove_successive_duplicate_lines
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
-from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct
+from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, UnionTraversal
 
 
 class ParserError(Exception):
@@ -346,6 +346,12 @@ class QueryGraph:
 
     def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwound=None):
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwound, self)
+        return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
+
+    def add_union_traversal(self, parent_node, paths: Dict[str, str], end_node_type: str, single=False, unwound=None):
+        if len(paths) == 1:
+            return self.add_traversal(parent_node, paths[list(paths.keys())[0]], end_node_type, single=single, unwound=unwound)
+        statement = UnionTraversal(self.G.nodes[parent_node]['variables'][0], paths, end_node_type, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
     def fold_to_cardinal(self, parent_node):

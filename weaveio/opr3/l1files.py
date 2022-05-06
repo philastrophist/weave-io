@@ -142,9 +142,9 @@ class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
             'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
-    parents = [CASU]
+    parents = [CASU, RawSpectrum]
     produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
-    children = [RawSpectrum, Optional('self', idname='adjunct')]
+    children = [Optional('self', idname='adjunct')]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -170,8 +170,8 @@ class L1File(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
             'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
-    children = [WavelengthHolder, Multiple(L1Spectrum)]
-    parents = [CASU, Optional('self', idname='adjunct')]
+    children = [Optional('self', idname='adjunct')]
+    parents = [WavelengthHolder, Multiple(L1Spectrum), CASU]
     produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
@@ -196,8 +196,8 @@ class L1File(HeaderFibinfoFile):
 class L1SingleFile(L1File):
     singular_name = 'l1single_file'
     match_pattern = 'single_\d+\.fit'
-    parents = [CASU, OneOf(RawFile, one2one=True)]
-    children = [Multiple(L1SingleSpectrum), Optional('self', idname='adjunct'), WavelengthHolder]
+    parents = [CASU, OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum), WavelengthHolder]
+    children = [Optional('self', idname='adjunct')]
     version_on = ['raw_file']
 
     @classmethod
@@ -260,8 +260,8 @@ class L1StackedBaseFile(L1File):
 class L1OBStackFile(L1StackedBaseFile):
     singular_name = 'l1obstack_file'
     match_pattern = 'stack_[0-9]+\.fit'
-    parents = [CASU, Multiple(L1SingleFile, constrain=(OB, ArmConfig)), Optional('self', idname='adjunct')]
-    children = [Multiple(L1OBStackSpectrum), WavelengthHolder]
+    parents = [CASU, Multiple(L1SingleFile, constrain=(OB, ArmConfig)), Multiple(L1OBStackSpectrum), WavelengthHolder]
+    children = [Optional('self', idname='adjunct')]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -316,8 +316,8 @@ class L1OBStackFile(L1StackedBaseFile):
 class L1SuperstackFile(L1StackedBaseFile):
     singular_name = 'l1superstack_file'
     match_pattern = 'superstack_[0-9]+\.fit'
-    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(OBSpec, ArmConfig)), CASU]
-    children = [Multiple(L1SuperstackSpectrum), Optional('self', idname='adjunct'), WavelengthHolder]
+    parents = [Multiple(L1SingleFile, constrain=(OBSpec, ArmConfig)), CASU, Multiple(L1SuperstackSpectrum), WavelengthHolder]
+    children = [Optional('self', idname='adjunct')]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -335,8 +335,8 @@ class L1SuperstackFile(L1StackedBaseFile):
 class L1SupertargetFile(L1StackedBaseFile):
     singular_name = 'l1supertarget_file'
     match_pattern = 'WVE_.+\.fit'
-    parents = L1StackedBaseFile.parents + [Multiple(L1SingleFile, constrain=(WeaveTarget, ArmConfig)), CASU]
-    children = [L1SupertargetSpectrum, Optional('self', idname='adjunct'), WavelengthHolder]
+    parents = [Multiple(L1SingleFile, constrain=(WeaveTarget, ArmConfig)), CASU, L1SupertargetSpectrum, WavelengthHolder]
+    children = [Optional('self', idname='adjunct')]
     recommended_batchsize = None
 
     @classmethod

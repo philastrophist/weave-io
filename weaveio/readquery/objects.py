@@ -124,7 +124,7 @@ class ObjectQuery(GenericObjectQuery):
     def _select_product(self, attr, want_single):
         attr = self._data.singular_name(attr)
         n = self._G.add_getproduct(self._node, attr)
-        return ProductAttributeQuery._spawn(self, n, single=want_single, factor_name=attr)
+        return ProductAttributeQuery._spawn(self, n, single=want_single, factor_name=attr, is_products=[True])
 
     def _select_attribute(self, attr, want_single):
         """

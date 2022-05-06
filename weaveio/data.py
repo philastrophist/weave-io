@@ -30,13 +30,13 @@ from .writequery import Unwind
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
 
-def get_all_class_bases(cls: Type[Graphable]) -> List[Type[Graphable]]:
-    new = []
+def get_all_class_bases(cls: Type[Graphable]) -> Set[Type[Graphable]]:
+    new = set()
     for b in cls.__bases__:
         if b is Graphable or not issubclass(b, Graphable):
             continue
-        new.append(b)
-        new += get_all_class_bases(b)
+        new.add(b)
+        new.update(get_all_class_bases(b))
     return new
 
 def process_neo4j_error(data: 'Data', file: File, msg):
@@ -109,15 +109,6 @@ class MultiplicityError(Exception):
     pass
 
 
-def shared_base_class(*classes):
-    if len(classes):
-        all_classes = list(reduce(and_, [set(get_all_class_bases(cls)+[cls]) for cls in classes]))
-        all_classes.sort(key=lambda x: len(get_all_class_bases(x)), reverse=True)
-        if all_classes:
-            return all_classes[0]
-    return Hierarchy
-
-
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
@@ -186,12 +177,15 @@ def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
             add_relation_graph_edge(graph, parent, h, rel)
     return graph
 
-def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hierarchy]]:
+def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None, templates=False) -> Set[Type[Hierarchy]]:
     if done is None:
         done = []
     hierarchies = set()
     todo = {h.node if isinstance(h, Multiple) else h for h in hier.parents + hier.children + hier.produces}
-    todo = {h for h in todo if not h.is_template}
+    if not templates:
+        todo = {h for h in todo if not h.is_template}
+    else:
+        todo.update({h for h in todo for hh in get_all_class_bases(h) if issubclass(hh, Hierarchy)})
     for new in todo:
         if isinstance(new, Multiple):
             new.instantate_node()
@@ -199,14 +193,17 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None) -> Set[Type[Hie
         else:
             h = new
         if h not in done and h is not hier:
-            hierarchies.update(hierarchies_from_hierarchy(h, done))
+            hierarchies.update(hierarchies_from_hierarchy(h, done, templates))
             done.append(h)
     hierarchies.add(hier)
     return hierarchies
 
-def hierarchies_from_files(*files: Type[File]) -> Set[Type[Hierarchy]]:
+def hierarchies_from_files(*files: Type[File], templates=False) -> Set[Type[Hierarchy]]:
     hiers = {h.node if isinstance(h, Multiple) else h for file in files for h in file.children + file.produces}
-    hiers = {h for h in hiers if not h.is_template}
+    if not templates:
+        hiers = {h for h in hiers if not h.is_template}
+    else:
+        hiers.update({h for h in hiers for hh in get_all_class_bases(h) if issubclass(hh, Hierarchy)})
     hiers.update(set(files))
     return reduce(set.union, map(hierarchies_from_hierarchy, hiers))
 
@@ -256,7 +253,8 @@ class Data:
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
             self.relation_graphs.append(make_relation_graph(hierarchies_from_files(*self.filetypes[:i+1])))
-        self.hierarchies = {h for g in self.relation_graphs for h in g.nodes}
+        self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
+        self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -279,19 +277,22 @@ class Data:
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
-    def _conditional_path_to_hierarchy(self, from_obj: Type[Hierarchy], given_previous_obj: Type[Hierarchy],
-                                       to_obj: Type[Hierarchy], singular:bool):
-        """
-        Given a path from `given_previous_obj` to `from_obj`, find a path from `from_obj` to `to_obj`.
-        This finder is used for when the source node is defined as a child by some other node.
-        In this case, `from_obj->to_obj` is not enough, we need to know the path from `given_previous_obj` to `from_obj`.
-        """
-        # remove all other nodes which define `from_obj` as a child
-        excluded = {node for node in set(self.relation_graphs[-1].nodes) if from_obj in
-                    [c.node if isinstance(c, Multiple) else c for c in node.children]}
-        excluded -= {given_previous_obj, from_obj, to_obj}
-        g = nx.subgraph_view(self.relation_graphs[-1], lambda n: n not in excluded)
-        return find_path(g, from_obj, to_obj, singular)
+    # noinspection PyTypeHints
+    def expand_template_object(self, obj: str) -> Set[str]:
+        obj = self.singular_hierarchies[self.singular_name(obj)]
+        return {h.__name__ for h in self.hierarchies if issubclass(h, obj) and not h.is_template}
+
+    def expand_dependent_object(self, obj: str, *dependencies: str) -> Set[str]:
+        obj = self.singular_hierarchies[self.singular_name(obj)]
+        dependencies = {self.singular_hierarchies[self.singular_name(o)] for o in dependencies}
+        parents = self.parents_of_defined_child(obj)
+        expanded_dependencies = set()
+        for o in dependencies:
+            if o.is_template:
+                expanded_dependencies |= set(get_all_subclasses(o))
+            else:
+                expanded_dependencies.add(o)
+        return {o.__name__ for o in parents if o in expanded_dependencies}
 
     def _path_to_hierarchy(self, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
         """
@@ -315,50 +316,18 @@ class Data:
         parents = {h for h in self.hierarchies if potential_child in [c.node if isinstance(c, Multiple) else c for c in h.children]}
         return {p for p in parents if not issubclass(p, File) and p is not potential_child}
 
-    def get_possible_intermediate_paths(self, source: Type[Hierarchy], target: Type[Hierarchy]):
-        """
-        A specific query is when all nodes are not templtes/children such as ob.runs
-        This type of query has exactly one path
-        A generic query is when one or both of `source` and `target` are templates/children
-        such as:
-            l1single_spectra.noss (target is child)
-            runs.l1spectra (target is template)
-            l1spectra.run (source is template)
-            redrock_fits.runs (source is child)
-            l1spectra.noss
-            noss.l1spectra
-
-        A template can be expanded into multiple choices: l1spectra -> [l1single_spectra, l1obstack_spectra, ...]
-        A child must be expanded into multiple choices: noss -> [l1single_spectra.noss, l1obstack_spectra.noss, ...]
-        For a child, if the preceding node matches one of the choices, that choice is chosen (not expanded)
-                        i.e. l1single_spectra.noss -> [l1single_spectra.noss]
-        Order of operations for a pair of (source, target):
-            - Templates are expanded into their non-templated forms
-            - target children choose from the possible sources if available, otherwise expanded to all options
-            - source children are expanded to all options
-        """
-
-
-    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, given_previous_obj: str = None, descriptor=None, return_objs=False):
-        a, b = map(self.singular_name, [from_obj, to_obj])
-        if given_previous_obj is not None:
-            c = self.singular_name(given_previous_obj)
-            given_previous_obj = self.singular_hierarchies[c]
-        from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
-        parents_of_a = self.parents_of_defined_child(from_obj)
-        parents_of_b = self.parents_of_defined_child(to_obj)
-        if parents_of_a and given_previous_obj is None:
-            raise TypeError(f"{from_obj} is a child of {parents_of_a}. The previously traversed node must be given as well")
-        if given_previous_obj not in parents_of_b and parents_of_b:
-            raise NotImplementedError(f"{b} can be a child of any of {parents_of_b}. Currently generic traversal is not implemented")
+    def is_generic_object(self, obj: str) -> bool:
         try:
-            if parents_of_b:
-                # e.g. ob.l2singles.galaxy_redshifts
-                path = self._path_to_hierarchy(from_obj, given_previous_obj, singular) + [to_obj]
-            elif parents_of_a:
-                path = self._conditional_path_to_hierarchy(from_obj, given_previous_obj, to_obj, singular)
-            else:
-                path = self._path_to_hierarchy(from_obj, to_obj, singular)
+            h = self.singular_hierarchies[self.singular_name(obj)]
+            return h.is_template or self.parents_of_defined_child(h)
+        except KeyError:
+            return False
+
+    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
+        a, b = map(self.singular_name, [from_obj, to_obj])
+        from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
+        try:
+            path = self._path_to_hierarchy(from_obj, to_obj, singular)
             g = self.relation_graphs[-1]
             singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
             forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
@@ -437,7 +406,9 @@ class Data:
     def drop_all_constraints(self):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
-        self.graph.neograph.run('CALL apoc.schema.assert({},{},true) YIELD label, key RETURN *')
+        constraints = self.graph.neograph.run('CALL db.constraints() YIELD name return "DROP CONSTRAINT " + name + ";"')
+        for constraint in tqdm(constraints, desc='dropping constraints'):
+            self.graph.neograph.run(str(constraint)[1:-1])
 
     def get_extant_files(self):
         return self.graph.execute("MATCH (f:File) RETURN DISTINCT f.fname").to_series(dtype=str).values.tolist()

@@ -29,4 +29,6 @@ def remove_successive_duplicate_lines(cypher: List[str]):
 
 
 def safe_name(name):
+    if name is None:
+        return name
     return '__dot__'.join(name.split('.'))

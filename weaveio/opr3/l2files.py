@@ -41,8 +41,8 @@ class L2File(File):
     match_pattern = '.*APS.fits'
     antimatch_pattern = '.*cube.*'
     software_versions = [RedrockVersion, PPXFVersion, GandalfVersion, FerreVersion, RVSpecFitVersion]
-    parents = [Multiple(L1File, 2, 3), APS]
-    children = [L2]
+    parents = [Multiple(L1File, 2, 3), APS, Multiple(L2)]
+    children = []
     produces = software_versions
     hdus = {'primary': PrimaryHDU,
             'class_spectra': TableHDU,
@@ -237,8 +237,8 @@ class L2File(File):
 
 class L2SingleFile(L2File):
     singular_name = 'l2single_file'
-    children = [Multiple(L2Single)]
-    parents = [Multiple(L1SingleFile, 2, 3, constrain=(Exposure,)), APS]
+    children = []
+    parents = [Multiple(L1SingleFile, 2, 3, constrain=(Exposure,)), APS, Multiple(L2Single)]
 
 
     @classmethod
@@ -249,8 +249,8 @@ class L2SingleFile(L2File):
 
 class L2OBStackFile(L2File):
     singular_name = 'l2obstack_file'
-    children = [Multiple(L2OBStack)]
-    parents = [Multiple(L1SingleFile, 0, 2, constrain=(OB,)), Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS]
+    children = []
+    parents = [Multiple(L1SingleFile, 0, 2, constrain=(OB,)), Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS, Multiple(L2OBStack)]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -260,10 +260,11 @@ class L2OBStackFile(L2File):
 
 class L2SuperstackFile(L2File):
     singular_name = 'l2superstack_file'
-    children = [Multiple(L2Superstack)]
+    children = []
     parents = [Multiple(L1SingleFile, 0, 3, constrain=(OBSpec,)),
                Multiple(L1OBStackFile, 0, 3, constrain=(OBSpec,)),
-               Multiple(L1SuperstackFile, 0, 3, constrain=(OBSpec,)), APS]
+               Multiple(L1SuperstackFile, 0, 3, constrain=(OBSpec,)), APS,
+               Multiple(L2Superstack)]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
@@ -274,8 +275,8 @@ class L2SuperstackFile(L2File):
 class L2SupertargetFile(L2File):
     singular_name = 'l2supertarget_file'
     match_pattern = 'WVE_*aps.fits'
-    children = [L2Supertarget]
-    parents = [Multiple(L1SupertargetFile, 2, 3, constrain=(WeaveTarget,)), APS]
+    children = []
+    parents = [Multiple(L1SupertargetFile, 2, 3, constrain=(WeaveTarget,)), APS, L2Supertarget]
 
     @classmethod
     def parse_fname(cls, header, fname, instantiate=True) -> List[L1File]:

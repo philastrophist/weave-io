@@ -10,6 +10,8 @@ import pandas as pd
 from py2neo.cypher import Cursor
 from tqdm import tqdm
 
+from weaveio.readquery.utilities import safe_name
+
 
 class Row(AstropyRow):
     def __getattr__(self, attr):
@@ -26,9 +28,31 @@ class Table(AstropyTable):  # allow using `.` to access columns
             return self[attr]
         return super(Table, self).__getattr__(attr)
 
+class ArrayHolder:
+    def __init__(self, array):
+        self.array = array
 
 def vstack(tables: List[Union[Table, Row]], *args, **kwargs) -> Table:
-    return Table(astropy_vstack(tables), *args, **kwargs)
+    shapes = zip(*[[col.shape for col in table] for table in tables])
+    mismatched_column_shapes = [len(set(s)) != 1 for s in shapes]
+    if any(mismatched_column_shapes):
+        new_tables = []
+        for row in tables:
+            new_row = []
+            for i, mismatched in enumerate(mismatched_column_shapes):
+                if mismatched:
+                    col = Column([ArrayHolder(row[i])], name=row.colnames[i])
+                else:
+                    col = Column([row[i]], name=row.colnames[i])
+                new_row.append(col)
+            new_tables.append(Table(new_row))
+    else:
+        new_tables = tables
+    table = Table(astropy_vstack(new_tables), *args, **kwargs)
+    for colname, mismatched in zip(table.colnames, mismatched_column_shapes):
+        if mismatched:
+            table[colname][:] = [a.array for a in table[colname][:]]
+    return table
 
 def int_or_slice(x: Union[int, float, slice, None]) -> Union[int, slice]:
     if isinstance(x, (int, float)):
@@ -49,6 +73,7 @@ class FileHandler:
         f = self.open_file(filename)
         if ext is None:
             ext = 0
+        ext = ext if isinstance(ext, str) else int(ext)
         hdu = f[ext]
         index = int_or_slice(index)
         key = key if isinstance(key, str) else int_or_slice(key)
@@ -82,24 +107,29 @@ class FileHandler:
 
 
 class RowParser(FileHandler):
-    def parse_product_row(self, row: py2neo.cypher.Record, names: List[str], is_products: List[bool]):
+    def parse_product_row(self, row: py2neo.cypher.Record, names: List[Union[str, None]], is_products: List[bool]):
         """
         Take a pandas dataframe and replace the structure of ['fname', 'extn', 'index', 'key', 'header_only']
         with the actual data
         """
         columns = []
-        for value, name, is_product in zip(row.values(), names, is_products):
+        for value, cypher_name, name, is_product in zip(row.values(), row.keys(), names, is_products):
             if is_product:
-                value = self.read(*value)
+                if value is not None:
+                    if isinstance(value[0], list):
+                        value = value[0]
+                    value = self.read(*value)
+            name = safe_name(cypher_name) if name is None else name
             columns.append(Column([value], name=name))
         return Table(columns)[0]
 
-    def iterate_cursor(self, cursor: Cursor, names: List[str], is_products: List[bool]):
+    def iterate_cursor(self, cursor: Cursor, names: List[Union[str, None]], is_products: List[bool]):
         for row in cursor:
             yield self.parse_product_row(row, names, is_products)
 
     def parse_to_table(self, cursor: Cursor, names: List[str], is_products: List[bool]):
-        return vstack(list(self.iterate_cursor(cursor, names, is_products)))
+        rows = list(self.iterate_cursor(cursor, names, is_products))
+        return vstack(rows)
 
 
 if __name__ == '__main__':
