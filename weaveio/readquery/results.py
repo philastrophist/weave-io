@@ -120,7 +120,11 @@ class RowParser(FileHandler):
                         value = value[0]
                     value = self.read(*value)
             name = safe_name(cypher_name) if name is None or name == 'None' else name
-            mask = value is None or ~np.isfinite(value) or np.size(value) == 0
+            mask = value is None or np.size(value) == 0
+            try:
+                mask |= np.all(~np.isfinite(value))
+            except TypeError:
+                pass
             columns.append(MaskedColumn([value], name=name, mask=[mask]))
         return Table(columns)[0]
 

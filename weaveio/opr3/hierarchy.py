@@ -37,6 +37,12 @@ from weaveio.config_tables import progtemp_config
 from weaveio.hierarchy import Hierarchy, Multiple, OneOf, Optional
 
 
+class WavelengthHolder(Hierarchy):
+    singular_name = 'wavelength_holder'
+    factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
+    identifier_builder = ['cd1_1', 'crval1', 'naxis1']
+
+
 class Measurement(Hierarchy):
     factors = ['value', 'error']
     indexes = ['value']
@@ -293,7 +299,8 @@ class Spectrum(SourcedData):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    products = ['flux', 'ivar', 'wvl']
+    parents = [WavelengthHolder]
+    products = ['flux', 'ivar']
 
 
 class Spectrum2D(Spectrum):
@@ -359,11 +366,6 @@ class RedshiftMeasurement(Measurement):
     is_template = True
     factors = Measurement.factors + ['warn']
 
-
-class WavelengthHolder(Hierarchy):
-    singular_name = 'wavelength_holder'
-    factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
-    identifier_builder = ['cd1_1', 'crval1', 'naxis1']
 
 
 class MeanFlux(Hierarchy):

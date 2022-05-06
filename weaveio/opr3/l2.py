@@ -26,12 +26,13 @@ class IngestedSpectrum(Spectrum1D):
     """
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
+    is_template = True
     factors = ['sourcefile', 'nrow']
     parents = [Multiple(L1Spectrum, 1, 3), APS]
     identifier_builder = ['sourcefile', 'nrow', 'l1_spectra']
 
 class RestFrameIngestedSpectrum(IngestedSpectrum):
-    pass
+    is_template = True
 
 class RedrockIngestedSpectrum(IngestedSpectrum):
     products = [ 'flux', 'ivar', 'wvl']
