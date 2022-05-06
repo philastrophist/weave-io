@@ -106,7 +106,7 @@ class BaseQuery:
         if self._obj is not None:
             self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
-        self._is_products = [False]*len(names) if is_products is None else is_products
+        self._is_products = [False]*len(self._names) if is_products is None else is_products
         self.attrs = attrs
 
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
