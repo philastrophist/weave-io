@@ -85,7 +85,7 @@ class Copy(Statement):
         super(Copy, self).__init__(args, outs)
 
     def to_cypher(self):
-        eq = [f'{a} = {b}' for a, b in zip(self.input_variables, self.output_variables)]
+        eq = [f'{a} as {b}' for a, b in zip(self.input_variables, self.output_variables)]
         return f"WITH *, {', '.join(eq)}"
 
 class GroupBy(Statement):
