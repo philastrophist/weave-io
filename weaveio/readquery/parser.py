@@ -4,7 +4,7 @@ from typing import List, Tuple, Dict
 import networkx as nx
 from pathlib import Path
 
-from .utilities import mask_infs, remove_successive_duplicate_lines
+from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, UnionTraversal
 
@@ -416,9 +416,10 @@ class QueryGraph:
         return parent_node
 
     def add_generic_aggregation(self, parent_node, wrt_node, op_format_string, op_name,
-                                remove_infs=None, expected_dtype=None):
+                                remove_infs=None, expected_dtype=None, input_dtype=None):
         if expected_dtype is not None:
-            op_format_string = op_format_string.replace('{0}', f'to{expected_dtype}({{0}})')
+            op_format_string = dtype_conversion(input_dtype, expected_dtype, op_format_string, '{0}')
+            # op_format_string = op_format_string.replace('{0}', f'to{expected_dtype}({{0}})')
         if remove_infs:
             op_format_string = op_format_string.format(mask_infs('{0}'))
         if wrt_node not in nx.ancestors(self.dag_G, parent_node):
@@ -426,9 +427,9 @@ class QueryGraph:
         statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
         return add_aggregation(self.G, parent_node, wrt_node, statement)
 
-    def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None):
+    def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None, input_dtype=None):
         return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op,
-                                            remove_infs, expected_dtype)
+                                            remove_infs, expected_dtype, input_dtype)
 
     def add_predicate_aggregation(self, parent, wrt_node, op_name):
         op_format_string = f'{op_name}(x in collect({{0}}) where toBoolean(x))'

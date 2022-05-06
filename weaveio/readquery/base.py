@@ -83,7 +83,7 @@ class BaseQuery:
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node = None,
-                 single=False, names=None, is_products=None, attrs=None, *args, **kwargs) -> None:
+                 single=False, names=None, is_products=None, attrs=None, dtype=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
         self._single = single
         self._data = data
@@ -116,6 +116,7 @@ class BaseQuery:
         self._names = [] if names is None else names
         self._is_products = [False]*len(self._names) if is_products is None else is_products
         self.attrs = attrs
+        self.dtype = dtype
 
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
         """
@@ -218,15 +219,15 @@ class BaseQuery:
             raise SyntaxError(f"SyntaxError: {self} cannot be filtered by {mask} since there is no direct path between them")
         return self.__class__._spawn(self, n, single=self._single)
 
-    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, remove_infs=None):
+    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
         if wrt is None:
             wrt = self._start
         try:
             if predicate:
                 n = self._G.add_predicate_aggregation(self._node, wrt._node, string_op)
             else:
-                n = self._G.add_aggregation(self._node, wrt._node, string_op, remove_infs, expected_dtype)
+                n = self._G.add_aggregation(self._node, wrt._node, string_op, remove_infs, expected_dtype, self.dtype)
         except SyntaxError:
             raise SyntaxError(f"Cannot aggregate {self} into {wrt} since they don't share a parent query")
         from .objects import AttributeQuery
-        return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, single=True)
+        return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, dtype=returns_dtype, single=True)

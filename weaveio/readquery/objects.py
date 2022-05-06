@@ -15,7 +15,7 @@ from networkx import NetworkXNoPath
 
 from .base import BaseQuery, CardinalityError
 from .parser import QueryGraph, ParserError
-from .utilities import is_regex
+from .utilities import is_regex, dtype_conversion
 from ..opr3.hierarchy import Exposure
 
 if TYPE_CHECKING:
@@ -349,11 +349,12 @@ class AttributeQuery(BaseQuery):
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: Query = None, index_node=None,
-                 single=False, factor_name: str = None, *args, **kwargs) -> None:
+                 single=False, factor_name: str = None, dtype: str =None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index_node, single, [factor_name], *args, **kwargs)
         self._factor_name = factor_name
+        self.dtype = dtype
 
-    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None):
+    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None):
         """
         arithmetics
         [+, -, /, *, >, <, ==, !=, <=, >=]
@@ -369,8 +370,9 @@ class AttributeQuery(BaseQuery):
         if isinstance(other, ObjectQuery):
             raise TypeError(f"Cannot do arithmetic directly on objects")
         if expected_dtype is not None:
-            op_string = op_string.replace('{0}', f'to{expected_dtype}({{0}})')
-            op_string = op_string.replace('{1}', f'to{expected_dtype}({{1}})')  # both arguments
+            op_string = dtype_conversion(self.dtype, expected_dtype, op_string, '{0}', '{1}')
+            # op_string = op_string.replace('{0}', f'to{expected_dtype}({{0}})')
+            # op_string = op_string.replace('{1}', f'to{expected_dtype}({{1}})')  # both arguments
         if isinstance(other, BaseQuery):
             try:
                 n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
@@ -378,36 +380,36 @@ class AttributeQuery(BaseQuery):
                 raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
         else:
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
-        return AttributeQuery._spawn(self, n, index_node=wrt, single=True)
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype)
 
     def _basic_scalar_function(self, name):
         return self._perform_arithmetic(f'{name}({{0}})', name)
 
-    def _basic_math_operator(self, operator, other, switch=False):
+    def _basic_math_operator(self, operator, other, switch=False, out_dtype='number'):
         if not isinstance(other, AttributeQuery):
             other = self._G.add_parameter(other, 'add')
             string_op = f'{other} {operator} {{0}}' if switch else f'{{0}} {operator} {other}'
         else:
             string_op = f'{{1}} {operator} {{0}}' if switch else f'{{0}} {operator} {{1}}'
-        return self._perform_arithmetic(string_op, operator, other)
+        return self._perform_arithmetic(string_op, operator, other, returns_dtype=out_dtype)
 
     def __and__(self, other):
-        return self._basic_math_operator('and', other)
+        return self._basic_math_operator('and', other, out_dtype='boolean')
 
     def __rand__(self, other):
-        return self._basic_math_operator('and', other, switch=True)
+        return self._basic_math_operator('and', other, switch=True, out_dtype='boolean')
 
     def __or__(self, other):
-        return self._basic_math_operator('or', other)
+        return self._basic_math_operator('or', other, out_dtype='boolean')
 
     def __ror__(self, other):
-        return self._basic_math_operator('or', other, switch=True)
+        return self._basic_math_operator('or', other, switch=True, out_dtype='boolean')
 
     def __xor__(self, other):
-        return self._basic_math_operator('xor', other)
+        return self._basic_math_operator('xor', other, out_dtype='boolean')
 
     def __rxor__(self, other):
-        return self._basic_math_operator('xor', other, switch=True)
+        return self._basic_math_operator('xor', other, switch=True, out_dtype='boolean')
 
     def __invert__(self):
         return self._basic_scalar_function('not')
@@ -442,22 +444,22 @@ class AttributeQuery(BaseQuery):
             if is_regex(other):
                 op = '=~'
                 other = other.strip('/')
-        return self._basic_math_operator(op, other)
+        return self._basic_math_operator(op, other, out_dtype='boolean')
 
     def __ne__(self, other):
-        return self._basic_math_operator('<>', other)
+        return self._basic_math_operator('<>', other, out_dtype='boolean')
 
     def __lt__(self, other):
-        return self._basic_math_operator('<', other)
+        return self._basic_math_operator('<', other, out_dtype='boolean')
 
     def __le__(self, other):
-        return self._basic_math_operator('<=', other)
+        return self._basic_math_operator('<=', other, out_dtype='boolean')
 
     def __gt__(self, other):
-        return self._basic_math_operator('>', other)
+        return self._basic_math_operator('>', other, out_dtype='boolean')
 
     def __ge__(self, other):
-        return self._basic_math_operator('>=', other)
+        return self._basic_math_operator('>=', other, out_dtype='boolean')
 
     def __ceil__(self):
         return self._basic_scalar_function('ceil')

@@ -32,3 +32,21 @@ def safe_name(name):
     if name is None:
         return name
     return '__dot__'.join(name.split('.'))
+
+
+special_dtypes = {
+    ('boolean', 'float'): 'tointeger(tofloat({}))',
+    ('float', 'boolean'): 'toboolean(tointeger({}))',
+    ('boolean', 'number'): 'tointeger({})',
+    ('number', 'boolean'): 'toboolean(tointeger({}))',
+}
+
+def dtype_conversion(from_dtype, to_dtype, string, *replacements):
+    if from_dtype == to_dtype:
+        return string
+    if from_dtype is None or to_dtype is None:
+        return string
+    func = special_dtypes.get((from_dtype, to_dtype), f'to{to_dtype}({{}})')
+    for replacement in replacements:
+        string = string.replace(replacement, func.format(replacement))
+    return string
