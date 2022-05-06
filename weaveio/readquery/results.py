@@ -5,7 +5,7 @@ from typing import List, Union
 import numpy as np
 import py2neo
 from astropy.io import fits
-from astropy.table import Table as AstropyTable, Row as AstropyRow, Column, vstack as astropy_vstack
+from astropy.table import Table as AstropyTable, Row as AstropyRow, Column, vstack as astropy_vstack, MaskedColumn
 import pandas as pd
 from py2neo.cypher import Cursor
 from tqdm import tqdm
@@ -120,7 +120,8 @@ class RowParser(FileHandler):
                         value = value[0]
                     value = self.read(*value)
             name = safe_name(cypher_name) if name is None or name == 'None' else name
-            columns.append(Column([value], name=name))
+            mask = value is None or ~np.isfinite(value) or np.size(value) == 0
+            columns.append(MaskedColumn([value], name=name, mask=[mask]))
         return Table(columns)[0]
 
     def iterate_cursor(self, cursor: Cursor, names: List[Union[str, None]], is_products: List[bool]):
