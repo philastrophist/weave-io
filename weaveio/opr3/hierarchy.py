@@ -182,7 +182,7 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     """
     parents = [SurveyCatalogue, WeaveTarget]
-    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse',
+    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse', 'targprog',
                'targclass', 'targpmra', 'targpdec', 'targparal', 'targrio'] \
               + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
     identifier_builder = ['weave_target', 'survey_catalogue', 'targid', 'targra', 'targdec', 'targuse']

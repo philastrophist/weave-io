@@ -523,7 +523,6 @@ class QueryGraph:
     def cypher_lines(self, result):
         import time
         start_time = time.perf_counter()
-        self.export('parser')
         ordering = self.traverse_query(result)
         self.verify_traversal(result, ordering)
         statements = []
