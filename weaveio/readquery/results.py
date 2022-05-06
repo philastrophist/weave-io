@@ -129,6 +129,8 @@ class RowParser(FileHandler):
 
     def parse_to_table(self, cursor: Cursor, names: List[str], is_products: List[bool]):
         rows = list(self.iterate_cursor(cursor, names, is_products))
+        if not rows:
+            return Table([Column([], name=name) for name in names])
         return vstack(rows)
 
 

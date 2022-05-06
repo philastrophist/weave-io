@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
 from .parser import QueryGraph
+from .results import Table
 from .utilities import safe_name
 
 if TYPE_CHECKING:
@@ -56,21 +57,28 @@ class BaseQuery:
             return self._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()})
 
     def _iterate(self, skip=0, limit=None):
-        yield from self._data.rowparser.iterate_cursor(self._execute(skip, limit), list(map(safe_name, self._names)), self._is_products)
+        yield from self._post_process_row(self._data.rowparser.iterate_cursor(self._execute(skip, limit), list(map(safe_name, self._names)), self._is_products))
 
     def __iter__(self):
         yield from self._iterate()
 
-    def _to_table(self, skip=0, limit=None):
+    def _to_table(self, skip=0, limit=None) -> Table:
         with logtime('total streaming'):
             cursor = self._execute(skip, limit)
             return self._data.rowparser.parse_to_table(cursor, list(map(safe_name, self._names)), self._is_products)
 
-    def _post_process(self, result):
+    def _post_process_table(self, result):
+        if self.one_column:
+            return result[result.colnames[0]].data
         return result
 
+    def _post_process_row(self, row):
+        if self.one_column:
+            return row[row.colnames[0]]
+        return row
+
     def __call__(self, skip=0, limit=None, **kwargs):
-        return self._post_process(self._to_table(skip, limit))
+        return self._post_process_table(self._to_table(skip, limit))
 
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,

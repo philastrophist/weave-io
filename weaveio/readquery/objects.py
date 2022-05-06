@@ -342,7 +342,7 @@ class Query(GenericObjectQuery):
 
 
 class AttributeQuery(BaseQuery):
-    expect_one_column = True
+    one_column = True
 
     def __repr__(self):
         return f'<{self.__class__.__name__}({self._obj}.{self._factor_name})>'
