@@ -5,7 +5,7 @@ from typing import List, Union
 import numpy as np
 import py2neo
 from astropy.io import fits
-from astropy.table import Table as AstropyTable, Row as AstropyRow, Column
+from astropy.table import Table as AstropyTable, Row as AstropyRow, Column, vstack as astropy_vstack
 import pandas as pd
 from py2neo.cypher import Cursor
 from tqdm import tqdm
@@ -25,6 +25,10 @@ class Table(AstropyTable):  # allow using `.` to access columns
         if attr in self.colnames:
             return self[attr]
         return super(Table, self).__getattr__(attr)
+
+
+def vstack(tables: List[Union[Table, Row]], *args, **kwargs) -> Table:
+    return Table(astropy_vstack(tables), *args, **kwargs)
 
 def int_or_slice(x: Union[int, float, slice, None]) -> Union[int, slice]:
     if isinstance(x, (int, float)):
@@ -88,14 +92,14 @@ class RowParser(FileHandler):
             if is_product:
                 value = self.read(*value)
             columns.append(Column([value], name=name))
-        return Table(columns)
+        return Table(columns)[0]
 
     def iterate_cursor(self, cursor: Cursor, names: List[str], is_products: List[bool]):
         for row in cursor:
             yield self.parse_product_row(row, names, is_products)
 
     def parse_to_table(self, cursor: Cursor, names: List[str], is_products: List[bool]):
-        return Table(list(self.iterate_cursor(cursor, names, is_products)))
+        return vstack(list(self.iterate_cursor(cursor, names, is_products)))
 
 
 if __name__ == '__main__':

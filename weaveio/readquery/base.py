@@ -53,7 +53,7 @@ class BaseQuery:
                 lines.append(f"SKIP {skip}")
             if limit is not None:
                 lines.append(f"LIMIT {limit}")
-            cursor = self._data.graph.execute('\n'.join(lines), params)
+            cursor = self._data.graph.execute('\n'.join(lines), **params)
             return cursor
 
     def _iterate(self, skip=0, limit=None):
@@ -63,7 +63,7 @@ class BaseQuery:
         yield from self._iterate()
 
     def _to_table(self, skip=0, limit=None):
-        with logtime('streaming'):
+        with logtime('total streaming'):
             return self._data.rowparser.parse_to_table(self._execute(skip, limit), list(map(safe_name, self._names)), self._is_products)
 
     def _post_process(self, result):
@@ -106,7 +106,7 @@ class BaseQuery:
         if self._obj is not None:
             self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
-        self._is_products = [False]*len(names) if is_products is None else is_products
+        self._is_products = [False]*len(self._names) if is_products is None else is_products
         self.attrs = attrs
 
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:

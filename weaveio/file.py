@@ -22,8 +22,12 @@ class File(Hierarchy):
         except AttributeError:
             return fits.open(self.fname)
 
-    def __init__(self, fname, **kwargs):
-        super().__init__(tables=None, fname=str(fname), **kwargs)
+    def __init__(self, **kwargs):
+        if 'fname' in kwargs:
+            kwargs['fname'] = str(kwargs['fname'])
+        if 'path' in kwargs:
+            kwargs['path'] = str(kwargs['path'])
+        super().__init__(tables=None, **kwargs)
 
     @classmethod
     def get_batches(cls, path, batch_size):
@@ -51,7 +55,7 @@ class File(Hierarchy):
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
                   **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str,'HDU'], 'File', List[_BaseHDU]]:
         path = Path(directory) / Path(fname)
-        file = cls(fname, **hierarchies)
+        file = cls(fname=fname, **hierarchies)
         hdus = [i for i in fits.open(path)]
         if len(hdus) != len(cls.hdus):
             raise TypeError(f"Class {cls} asserts there are {len(cls.hdus)} HDUs ({list(cls.hdus.keys())})"

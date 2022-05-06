@@ -242,8 +242,6 @@ class Data:
                  password='weavepassword', user='weaveuser', verbose=False):
         if verbose:
             logging.basicConfig(level=logging.INFO)
-        self.query = Query(self)
-        self.rowparser = RowParser(self.rootdir)
         self.host = host
         self.port = port
         self.write_allowed = write
@@ -251,8 +249,10 @@ class Data:
         self._graph = None
         self.password = password
         self.user = user
-        self.filelists = {}
         self.rootdir = Path(rootdir)
+        self.query = Query(self)
+        self.rowparser = RowParser(self.rootdir)
+        self.filelists = {}
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
             self.relation_graphs.append(make_relation_graph(hierarchies_from_files(*self.filetypes[:i+1])))

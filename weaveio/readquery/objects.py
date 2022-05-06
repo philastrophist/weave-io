@@ -217,7 +217,7 @@ class ObjectQuery(GenericObjectQuery):
     def _getitems(self, items, by_getitem):
         if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(AttributeQuery) for i in items):
+        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in items):
             return self._make_table(*items)
         if any(self._data.is_valid_name(i) for i in items):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
