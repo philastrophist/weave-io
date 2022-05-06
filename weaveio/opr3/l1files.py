@@ -157,10 +157,11 @@ class RawFile(HeaderFibinfoFile):
         adjunct_run =hiers['adjunct_run']
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
-        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, colname='raw', run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
+        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, name='raw', run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'], adjunct=adjunct_rawfile)
+        where = {'counts1': 1, 'counts2': 2}
         for product in raw.products:
-            raw.attach_product(product, hdus[product])
+            raw.attach_product(product, hdus[where[product]])
         return file
 
 
