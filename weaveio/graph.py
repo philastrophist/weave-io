@@ -15,7 +15,8 @@ missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.i
 convert_types = {int:  float, float: float, str: str, type(None): float, None: float, bool: float,
                  datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
                  list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
-                 dict: dict, Table: Table}
+                 dict: dict, Table: Table,
+                 np.int64: int, np.float64: float, np.float32: float, np.int32:int}
 
 def is_null(x):
     try:
@@ -60,6 +61,10 @@ def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=
             pass
     if surrounding_type is not None:
         return convert_types[surrounding_type](x)
+    for from_type, to_type in convert_types.items():
+        if from_type is not None:
+            if isinstance(x, from_type):
+                x = to_type(x)
     return x
 
 
@@ -104,10 +109,16 @@ class Graph(metaclass=ContextMeta):
             return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
-        if not self.write_allowed:
+        lower = cypher.lower()
+        if not self.write_allowed and ('create' in lower or 'merge' in lower or
+                                       'set' in lower or 'delete' in lower or 'detach' in lower):
             raise IOError(f"Write is not allowed, set `write=True` to permit writing.")
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
-        return self._execute(cypher, d)
+        try:
+            return self._execute(cypher, d)
+        except IndexError:
+            raise ConnectionResetError(f"Py2neo dropped the connection because it was taking too long. "
+                                       f"Split up your query using batch_size=??")
 
     def output_for_debug(self, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)

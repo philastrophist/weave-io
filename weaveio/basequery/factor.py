@@ -1,11 +1,11 @@
 from pathlib import Path
-from typing import List
+from typing import List, Union
 
-import py2neo
 from astropy.io import fits
-from astropy.table import Table, Column
+from astropy.table import Table as AstropyTable, Column, Row as AstropyRow
 import pandas as pd
 import numpy as np
+from py2neo.cypher import Cursor, Record
 from tqdm import tqdm
 
 from weaveio.basequery.common import FrozenQuery
@@ -14,17 +14,37 @@ from weaveio.basequery.tree import Branch
 from weaveio.writequery import CypherVariable, CypherQuery
 
 
+class Row(AstropyRow):
+    def __getattr__(self, attr):
+        if attr in self.colnames:
+            return self[attr]
+        return super(Row, self).__getattr__(attr)
+
+
+class Table(AstropyTable):  # allow using `.` to access columns
+    Row = Row
+
+    def __getattr__(self, attr):
+        if attr in self.colnames:
+            return self[attr]
+        return super(Table, self).__getattr__(attr)
+
+
 def replace_with_data(row, files):
     hdus = files[row['sourcefile']]
-    hdu = hdus[row['extn']]
+    hdu = hdus[int(row['extn'])]
     if not pd.isnull(row['column_name']):
         table = Table(hdu.data)
         table = table[row['column_name']]
     else:
         table = hdu.data
     if not pd.isnull(row['index']):
-        return table[row['index']]
+        return table[int(row['index'])]
     return table
+
+
+def safe_name(name):
+    return '__dot__'.join(name.split('.'))
 
 
 class FactorFrozenQuery(Dissociated):
@@ -43,7 +63,8 @@ class FactorFrozenQuery(Dissociated):
 
     def _prepare_query(self) -> CypherQuery:
         with super()._prepare_query() as query:
-            return query.returns(*self.factor_variables)
+            variables = {safe_name(k): v for k, v in zip(self.factors, self.factor_variables)}
+            return query.returns(**variables)
 
     def __repr__(self):
         if isinstance(self.factors, tuple):
@@ -70,38 +91,53 @@ class FactorFrozenQuery(Dissociated):
         if len(product_columns):
             sourcefiles = {}
             concat = pd.concat(product_columns)
+            concat = concat.applymap(lambda x: np.nan if x is None else x).dropna(how='all')
             for fname in tqdm(concat.sourcefile.drop_duplicates(), desc='reading fits files'):
-                path = Path(self.handler.data.rootdir) / fname
-                sourcefiles[fname] = fits.open(path)
+                if fname is not None:
+                    path = Path(self.handler.data.rootdir) / fname
+                    sourcefiles[fname] = fits.open(path)
             data = concat.apply(replace_with_data, files=sourcefiles, axis='columns').sort_index(level=0)  # type: pd.Series
+            df.index.name = 'rown'
             for name, group in data.groupby('colname'):
-                df[name] = group.values
+                df[name] = group.droplevel(1)
         return df
 
-    def _post_process(self, result: py2neo.Cursor, squeeze: bool = True) -> Table:
-        df = self._parse_products(result.to_data_frame())
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
+        if isinstance(result, Record):
+            df = pd.DataFrame([dict(result)])
+        else:
+            df = pd.DataFrame(list(map(dict, result)))
+        df = self._parse_products(df)
         # replace lists with arrays
         for c in df.columns:
             if df.dtypes[c] == 'O' and not isinstance(df[c].iloc[0], str):
+                try:
+                    if np.all(df[c].apply(len) == 0):
+                        df[c] = np.nan
+                except TypeError:  # smelly but skips missing data rows
+                    pass
                 df[c] = df[c].apply(np.asarray)
         table = Table.from_pandas(df)
         for colname, plural, is_product in zip(df.columns, self.plurals, self.is_products):
-            if plural or is_product:
-                if df.dtypes[colname] == 'O':
-                    shapes = set(map(np.shape, df[colname]))
-                    if len(shapes) == 1:  # all the same length
-                        table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
-        if len(table) == 1 and squeeze:
+            if plural or is_product or df.dtypes[colname] == 'O':
+                shapes = set(map(np.shape, df[colname]))
+                if len(shapes) == 1:  # all the same length
+                    table[colname] = Column(np.stack(df[colname].values), name=colname, shape=shapes.pop(), length=len(df))
+        if squeeze and len(table) == 1:
             table = table[0]
-        if len(table.colnames) == 1 and squeeze:
-            table = table[table.colnames[0]]
         return table
 
 
 class SingleFactorFrozenQuery(FactorFrozenQuery):
-    def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable,
-                 plural: bool, is_product: bool, parent: FrozenQuery = None):
-        super().__init__(handler, branch, [factor], [factor_variable], [plural], [is_product], parent)
+    def __init__(self, handler, branch: Branch, factor: str, factor_variable: CypherVariable, is_product: bool, parent: FrozenQuery = None):
+        super().__init__(handler, branch, [factor], [factor_variable], [False], [is_product], parent)
+
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True):
+        table = super()._post_process(result, squeeze=False)
+        column = table[table.colnames[0]].data
+        if (len(column) == 1 and squeeze) or isinstance(result, Record):
+            return column[0]
+        return column
 
 
 class TableFactorFrozenQuery(FactorFrozenQuery):
@@ -116,8 +152,19 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
 
     def _prepare_query(self) -> CypherQuery:
         with super()._prepare_query() as query:
-            variables = {k: v for k, v in zip(self.return_keys, self.factor_variables)}
+            variables = {safe_name(k): v for k, v in zip(self.return_keys, self.factor_variables)}
             return query.returns(**variables)
+
+    def _post_process(self, result: Union[Cursor, Record], squeeze: bool = True) -> Table:
+        t = super()._post_process(result, squeeze=False)
+        if len(t):
+            t = Table(t)
+            t.rename_columns(t.colnames, self.return_keys)
+        else:
+            t = Table(names=self.return_keys)
+        if isinstance(result, Record):
+            return t[0]
+        return t
 
     def __getattr__(self, item):
         return self.__getitem__(item)
@@ -129,7 +176,6 @@ class TableFactorFrozenQuery(FactorFrozenQuery):
             except ValueError:
                 raise KeyError(f"{item} is not a factor contained within {self}. Only {self.factors} are accessible.")
             else:
-                return SingleFactorFrozenQuery(self.handler, self.branch, item, self.factor_variables[i],
-                                               self.plurals[i], self.is_products[i], self)
+                return SingleFactorFrozenQuery(self.handler, self.branch, item, self.factor_variables[i], self.is_products[i], self)
         else:
             return super(TableFactorFrozenQuery, self).__getitem__(item)

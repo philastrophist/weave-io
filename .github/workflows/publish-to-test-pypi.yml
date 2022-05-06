@@ -1,0 +1,31 @@
+name: Publish to TestPyPi
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - develop
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  build-n-test:
+    name: Build and push distributions to TestPyPI
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@master
+      - name: Set up Python 3.7
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.7
+      - name: bad cryptography
+        run: export CRYPTOGRAPHY_DONT_BUILD_RUST=1
+      - name: Build
+        run: python setup.py sdist bdist_wheel --universal
+      - name: Publish distribution 📦 to Test PyPI
+        uses: pypa/gh-action-pypi-publish@master
+        with:
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          repository_url: https://test.pypi.org/legacy/

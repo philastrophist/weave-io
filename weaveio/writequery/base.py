@@ -48,6 +48,11 @@ class CypherQuery(metaclass=ContextMeta):
         self.statements.append(statement)
         self.current_context.extend(statement.output_variables)
 
+    def remove_variable_names(self):
+        for statement in self.statements:
+            for v in statement.input_variables + statement.output_variables + statement.hidden_variables:
+                v._name = None
+
     def make_variable_names(self):
         d = defaultdict(int)
         for data in self.data:
@@ -67,7 +72,13 @@ class CypherQuery(metaclass=ContextMeta):
         if not isinstance(self.statements[-1], Returns):
             self.returns(self.timestamp)
         self.make_variable_names()
-        q = '\n'.join([s.to_cypher() for s in self.statements])
+        qs = [s.to_cypher() for s in self.statements]
+        for i, q in enumerate(qs):
+            if q.lower().startswith('with') and '$' in q:
+                q = re.sub('\$[\w\d]+ as \$[\w\d]+,', '', q)
+                qs[i] = q
+        # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
+        q = '\n'.join(qs)
         datadict = {d.name: d.data for d in self.data}
         return dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')), datadict
 
@@ -227,6 +238,11 @@ class CypherVariableItem(DerivedCypherVariable):
         if isinstance(attr, str):
             return f"{parent}['{attr}']"
         return f"{parent}[{attr}]"
+
+
+class CypherFindReplaceStr(DerivedCypherVariable):
+    def string_formatter(self, parent, replace):
+        return f"replace({parent}, 'X', '{replace}')"
 
 
 class Collection(CypherVariable):

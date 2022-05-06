@@ -1,3 +1,5 @@
+![PyPI](https://img.shields.io/pypi/v/weaveio)
+
 # Tutorial
 
 ## Basics
@@ -87,20 +89,88 @@ Because of this chain of parentage/relation, every object has access to all attr
         * `data.obs[obid].weavetargets` returns all weavetargets for this particular ob
         * `data.weavetargets.obs[obid]` returns the ob with obid for each weavetarget (sometimes will be None)
 
-1. Relative identifiers
-    * `exposure.runs['red']` is functionally the same as `exposure.runs[runid]` (where runid is the red one)
 
 ### Exploration
 
-You can use the `attributes()` function to see what information is available for a given object:
+You can use the `explain(obj)` function to see what information is available for a given object:
 
-    >>> attributes(ob)
-    ['obid', 'runids', 'expmjds', 'maxseeing', 'targprogs', 'ras', 'decs', ... (a lot lot more)]
+    >>> explain(data.obs)
+    ===================ob===================
+     An OB is an "observing block" which is essentially a realisation of
+    an OBSpec. Many OBs can share the same xml OBSpec which describes how
+    to do the observations.
     
-Likewise, use the `objects()` function for related objects:
+    A ob has a unique id called 'obid'
+    one ob is linked to:
+        - many exposures
+        - many l1stackfiles
+        - many l1stackspectra
+        - many l2stackfiles
+        - many l2stacks
+        - 1 obspec
+    a ob directly owns these attributes:
+        - obid
+        - obstartmjd
+    ========================================
+Likewise, use the `explain(attr)` function to see what information is available for an attribute:
     
-    >>> objects(ob)
-    ['exposures', 'runs', 'obspec', 'progtemp', ...]
+    >>> explain(data.runs.runid)
+    runid is the unique id name of a run
+
+    >>> explain('snr', data=data)
+    snrs are owned by multiple different objects (['l1singlespectrum', 'l1stackspectrum', 'l1supertargetspectrum', 'l1superstackspectrum']). 
+    They could be entirely different things.
+    You will need to specify the parent object for snr when querying.
+    snr is an attribute belonging to l1singlespectrum
+    snr is an attribute belonging to l1stackspectrum
+    snr is an attribute belonging to l1supertargetspectrum
+    snr is an attribute belonging to l1superstackspectrum
+    ========================================
+    
+Also, you can use the `explain(obj1, obj2)`function to see how two objects are related:
+    
+    >>> explain(data.obs, data.runs')
+    ===================ob===================
+     An OB is an "observing block" which is essentially a realisation of
+    an OBSpec. Many OBs can share the same xml OBSpec which describes how
+    to do the observations.
+    
+    A ob has a unique id called 'obid'
+    one ob is linked to:
+        - many exposures
+        - many l1stackfiles
+        - many l1stackspectra
+        - many l2stackfiles
+        - many l2stacks
+        - 1 obspec
+    a ob directly owns these attributes:
+        - obid
+        - obstartmjd
+    ==================run===================
+     A run is one observation of a set of targets for a given
+    configuration in a specific arm (red or blue). A run belongs to an
+    exposure, which always consists of one or two runs (per arm).
+    
+    A run has a unique id called 'runid'
+    one run is linked to:
+        - 1 armconfig
+        - 1 exposure
+        - 1 observation
+    a run directly owns these attributes:
+        - runid
+    ========================================
+    - A ob has many runs
+    - A run has only one ob
+    ========================================
+
+When you make a mistake in plurality or a typo, weave-io will offer suggestions:
+    
+    >>> data.singlespectra
+    AttributeError: `single_spectra` not understood, did you mean one of:
+    1. l1singlespectra
+    2. l1singlespectrum
+    3. galaxy_spectra. 
+    You can learn more about an object or attribute by using `explain(obj/attribute, ...)`
 
 ### Running a query
 A query finds the locations of all the L1/L2/Raw products that you want. 
@@ -109,7 +179,7 @@ It is analagous to an SQL query except that it is written in Python.
 * A query is constructed using python like so:
 
     ```
-    from weaveio import Data
+    from weaveio import *
     data = Data(username, password)
     
     runs = data.obs[obid].runs
@@ -125,51 +195,78 @@ It is analagous to an SQL query except that it is written in Python.
 
 # Examples of use:
 
-# 1. I want to return the number of sky spectra in a given run (runid=1002813)
+# 1. I want to return the number of sky spectra in a given run (runid=1002850)
 
 
 ```python
+from weaveio import *
+data = Data()
 runid = 1002813
-nsky = sum(data.runs[runid].targuse == 'S')
+nsky = sum(data.runs[runid].targuses == 'S')
+print("number of sky targets = {}".format(nsky()))
 ```
+
+## 1b. I want to see how many sky targets each run has
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
+print(nsky())
+```
+
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
+Currently, it is only possible to filter once in a query so you have to do separate queries for each condition you want and then feed it back in. See below
 
 ```python
-yesterday = 59193
-q_singlespectra = data.singlespectra
+from weaveio import *
+yesterday = 57634
 
-q_is_red = singlespectra.camera == 'red'
-q_observed_yesterday = floor(singlespectra.expmjd) == yesterday
-q_is_sky_target = singlespectra.targuse == 'S'
+data = Data()
+runs = data.runs
+is_red = runs.camera == 'red'
+is_yesterday = floor(runs.expmjd) == yesterday
 
-q_red_singlespectra = singlespectra[is_red & observed_yesterday & is_sky_target]
+# we do 2 separate filters instead of 1 so to not read too much data into memory at once
+runs = runs[is_red & is_yesterday]  # filter the runs first
+singlespectra = runs.l1singlespectra
+is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
+chosen = singlespectra[is_sky_target]
 
-spectra = q_red_singlespectra()  # execute the query and return a spectrum object
+table = chosen['wvl', 'flux'](limit=10)
 
-# matplotlib
-plt.plot(spectra.wvls, spectra.flux)
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# %matplotlib 
+plt.plot(table['wvl'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
 ```
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
 
 
 ```python
-obs = data.obs[data.obs.startmjd >= 59163]
-fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == 'WL') | any(obs.fibretargets.surveys == 'WQSO')]
+from weaveio import * 
+data = Data()
 
-l2rows = fibretargets.stacked12
-table = l2rows[['halpha', 'zbest']]()
+obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
+fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == '/WL|WQSO/')]  # / indicate regex is starting and ending
 
-plt.scatter(table['halpha'], table['zbest'])
+l2rows = fibretargets.l2stack
+table = l2rows['lineflux_ha_6562', 'z']()
+
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# %matplotlib 
+plt.scatter(table['lineflux_ha_6562'], table['z'])
 ```
 
 # 4. I want to identify the WL spectrum with the brightest continuum at 5000AA and plot the spectrum from both red and blue arms, together with the error (variance) spectrum. 
 
 
 ```python
-stackedspectra = data.stackedspectra  # lots of different stacked spectra from many different OBs
+data = Data()
+stackedspectra = data.l1stackedspectra  # lots of different stacked spectra from many different OBs
 wl_stackedspectra = stackedspectra[any(stackedspectra.surveys == 'WL')]
 
 reds = wl_stackedspectra[wl_stackedspectra.camera == 'red']
@@ -177,12 +274,15 @@ blues = wl_stackedspectra[wl_stackedspectra.camera == 'blue']
 
 continuum = []
 for red, blue in reds(), blues():  # this loop is offline
-    continuum.append(my_special_module.median_flux(red, blue 4950, 5050))  # do some fancy function you have written
+    continuum.append(my_special_module.median_flux(red, blue, 4950, 5050))  # do some fancy function you have written
 index = np.argmax(continuum)
-
 
 red = reds[index]()
 blue = blues[index]()
+
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# %matplotlib 
 plt.plot(red.wvls, red.flux)
 plt.plot(blue.wvls, blue.flux)
 
@@ -200,21 +300,23 @@ d. I would like to search for any other OB that contains the same astronomical o
 
 ```python
 import matplotlib.pyplot as plt
-
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
+data = Data()
 
 ####### < Part A
 ob = data.obs[1234]  # get the ob 
 
 # all L2 data that used stackedspectra.
-stackedl2 = ob.stackedl2
+l2stack = ob.l2stack
 
 # return rows in the L2 dataset that correspond to a lofar target
-lofar_l2 = stackedl2[any(stackedl2.surveys == 'WL')]  # each target can belong to more than one survey
+lofar_l2 = l2stack[any(l2stack.surveys == 'WL')]  # each target can belong to more than one survey
 l2row = lofar_l2[lofar_l2.mag_gs == max(lofar_l2.mag_gs)]  # get the one row that corresponds to the brightest lofar target
 
 # now we jump from L2 rows to the stack spectra
-brightest_red = l2row.stackedspectra[l2row.stackedspectra.camera == 'red']
-brightest_blue = l2row.stackedspectra[l2row.stackedspectra.camera == 'blue']
+brightest_red = l2row.l1stackspectra[l2row.l1stackspectra.camera == 'red']
+brightest_blue = l2row.l1stackspectra[l2row.l1stackspectra.camera == 'blue']
 
 # Now plot the actual data
 fig, (redax, blueax) = plt.subplots()
@@ -225,23 +327,23 @@ blueax.plot(brightest_blue.wvls(), brightest_blue.flux(), 'b-', label='brightest
 
 ####### < Part B
 # now locate the indivdual single spectra that were stacked
-red_spectra = brightest_red.singlespectra
-blue_spectra = brightest_blue.singlespectra
+red_spectra = brightest_red.l1singlespectra
+blue_spectra = brightest_blue.l1singlespectra
 
 # matplotlib allows you to plot multiple lines with 2d arrays
-redax.plot(redsingle.wvls(), redsingle.flux(), 'r-', alpha=0.4, label='single for brightest')
-blueax.plot(bluesingle.wvls(), bluesingle.flux(), 'r-', alpha=0.4, label='single for brightest')
+redax.plot(red_spectra.wvls(), red_spectra.flux(), 'r-', alpha=0.4, label='single for brightest')
+blueax.plot(blue_spectra.wvls(), blue_spectra.flux(), 'r-', alpha=0.4, label='single for brightest')
 ####### Part B />
 
 
 ####### < Part C
 # Now get all other stacked spectra that were observed for this target, no matter the OB
 brightest_target = l2row.weavetarget
-other_reds = brightest_target.stackedspectra[brightest_target.stackedspectra.camera == 'red']
-other_blues = brightest_target.stackedspectra[brightest_target.stackedspectra.camera == 'blue']
+other_reds = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'red']
+other_blues = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'blue']
 
 # overplot the other observations
-for wvl, flux in other.red.wvls(), other_red.flux():
+for wvl, flux in other_reds.wvls(), other_reds.flux():
     redax.plot(wvl, flux, 'k:', alpha=0.2, label='from all obs')
 ####### Part C />
 ```
@@ -270,23 +372,28 @@ I'm also interested in using emission line properties to perform source classifi
 
 
 ```python
-def excitation_index(oiii, hb, nii, sii, oi, Hα):
-    return log(oiii/Hβ) - (log(nii/Hα) / 3) + log(sii/Hα) + log(oi/Hα)
+def excitation_index(oiii, hb, nii, sii, oi, ha):
+    return log(oiii/hb) - (log(nii/ha) / 3) + log(sii/ha) + log(oi/ha)
 
-stackedl2 = data.stackedl2
-redshift = stackedl2.z
-EI = excitation_index(stackedl2.flux_oiii_5007, stackedl2.flux_hbeta, stackedl2.flux_nii_6583, stackedl2.flux_oi_6300, 
-                      stackedl2.flux_sii_6716, stackedl2.flux_halpha)
+data = Data()
+l2stack = data.l2stack
+redshift = l2stack.z
+EI = excitation_index(l2stack.flux_oiii_5007, l2stack.flux_hbeta, l2stack.flux_nii_6583, l2stack.flux_oi_6300, 
+                      l2stack.flux_sii_6716, l2stack.flux_halpha)
 
-in_redshift_range = (stackedl2.zbest > 0.5) & (stackedl2.zbest < 1.)
+in_redshift_range = (l2stack.zbest > 0.5) & (l2stack.zbest < 1.)
 is_lerg = EI < 0.95  
 
-spectra = stackedl2[in_redshift_range & is_lerg].stackedspectra
+spectra = l2stack[in_redshift_range & is_lerg].l1stackspectra
 reds = spectra[spectra.camera == 'red']
 blues = spectra[spectra.camera == 'blue']
 
+
+import matplotlib.pyplot as plt
+# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
+# % matplotlib 
 plt.plot(reds.wvls(), reds.flux())
-plt.plot(blue.wvls(), blue.flux())
+plt.plot(blues.wvls(), blues.flux())
 ```
 
 # Anniek's fluxes and other catalogues
@@ -296,6 +403,7 @@ We can add any catalogue or file we like to the database, all that is required i
 
 
 ```python
+data = Data()
 data.ob.anniek.flux_halpha
 ```
 
@@ -303,6 +411,7 @@ data.ob.anniek.flux_halpha
 
 
 ```python
+data = Data()
 catalogue = read_my_nice_catalogue('...')   # has a cname column
 data.join(catalogue, 'cname', weavetarget.cname, name='my_catalogue')  # only exists for this session
 ```
@@ -311,6 +420,7 @@ data.join(catalogue, 'cname', weavetarget.cname, name='my_catalogue')  # only ex
 
 
 ```python
+data = Data()
 line_fluxes = read_line_fluxes('...')  # from the weave single spectra associated with run 100423 
 data.join(line_fluxes, 'index', data.runs[100423].singlespectra, name='line_fluxes')
 ```

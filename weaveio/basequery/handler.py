@@ -1,17 +1,14 @@
-from typing import Tuple, Dict, Set
+from typing import Dict, Set
 
-import networkx as nx
-
-from .common import AmbiguousPathError
+from .actions import TraversalPath
 from .hierarchy import *
 from .tree import BranchHandler
-from .actions import TraversalPath
 
 
 class Handler:
     def __init__(self, data: 'Data'):
         self.data = data
-        self.branch_handler = data.branch_handler
+        self.branch_handler = data.branch_handler  # type: BranchHandler
 
     def begin_with_heterogeneous(self):
         return HeterogeneousHierarchyFrozenQuery(self, self.branch_handler.entry)
@@ -24,14 +21,26 @@ class Handler:
         return DefiniteHierarchyFrozenQuery(self, branch, htype, branch.current_hierarchy, [], None)
 
     def paths2factor(self, factor_name: str,  plural: bool,
-                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], bool]:
+                     start: Type[Hierarchy] = None) -> Tuple[Dict[Type[Hierarchy], Set[TraversalPath]], Type[Hierarchy], bool, str]:
         """
         returns a dictionary of hierarchy: [path,...] and a shared hierarchy
         """
         factor_name = self.data.singular_name(factor_name)
-        pathsetdict, base = self.data.find_factor_paths(start, factor_name, plural)
+        if start is None:
+            starts = set(self.data.factor_hierarchies[factor_name])
+            if len(starts) > 1:
+                raise AmbiguousPathError(f"{factor_name} could refer to any of {starts}. Please traverse to the parent object first.")
+            start = starts.pop()
+        pathsetdict, base, factor_name = self.data.find_factor_paths(start, factor_name, plural)
         is_product = factor_name in base.products.keys()
-        return pathsetdict, base, is_product
+        if len(pathsetdict) > 1:
+            names = [i.__name__.lower() for i in pathsetdict.keys()]
+            plural = self.data.plural_name(factor_name)
+            warn(f"This query for {factor_name} is ambiguous and will return all {plural} "
+                 f"for each of the following:\n {', '.join(names)}.\n"
+                 f"If this is not what you intended, you can use `.{names[0]}` before `{factor_name}` to choose only {plural} from {names[0]}",
+                 SyntaxWarning)
+        return pathsetdict, base, is_product, factor_name
 
 
     def paths2hierarchy(self, hierarchy_name, plural,
@@ -47,18 +56,3 @@ class Handler:
             end = self.data.singular_hierarchies[self.data.singular_name(hierarchy_name)]
             return [], [end], None, end
         return self.data.find_hierarchy_paths(start, self.data.singular_hierarchies[self.data.singular_name(hierarchy_name)], plural)
-
-    def path(self, start, end) -> 'Path':
-        raise NotImplementedError
-
-    def _filter_by_boolean(self, parent, boolean):
-        raise NotImplementedError
-
-    def _equality(self, parent, other, negate=False):
-        raise NotImplementedError
-
-    def _compare(self, parent, other, operation):
-        raise NotImplementedError
-
-    def _combine(self, parent, other, operation):
-        raise NotImplementedError

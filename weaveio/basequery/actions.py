@@ -30,7 +30,7 @@ class Step:
             self.direction = direction.direction
             self.label = direction.label
             self.properties = direction.properties
-        elif direction in ['->', '<-', '-']:
+        elif direction in ['->', '<-']:
             self.direction = direction
             self.label = label
             self.properties = properties
@@ -49,9 +49,9 @@ class Step:
         else:
             mid = f'-[:{self.label} {self.properties}]-'
         if self.direction == '->':
-            return f"{mid}"
+            return f"{mid}>"
         elif self.direction == '<-':
-            return f"{mid}"
+            return f"<{mid}"
         else:
             return mid
 
@@ -62,7 +62,7 @@ class TraversalPath:
         self.nodes = []
         self.steps = []
         self.path = []
-        self.end = CypherVariable(str(path[-1]))
+        self.end = CypherVariable(str(path[-1])) if len(path) > 1 else None
         self.repr_path = ''.join(path)
         for i, entry in enumerate(path[:-1]):
             if not i % 2:  # even number
@@ -77,6 +77,8 @@ class TraversalPath:
         return len(self.nodes) + 1
 
     def __str__(self):
+        if self.end is None:
+            return ''
         end = f'({self.end}:{self.end.namehint})'
         return ''.join(map(str, self.path)) + end
 
@@ -197,21 +199,20 @@ class Traversal(Action):
 
     def __init__(self, source: CypherVariable, *paths: TraversalPath, name=None):
         if name is None:
-            name = ''.join(p.end.namehint for p in paths)
-        if len(paths) > 1:
-            self.out = CypherVariable(name)
-            outs = [p.end for p in paths] + [self.out]
-        else:
-            self.out = paths[0].end
-            outs = [self.out]
-        super(Traversal, self).__init__([source], outs, target=self.out)
+            name = ''.join(getattr(p.end, 'namehint', source.namehint) for p in paths[:2])
+        self.out = CypherVariable(name)
+        # if there is an empty path, then we just refer to the source node
+        self.ends = [p.end if p.end is not None else source for p in paths]
+        super(Traversal, self).__init__([source], [self.out], [i for i in self.ends if i is not source], target=self.out)
         self.source = source
         self.paths = paths
 
     def to_cypher(self):
-        lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
-        lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN DISTINCT {path.end} as {self.out}' for l, path in zip(lines, self.paths)])
-        return f"""CALL {{\n{lines}\n}}"""
+        if len(self.paths) > 1:
+            lines = [f'OPTIONAL MATCH ({self.source}){p}' for p in self.paths]
+            lines = '\n\nUNION\n\n'.join([f'\tWITH {self.source}\n\t{l}\n\tRETURN {end} as {self.out}' for l, end in zip(lines, self.ends)])
+            return f"""CALL {{\n{lines}\n}}"""
+        return f'OPTIONAL MATCH ({self.source}){self.paths[0]}\nWITH *, {self.ends[0]} as {self.out}'
 
     def __str__(self):
         return f'{self.source.namehint}->{self.out.namehint}'
@@ -261,9 +262,9 @@ class Collection(Action):
 
     def to_cypher(self):
         base = [f'{r}' for r in self.references + ['time0']]
-        single_hierarchies = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
+        single_hierarchies = [f'{i} as {o}' for i, o in zip(self.insingle_hierarchies, self.outsingle_hierarchies)]
         multiple_hierarchies = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_hierarchies, self.outmultiple_hierarchies)]
-        single_variables = [f'head(collect({i})) as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
+        single_variables = [f'{i} as {o}' for i, o in zip(self.insingle_variables, self.outsingle_variables)]
         multiple_variables = [f'collect({i}) as {o}' for i, o in zip(self.inmultiple_variables, self.outmultiple_variables)]
         return 'WITH ' + ', '.join(base + single_hierarchies + single_variables + multiple_hierarchies + multiple_variables)
 
@@ -273,13 +274,13 @@ class Collection(Action):
 
 class Aggregation(Action):
     shape = 'rect'
-    compare = ['string_function', 'variable', 'branch', 'reference', 'remove_infs']
-    def __init__(self, string_function: str, variable: CypherVariable, branch: 'Branch', reference: 'Branch', remove_infs: bool, namehint: str):
+    compare = ['string_function', 'variable', 'branch', 'reference']
+
+    def __init__(self, string_function: str, variable: CypherVariable, branch: 'Branch', reference: 'Branch', namehint: str):
         self.string_function = string_function
         self.variable = variable
         self.branch = branch
         self.reference = reference
-        self.remove_infs = remove_infs
         ins = self.reference.find_variables() + [self.variable]
         self.output = CypherVariable(f"{namehint}_{variable.namehint}")
         transformed_variables = {i: i for i in ins[:-1]}
@@ -287,10 +288,7 @@ class Aggregation(Action):
         super().__init__(ins, [self.output], [], transformed_variables, self.output)
 
     def to_cypher(self):
-        if self.remove_infs:
-            string_function = self.string_function.format(x=f"CASE WHEN {self.variable} > apoc.math.maxLong() THEN null ELSE {self.variable} END")
-        else:
-            string_function = self.string_function.format(x=self.variable)
+        string_function = self.string_function.format(x=self.variable)
         statics = ", ".join(map(str, ['time0'] + self.input_variables[:-1]))
         return f'WITH {statics}, {string_function} as {self.output}'
 

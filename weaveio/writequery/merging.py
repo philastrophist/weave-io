@@ -70,10 +70,13 @@ def expand_to_cypher_alias(*collections: Union[Dict[str, CypherVariable], Cypher
 class MatchNode(Statement):
     keyword = 'MATCH'
 
-    def __init__(self, labels: List[str], properties: dict):
+    def __init__(self, labels: List[str], properties: dict, optional=False):
         self.labels = [camelcase(l) for l in labels]
         self.properties, inputs = neo4j_dictionary(properties)
         self.out = CypherVariable(labels[0])
+        self.optional = optional
+        if optional:
+            self.keyword = 'OPTIONAL MATCH'
         super(MatchNode, self).__init__(inputs, [self.out])
 
     def to_cypher(self):
@@ -82,18 +85,28 @@ class MatchNode(Statement):
 
 
 class MatchRelationship(Statement):
-    def __init__(self, parent, child, reltype: str, properties: dict):
+    keyword = 'MATCH'
+
+    def __init__(self, parent, child, reltype: str, properties: dict, optional=False):
         self.parent = parent
         self.child = child
         self.reltype = reltype
         self.properties, inputs = neo4j_dictionary(properties)
+        self.optional = optional
+        if optional:
+            self.keyword = 'OPTIONAL MATCH'
         inputs += [self.parent, self.child]
         self.out = CypherVariable(reltype)
         super().__init__(inputs, [self.out])
 
     def to_cypher(self):
-        reldata = f'[{self.out}:{self.reltype} {self.properties}]'
-        return f"MATCH ({self.parent})-{reldata}->({self.child})"
+        if self.reltype is None and not len(self.properties):
+            reldata = f'[{self.out}]'
+        elif self.reltype is None:
+            reldata = f'[{self.out}: {self.properties}]'
+        else:
+            reldata = f'[{self.out}:{self.reltype} {self.properties}]'
+        return f"{self.keyword} ({self.parent})-{reldata}->({self.child})"
 
 
 class MatchPatternNode(Statement):
@@ -235,11 +248,27 @@ class MergeRelationship(CollisionManager):
         self.child = child
         self.reltype = reltype
         out = CypherVariable(reltype)
+        self.value = CypherVariable('value')
         super().__init__(out, identproperties, properties, collision_manager)
+        self.output_variables.append(self.value)
+
+    def to_cypher(self):
+        return super().to_cypher()
 
     @property
     def merge_statement(self):
-        return f'MERGE ({self.parent})-[{self.out}:{self.reltype} {self.identproperties}]->({self.child})'
+        return f'call apoc.merge.relationship($parent, "{self.reltype}", $ident, $props, $child, $onmatch) yield rel as {self.out}'
+
+
+    @property
+    def merge_paragraph(self):
+        return f"""{self.pre_merge} 
+        call apoc.do.when({self.parent} is null or {self.child} is null, 'return null as {self.out}','
+        {self.merge_statement}
+        RETURN {self.out}', {{parent: {self.parent}, child:{self.child}, ident:{self.identproperties}, 
+                              props: {self.propvar}, onmatch: {{}}}}) yield value as {self.value}
+        OPTIONAL MATCH ({self.parent})-[{self.out}:{self.reltype} {self.identproperties}]->({self.child})
+        """
 
     @property
     def collision_record(self):
@@ -320,7 +349,7 @@ class MergeDependentNode(CollisionManager):
                 child = f'({self.dummy})'
             relations.append(rel + child)
         optional_match = 'OPTIONAL MATCH ' + ',\n'.join(relations)
-        create = 'CREATE ' + ',\n'.join(relations)
+        create = '\n'.join(['MERGE ' + r for r in relations])
         for dummy, real in zip(self.dummyrelvars, self.relvars):
             create = create.replace(f'[{dummy}:', f'[{real}:')
         create = create.replace(f'{self.dummy}', f'{self.out}')
@@ -435,16 +464,16 @@ class SetVersion(Statement):
         return '\n'.join(query)
 
 
-def match_node(labels, properties):
+def match_node(labels, properties, optional=False):
     query = CypherQuery.get_context()  # type: CypherQuery
-    statement = MatchNode(labels, properties)
+    statement = MatchNode(labels, properties, optional)
     query.add_statement(statement)
     return statement.out
 
 
-def match_relationship(parent, child, reltype, properties):
+def match_relationship(parent, child, reltype, properties, optional=False):
     query = CypherQuery.get_context()  # type: CypherQuery
-    statement = MatchRelationship(parent, child, reltype, properties)
+    statement = MatchRelationship(parent, child, reltype, properties, optional)
     query.add_statement(statement)
     return statement.out
 
