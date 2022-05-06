@@ -142,7 +142,11 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
         relation.instantate_node()
         # only parent-->child is in the database
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
-        if child_defines_parents:  # i.e. parents = [...] is set in the class for this object
+        if parent is child:
+            for a, b in [(parent, child), (child, parent)]:
+                graph.add_edge(a, b, singular=relation.maxnumber == 1,
+                               optional=relation.minnumber == 0, style=relstyle)
+        elif child_defines_parents:  # i.e. parents = [...] is set in the class for this object
             # child instance has n of type Parent, parent instance has unknown number of type Child
             parent = relation.node  # reset from new relations
             graph.add_edge(child, parent, singular=relation.maxnumber == 1,
