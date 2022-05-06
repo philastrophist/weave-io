@@ -218,7 +218,7 @@ class BaseQuery:
     def _spawn(cls, parent: 'BaseQuery', node, obj=None, index_node=None, single=False, *args, **kwargs):
         return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
-    def _get_path_to_object(self, obj, want_single, return_objs=return_objs) -> Tuple[str, bool]:
+    def _get_path_to_object(self, obj, want_single, return_objs=False) -> Tuple[str, bool]:
         return self._data.path_to_hierarchy(self._obj, obj, want_single, return_objs=return_objs)
 
     def _slice(self, slc):
