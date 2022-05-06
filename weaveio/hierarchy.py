@@ -558,6 +558,13 @@ class Hierarchy(Graphable):
     _hierarchies = {}
     is_template = True
 
+
+    @classmethod
+    def from_cypher_variable(cls, variable):
+        thing = cls(do_not_create=True)
+        thing.node = variable
+        return thing
+
     @classmethod
     def as_factors(cls, *names):
         if len(names) == 1 and isinstance(names[0], list):

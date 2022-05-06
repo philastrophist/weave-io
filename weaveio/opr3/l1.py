@@ -10,19 +10,20 @@ class L1(Hierarchy):
     is_template = True
 
 
+class L1Spectrum(Spectrum1D, L1):
+    is_template = True
+    children = [Optional('self', idname='adjunct')]
+    parents = [WavelengthHolder]
+    products = ['flux', 'ivar', 'sensfunc']
+    factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
+
+
 class NoSS(Spectrum1D):
     plural_name = 'nosses'
     singular_name = 'noss'
     products = ['flux', 'ivar']
+    parents = [L1Spectrum]
     children = [Optional('self', idname='adjunct')]
-
-
-class L1Spectrum(Spectrum1D, L1):
-    is_template = True
-    children = [Optional('self', idname='adjunct'), NoSS]
-    parents = [WavelengthHolder]
-    products = ['primary', 'flux', 'ivar', 'sensfunc']
-    factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
 
 
 class L1SingleSpectrum(L1Spectrum, Single):

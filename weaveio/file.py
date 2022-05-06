@@ -53,7 +53,7 @@ class File(Hierarchy):
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
-                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str,'HDU'], 'File', List[_BaseHDU]]:
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int,'HDU'], 'File', List[_BaseHDU]]:
         path = Path(directory) / Path(fname)
         file = cls(fname=fname, **hierarchies)
         hdus = [i for i in fits.open(path)]
@@ -62,7 +62,7 @@ class File(Hierarchy):
                             f" whereas {path} has {len(hdus)} ({[i.name for i in hdus]})")
         hduinstances = {}
         for i, ((hduname, hduclass), hdu) in enumerate(zip(cls.hdus.items(), hdus)):
-            hduinstances[hduname] = hduclass.from_hdu(hduname, hdu, i, file)
+            hduinstances[i] = hduclass.from_hdu(hduname, hdu, i, file)
         return hduinstances, file, hdus
 
     def read_product(self, product_name):

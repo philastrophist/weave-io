@@ -282,8 +282,8 @@ class Exposure(Hierarchy):
 
 class SourcedData(Hierarchy):
     is_template = True
-    factors = ['sourcefile', 'nrow']
-    identifier_builder = ['sourcefile', 'nrow']
+    factors = ['sourcefile', 'nrow', 'name']
+    identifier_builder = ['sourcefile', 'nrow', 'name']
 
 
 class Spectrum(SourcedData):
@@ -361,6 +361,7 @@ class RedshiftMeasurement(Measurement):
 
 
 class WavelengthHolder(Hierarchy):
+    singular_name = 'wavelength_holder'
     factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
 

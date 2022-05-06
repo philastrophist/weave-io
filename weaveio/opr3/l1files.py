@@ -15,7 +15,7 @@ from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf, Optio
 from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
     OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder
-from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, L1Spectrum, L1StackSpectrum
+from weaveio.opr3.l1 import L1SingleSpectrum, L1OBStackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, L1Spectrum, L1StackSpectrum, NoSS
 from weaveio.writequery import groupby, CypherData
 
 
@@ -157,7 +157,7 @@ class RawFile(HeaderFibinfoFile):
         adjunct_run =hiers['adjunct_run']
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
-        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
+        raw = RawSpectrum(sourcefile=str(fname), nrow=-1, colname='raw', run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'], adjunct=adjunct_rawfile)
         for product in raw.products:
             raw.attach_product(product, hdus[product])
@@ -184,13 +184,13 @@ class L1File(HeaderFibinfoFile):
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
-                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[str, 'HDU'], 'File', List[_BaseHDU]]:
+                  **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int, 'HDU'], 'File', List[_BaseHDU]]:
         return super().read_hdus(directory, fname, **hierarchies, wavelength_holder=cls.wavelengths(directory, fname))
 
     @classmethod
-    def attach_products_to_spectrum(cls, Type, spectrum_var, index, hdus):
-        for product in Type.products:
-            spectrum_var.attach_product(product, hdus[product], index=index)
+    def attach_products_to_spectrum(cls, spectrum, index, hdus, names):
+        for product in spectrum.products:
+            spectrum.attach_product(product, hdus[names[product]], index=index)
 
 
 class L1SingleFile(L1File):
@@ -226,19 +226,25 @@ class L1SingleFile(L1File):
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_raw_file = RawFile.find(anonymous_parents=[adjunct_raw])
         adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
-        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1, run=hiers['run'])
+        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1, name='raw', run=hiers['run'])
         rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file)  # merge this one instead of finding, then we can start from single or raw files
+        wavelengths = cls.wavelengths(directory, fname)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)
-            single_spectrum = L1SingleSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'],
+            single_spectrum = L1SingleSpectrum(sourcefile=str(fname), nrow=fibrow['nspec'], name='single',
                                                raw_spectrum=raw, fibre_target=fibretarget,
+                                               wavelength_holder=wavelengths,
                                                tables=fibrow, adjunct=adjunct)
-        single_spectra, fibrows = collect(single_spectrum, fibrow)
+            noss = NoSS(l1_spectrum=single_spectrum, sourcefile=str(fname), nrow=fibrow['nspec'], name='single_noss')
+        single_spectra, nosses, fibrows = collect(single_spectrum, noss, fibrow)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
                                       l1single_spectra=single_spectra,
                                       casu=casu)
-        with unwind(single_spectra, fibrows) as (single_spectrum, fibrow):
-            cls.attach_products_to_spectrum(L1SingleSpectrum, single_spectrum, fibrow['spec_index'], hdus)
+        with unwind(single_spectra, nosses, fibrows) as (single_spectrum, noss, fibrow):
+            spec = L1SingleSpectrum.from_cypher_variable(single_spectrum)
+            noss = NoSS.from_cypher_variable(noss)
+            cls.attach_products_to_spectrum(spec, fibrow['spec_index'], hdus, {'flux': 1, 'ivar': 2, 'sensfunc': 5})
+            cls.attach_products_to_spectrum(noss, fibrow['spec_index'], hdus, {'flux': 3, 'ivar': 4, 'sensfunc': 5})
         single_spectra = collect(single_spectrum)  # must collect at the end
         return file
 
@@ -300,7 +306,7 @@ class L1StackedBaseFile(L1File):
                                                  l1single_spectra=single_spectra, ob=ob,
                                                  arm_config=armconfig, fibre_target=fibretarget,
                                                  casu=casu, tables=fibrow, adjunct=adjunct)
-            cls.attach_products_to_spectrum(cls, stack_spectrum, fibrow['spec_index'], hdus)
+            cls.attach_products_to_spectrum(cls.from_cypher_variable(stack_spectrum), fibrow['spec_index'], hdus)
         stack_spectra = collect(stack_spectrum)  # must collect at the end
         return file
 
