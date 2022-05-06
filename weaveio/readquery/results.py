@@ -119,7 +119,7 @@ class RowParser(FileHandler):
                     if isinstance(value[0], list):
                         value = value[0]
                     value = self.read(*value)
-            name = safe_name(cypher_name) if name is None else name
+            name = safe_name(cypher_name) if name is None or name == 'None' else name
             columns.append(Column([value], name=name))
         return Table(columns)[0]
 

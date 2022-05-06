@@ -465,6 +465,11 @@ class QueryGraph:
         if force_plural:
             return self.add_aggregation(other_node, shared, 'collect')
         if self.is_singular_branch(shared, other_node):
+            try:
+                if next(self.backwards_G.successors(other_node)) == shared:
+                    return other_node
+            except StopIteration:
+                pass
             # then fold back singularly (i.e. do nothing in terms of cypher)
             statement = NullStatement(self.G.nodes[other_node]['variables'], self)
             return add_aggregation(self.G, other_node, shared, statement, 'aggr', True)

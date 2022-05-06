@@ -1,9 +1,9 @@
-import logging
 from weaveio.readquery import *
 from pprint import pprint
 
-logging.basicConfig(level=logging.INFO)
 from weaveio.opr3 import *
+import logging
+logging.basicConfig(level=logging.INFO)
 
 data = Data(dbname='test', user='neo4j', password='NF49rfTY', write=False)
 # data.drop_all_constraints()
