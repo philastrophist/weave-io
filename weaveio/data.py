@@ -6,6 +6,7 @@ from functools import reduce
 from operator import and_
 from pathlib import Path
 from typing import Union, List, Tuple, Type, Dict, Set, Callable
+from uuid import uuid4
 
 import graphviz
 import networkx as nx
@@ -465,9 +466,21 @@ class Data:
                 with self.write(collision_manager) as query:
                     filetype.read(self.rootdir, fname, slc)
                 cypher, params = query.render_query()
+                uuid = f"//{uuid4()}"
+                cypher = '\n'.join([uuid, cypher])
                 start = time.time()
                 if not dryrun:
-                    results = self.graph.execute(cypher, **params)
+                    try:
+                        results = self.graph.execute(cypher, **params)
+                    except ConnectionError as e:
+                        is_running = True
+                        while is_running:
+                            is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
+                            logging.info(f"py2neo ending connection but the query is still running. Waiting...")
+                            time.sleep(5)
+                        results = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=fname).evaluate()
+                        if not results:
+                            raise ConnectionError(f"{fname} could not be written to the database see neo4j logs for more details") from e
                     stats.append(results.stats())
                     timestamp = results.evaluate()
                     if timestamp is None:
