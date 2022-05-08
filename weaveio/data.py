@@ -472,17 +472,19 @@ class Data:
                 if not dryrun:
                     try:
                         results = self.graph.execute(cypher, **params)
+                        stats.append(results.stats())
+                        timestamp = results.evaluate()
                     except ConnectionError as e:
                         is_running = True
                         while is_running:
                             is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
-                            logging.info(f"py2neo ending connection but the query is still running. Waiting...")
-                            time.sleep(5)
-                        results = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=fname).evaluate()
-                        if not results:
+                            time.sleep(1)
+                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=str(fname))
+                        successful = r.evaluate()
+                        timestamp = successful
+                        if not successful:
                             raise ConnectionError(f"{fname} could not be written to the database see neo4j logs for more details") from e
-                    stats.append(results.stats())
-                    timestamp = results.evaluate()
+                        stats.append(r.stats())
                     if timestamp is None:
                         logging.warning(f"This query terminated early due to an empty input table/data. "
                              f"Adjust your `.read` method to allow for empty tables/data")
