@@ -478,7 +478,7 @@ class Data:
                             is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
                             logging.info(f"py2neo ending connection but the query is still running. Waiting...")
                             time.sleep(5)
-                        results = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=fname).evaluate()
+                        results = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=str(fname)).evaluate()
                         if not results:
                             raise ConnectionError(f"{fname} could not be written to the database see neo4j logs for more details") from e
                     stats.append(results.stats())
