@@ -3,7 +3,7 @@ import sys
 
 from weaveio.hierarchy import Optional, Multiple, Hierarchy
 from weaveio.opr3.hierarchy import Spectrum, Single, FibreTarget, Stack, \
-    OBStack, OB, ArmConfig, Superstack, OBSpec, Supertarget, WeaveTarget, RawSpectrum, _predicate, Spectrum1D, MeanFlux, WavelengthHolder
+    OBStack, OB, ArmConfig, Superstack, OBSpec, Supertarget, WeaveTarget, RawSpectrum, _predicate, Spectrum1D, MeanFlux
 
 
 class L1(Hierarchy):
@@ -13,7 +13,6 @@ class L1(Hierarchy):
 class L1Spectrum(Spectrum1D, L1):
     is_template = True
     children = [Optional('self', idname='adjunct')]
-    parents = [WavelengthHolder]
     products = ['flux', 'ivar', 'sensfunc']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
 
