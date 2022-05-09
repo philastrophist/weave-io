@@ -1,7 +1,9 @@
 import logging
+import os
 import re
 import time
 from collections import defaultdict
+from contextlib import contextmanager
 from functools import reduce
 from operator import and_
 from pathlib import Path
@@ -239,19 +241,19 @@ def plot_graph(G, fname, format):
 class Data:
     filetypes = []
 
-    def __init__(self, rootdir: Union[Path, str] = '/beegfs/car/weave/weaveio/',
-                 host: str = '127.0.0.1', port=7687, write=False, dbname='neo4j',
-                 password='weavepassword', user='weaveuser', verbose=False):
+    def __init__(self, rootdir: Union[Path, str] = None,
+                 host: str = None, port=None, dbname=None,
+                 password=None, user=None, verbose=False):
         if verbose:
             logging.basicConfig(level=logging.INFO)
-        self.host = host
-        self.port = port
-        self.write_allowed = write
-        self.dbname = dbname
-        self._graph = None
-        self.password = password
-        self.user = user
-        self.rootdir = Path(rootdir)
+        self.dbname = dbname or os.getenv('WEAVEIO_DB', 'neo4j')
+        self.host = host or os.getenv('WEAVEIO_HOST', '127.0.0.1')
+        self.port = port or os.getenv('WEAVEIO_PORT', 7687)
+        self.password = password or os.getenv('WEAVEIO_PASSWORD', 'weavepassword')
+        self.user = user or os.getenv('WEAVEIO_USER', 'weaveuser')
+        self.rootdir = Path(rootdir or os.getenv('WEAVEIO_ROOTDIR', '/beegfs/car/weave/weaveio/'))
+
+        self.write_allowed = False
         self.query = Query(self)
         self.rowparser = RowParser(self.rootdir)
         self.filelists = {}
@@ -366,24 +368,29 @@ class Data:
     def all_multiple_links_to_hierarchy(self, hierarchy: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
         return self.all_links_to_hierarchy(hierarchy, lambda g, e: not g.edges[e]['singular'])
 
-    def write(self, collision_manager='track&flag'):
+    def write_cypher(self, collision_manager='track&flag'):
         if self.write_allowed:
             return self.graph.write(collision_manager)
         raise IOError(f"You have not allowed write operations in this instance of data (write=False)")
+
+    @property
+    @contextmanager
+    def write(self):
+        self.write_allowed = True
+        yield self.graph
+        self.write_allowed = False
 
     def is_unique_factor(self, name):
         return len(self.factor_hierarchies[name]) == 1
 
     @property
     def graph(self):
-        if self._graph is None:
-            d = {}
-            if self.password is not None:
-                d['password'] = self.password
-            if self.user is not None:
-                d['user'] = self.user
-            self._graph = Graph(host=self.host, port=self.port, name=self.dbname, write=self.write, **d)
-        return self._graph
+        d = {}
+        if self.password is not None:
+            d['password'] = self.password
+        if self.user is not None:
+            d['user'] = self.user
+        return Graph(host=self.host, port=self.port, name=self.dbname, write=self.write_allowed, **d)
 
     def make_constraints_cypher(self):
         return {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
@@ -463,7 +470,7 @@ class Data:
                 if raise_on_duplicate_file:
                     if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
                         raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
-                with self.write(collision_manager) as query:
+                with self.write_cypher(collision_manager) as query:
                     filetype.read(self.rootdir, fname, slc)
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"

@@ -99,7 +99,7 @@ class Graph(metaclass=ContextMeta):
 
     def _execute(self, cypher, parameters, backoff=1, limit=10):
         try:
-            return self.neograph.run(cypher, parameters=parameters)
+            return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
         except RuntimeError as e:
             if backoff >= limit:
                 raise e
