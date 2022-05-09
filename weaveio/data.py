@@ -474,7 +474,7 @@ class Data:
                     filetype.read(self.rootdir, fname, slc)
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
-                cypher = '\n'.join([uuid, cypher])
+                cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
                 start = time.time()
                 if not dryrun:
                     try:

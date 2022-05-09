@@ -114,7 +114,7 @@ class HeaderFibinfoFile(File):
         exposure = Exposure.from_header(ob, header)
         adjunct_run = Run.find(anonymous_parents=[exposure])
         run = Run(id=runid, arm_config=arm, exposure=exposure, adjunct=adjunct_run)
-        return {'ob': ob, 'obspec': obspec, 'armconfig': arm, 'exposure': exposure, 'run': run, 'adjunct_run': adjunct_run, 'casu': casu}
+        return {'ob': ob, 'obspec': obspec, 'arm_config': arm, 'exposure': exposure, 'run': run, 'adjunct_run': adjunct_run, 'casu': casu}
 
     @classmethod
     def read_schema(cls, path: Path, slc: slice = None):
@@ -236,7 +236,9 @@ class L1SingleFile(L1File):
                                                raw_spectrum=raw, fibre_target=fibretarget,
                                                wavelength_holder=wavelengths,
                                                tables=fibrow, adjunct=adjunct)
-            noss = NoSS(l1_spectrum=single_spectrum, sourcefile=str(fname), nrow=fibrow['nspec'], name='single_noss')
+            adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
+            noss = NoSS(l1_spectrum=single_spectrum, sourcefile=str(fname), nrow=fibrow['nspec'], name='single_noss',
+                        adjunct=adjunct_noss)
         single_spectra, nosses, fibrows = collect(single_spectrum, noss, fibrow)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
                                       l1single_spectra=single_spectra,
@@ -253,13 +255,14 @@ class L1SingleFile(L1File):
 class L1StackedBaseFile(L1File):
     singular_name = 'l1stacked_basefile'
     is_template = True
+    SpectrumType = None
+    recommended_batchsize = 100
 
     @classmethod
     def parent_runids(cls, path):
         header = cls.read_header(path, 0)
         runids = [int(v) for k, v in header.items() if k.startswith('RUNS0')]
         if len(runids) == 0:
-            header = cls.read_header(path, 1)
             runids = [int(v.split('.')[0].split('_')[1]) for k, v in header.items() if k.startswith('PROV0') and 'formed' not in v]
         return runids
 
@@ -275,6 +278,7 @@ class L1StackedBaseFile(L1File):
             single_fname = L1SingleFile.fname_from_runid(runid)
             subdir = fname.parents[0]
             l1singlefiles.append(L1SingleFile.find(fname=str(subdir / single_fname)))
+        assert len(l1singlefiles) > 1
         return l1singlefiles
 
     @classmethod
@@ -288,28 +292,37 @@ class L1StackedBaseFile(L1File):
         path = directory / fname
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         ob = hiers['ob']
-        armconfig = hiers['armconfig']
+        armconfig = hiers['arm_config']
         casu = hiers['casu']
-        singlefiles = cls.get_single_files(directory, fname)
-        adjunct_file = cls.find(anonymous_parents=singlefiles)
-        hdus, file, _ = cls.read_hdus(directory, fname, l1singlefiles=singlefiles, ob=ob,
-                                   armconfig=armconfig, casu=casu, adjunct=adjunct_file)
+        single_files = cls.get_single_files(directory, fname)
+        adjunct_singles_files = [L1SingleFile.find(anonymous_parents=[s]) for s in single_files]
+        adjunct_file = cls.find(anonymous_parents=adjunct_singles_files)
+        wavelengths = cls.wavelengths(directory, fname)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
-            single_spectra = []
-            for singlefile in singlefiles:
-                single_spectrum = L1SingleSpectrum.find(sourcefile=str(singlefile.fname), nrow=fibrow['nspec'])
+            single_spectra = [] # list of  L1SingleSpectra per file at each fibretarget
+            for single_file in single_files:
+                single_spectrum = L1SingleSpectrum.find(anonymous_parents=[fibretarget], anonymous_children=[single_file])
                 single_spectra.append(single_spectrum)
             # use the generic "L1stackspectrum" to avoid writing out again for superstacks
-            adjunct = L1StackSpectrum.find(anonymous_children=[adjunct_file],
-                                             anonymous_parents=[fibretarget])
-            stack_spectrum = cls(sourcefile=str(fname), nrow=fibrow['nspec'],
+            adjunct = L1StackSpectrum.find(anonymous_parents=[fibretarget], anonymous_children=[adjunct_file])
+            stack_spectrum = cls.SpectrumType(sourcefile=str(fname), nrow=fibrow['nspec'], name='stack',
                                                  l1single_spectra=single_spectra, ob=ob,
                                                  arm_config=armconfig, fibre_target=fibretarget,
-                                                 casu=casu, tables=fibrow, adjunct=adjunct)
-            cls.attach_products_to_spectrum(cls.from_cypher_variable(stack_spectrum), fibrow['spec_index'], hdus)
+                                                 tables=fibrow,
+                                                 adjunct=adjunct, wavelength_holder=wavelengths)
+            adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
+            noss = NoSS(l1_spectrum=stack_spectrum, sourcefile=str(fname), nrow=fibrow['nspec'], name='stack_noss', adjunct=adjunct_noss)
+        stack_spectra, nosses, fibrows = collect(stack_spectrum, noss, fibrow)
+        d = {cls.SpectrumType.plural_name: stack_spectra}
+        hdus, file, _ = cls.read_hdus(directory, fname, l1single_files=single_files,
+                                      adjunct=adjunct_file, **d, **hiers)
+        with unwind(stack_spectra, nosses, fibrows) as (stack_spectrum, noss, fibrow):
+            spec = cls.from_cypher_variable(stack_spectrum)
+            noss = NoSS.from_cypher_variable(noss)
+            cls.attach_products_to_spectrum(spec, fibrow['spec_index'], hdus, {'flux': 1, 'ivar': 2, 'sensfunc': 5})
+            cls.attach_products_to_spectrum(noss, fibrow['spec_index'], hdus, {'flux': 3, 'ivar': 4, 'sensfunc': 5})
         stack_spectra = collect(stack_spectrum)  # must collect at the end
         return file
-
 
 
 class L1OBStackFile(L1StackedBaseFile):
@@ -317,6 +330,13 @@ class L1OBStackFile(L1StackedBaseFile):
     match_pattern = 'stack_[0-9]+\.fit'
     parents = [CASU, Multiple(L1SingleFile, constrain=(OB, ArmConfig)), Multiple(L1OBStackSpectrum), WavelengthHolder]
     children = [Optional('self', idname='adjunct')]
+    SpectrumType =  L1OBStackSpectrum
+
+    @classmethod
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int, 'HDU'], 'File', List[_BaseHDU]]:
+        return super().read_hdus(directory, fname, casu=hierarchies['casu'], l1single_files=hierarchies['l1single_files'],
+                                 ob=hierarchies['ob'], arm_config=hierarchies['arm_config'],
+                                 l1obstack_spectra=hierarchies['l1obstack_spectra'], adjunct=hierarchies['adjunct'])
 
 
 class L1SuperstackFile(L1StackedBaseFile):
@@ -324,6 +344,13 @@ class L1SuperstackFile(L1StackedBaseFile):
     match_pattern = 'superstack_[0-9]+\.fit'
     parents = [Multiple(L1SingleFile, constrain=(OBSpec, ArmConfig)), CASU, Multiple(L1SuperstackSpectrum), WavelengthHolder]
     children = [Optional('self', idname='adjunct')]
+    SpectrumType = L1SuperstackSpectrum
+
+    @classmethod
+    def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int, 'HDU'], 'File', List[_BaseHDU]]:
+        return super().read_hdus(directory, fname, casu=hierarchies['casu'], l1single_files=hierarchies['l1single_files'],
+                                 obspec=hierarchies['obspec'], arm_config=hierarchies['arm_config'],
+                                 l1obstack_spectra=hierarchies['l1superstack_spectra'], adjunct=hierarchies['adjunct'])
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -335,6 +362,7 @@ class L1SupertargetFile(L1StackedBaseFile):
     match_pattern = 'WVE_.+\.fit'
     parents = [Multiple(L1SingleFile, constrain=(WeaveTarget, ArmConfig)), CASU, L1SupertargetSpectrum, WavelengthHolder]
     children = [Optional('self', idname='adjunct')]
+    SpectrumType = L1SupertargetSpectrum
     recommended_batchsize = None
 
     @classmethod
