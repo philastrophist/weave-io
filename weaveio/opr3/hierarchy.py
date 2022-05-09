@@ -48,6 +48,10 @@ class Measurement(Hierarchy):
     indexes = ['value']
 
 
+class Magnitude(Measurement):
+    pass
+
+
 class Author(Hierarchy):
     is_template = True
 
@@ -176,10 +180,6 @@ class SurveyCatalogue(Hierarchy):
     parents = [Subprogramme]
     factors = ['name']
     idname = 'id'
-
-
-class Magnitude(Measurement):
-    pass
 
 
 class SurveyTarget(Hierarchy):

@@ -287,7 +287,6 @@ class L1StackedBaseFile(L1File):
         directory = Path(directory)
         path = directory / fname
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
-
         ob = hiers['ob']
         armconfig = hiers['armconfig']
         casu = hiers['casu']
