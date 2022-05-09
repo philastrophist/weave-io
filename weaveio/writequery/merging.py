@@ -122,10 +122,10 @@ class MatchPatternNode(Statement):
     def to_cypher(self):
         labels = ':'.join(self.labels)
         match = f'({self.out}: {labels} {self.properties})'
-        wheres = ' AND '.join([f'({self.out})<--({p})' for p in self.parents] +
+        wheres = ', '.join([f'({self.out})<--({p})' for p in self.parents] +
                             [f'({self.out})-->({c})' for c in self.children])
         if len(wheres):
-            wheres = f'\nWHERE {wheres}'
+            wheres = f'\n,{wheres}'
         return f'WITH * OPTIONAL MATCH {match}{wheres}'
 
 

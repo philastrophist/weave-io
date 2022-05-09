@@ -31,6 +31,6 @@ def database_one2one(workdir):
     except (AssertionError, WireError):
         pytest.xfail("unsupported configuration of testing database")
     else:
-        data.read_directory()
+        data.write_directory()
         data.validate()
         return data
