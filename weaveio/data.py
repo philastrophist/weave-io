@@ -433,9 +433,9 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
-    def read_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
-                   collision_manager='ignore', batch_size=None, halt_on_error=True,
-                   dryrun=False, do_not_apply_constraints=False) -> pd.DataFrame:
+    def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
+                    collision_manager='ignore', batch_size=None, halt_on_error=True,
+                    dryrun=False, do_not_apply_constraints=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -536,10 +536,10 @@ class Data:
             print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
         return filtered_filelist
 
-    def read_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
+    def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
                         dryrun=False) -> pd.DataFrame:
         filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
-        return self.read_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
+        return self.write_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
                                 dryrun=dryrun)
 
     def _validate_one_required(self, hierarchy_name):
