@@ -221,18 +221,18 @@ Currently, it is only possible to filter once in a query so you have to do separ
 
 ```python
 from weaveio import *
-yesterday = 57634
+yesterday = 57639
 
 data = Data()
 runs = data.runs
 is_red = runs.camera == 'red'
-is_yesterday = floor(runs.expmjd) == yesterday
+is_yesterday = floor(runs.exposure.mjd) == yesterday
 
 # we do 2 separate filters instead of 1 so to not read too much data into memory at once
 runs = runs[is_red & is_yesterday]  # filter the runs first
-singlespectra = runs.l1singlespectra
-is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
-chosen = singlespectra[is_sky_target]
+single_spectra = runs.l1single_spectra
+is_sky_target = single_spectra.targuse == 'S'  # then filter the spectra per filtered run
+chosen = single_spectra[is_sky_target]
 
 table = chosen['wvl', 'flux'](limit=10)
 
