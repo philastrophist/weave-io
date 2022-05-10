@@ -201,7 +201,7 @@ It is analagous to an SQL query except that it is written in Python.
 ```python
 from weaveio import *
 data = Data()
-runid = 1002813
+runid = 1002209
 nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
 ```

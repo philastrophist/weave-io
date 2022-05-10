@@ -69,7 +69,9 @@ class BaseQuery:
 
     def _post_process_table(self, result):
         if self.one_column:
-            return result[result.colnames[0]].data
+            result = result[result.colnames[0]].data
+        if self.one_row:
+            result = result[0]
         return result
 
     def _post_process_row(self, row):
@@ -133,11 +135,14 @@ class BaseQuery:
         hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
         if self._obj in hs:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
-        hs = [h for H in hs for h in self._data.expand_template_object(H) if self._get_path_to_object(h, False)[1]]
-        if len(hs) > 1:
-            raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
-                                     f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
-        obj = hs.pop()
+        if len(hs) == 1:
+            obj = hs.pop()
+        else:
+            hs = [h for H in hs for h in self._data.expand_template_object(H) if self._get_path_to_object(h, False)[1]]
+            if len(hs) > 1:
+                raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
+                                         f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
+            obj = hs.pop()
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):
@@ -231,4 +236,8 @@ class BaseQuery:
         except SyntaxError:
             raise SyntaxError(f"Cannot aggregate {self} into {wrt} since they don't share a parent query")
         from .objects import AttributeQuery
-        return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, dtype=returns_dtype, single=True)
+        r = AttributeQuery._spawn(self, n, wrt._obj, wrt._node, dtype=returns_dtype, single=True)
+        if wrt._node == self._start._node:
+            r.one_row = True
+        return r
+
