@@ -2,7 +2,7 @@ from textwrap import dedent
 from typing import List, Dict, Union, Tuple, Optional, Iterable
 
 from . import CypherQuery
-from .base import camelcase, Varname, Statement, CypherVariable, CypherData, CypherVariableItem
+from .base import camelcase, Varname, Statement, CypherVariable, CypherData, CypherVariableItem, Collection
 
 
 def are_different(a: str, b: str) -> str:
@@ -111,22 +111,32 @@ class MatchRelationship(Statement):
 
 class MatchPatternNode(Statement):
     def __init__(self, labels: List[str], properties: Dict[str, Union[str, int, float, CypherVariable]],
-                 parents: List[CypherVariable], children: List[CypherVariable]):
+                 parents: List[CypherVariable], children: List[CypherVariable], exclude: List[CypherVariable]):
         self.labels = [camelcase(l) for l in labels]
         self.properties, inputs = neo4j_dictionary(properties)
-        self.parents = parents
-        self.children = children
+        self.parents = [p for p in parents if not isinstance(p, Collection)]
+        self.collection_parents = [p for p in parents if isinstance(p, Collection)]
+        self.children = [c for c in children if not isinstance(c, Collection)]
+        self.collection_children = [c for c in children if isinstance(c, Collection)]
+        self.exclude = [e for e in exclude if not isinstance(e, Collection)]
+        self.exclude_collection = [e for e in exclude if isinstance(e, Collection)]
         self.out = CypherVariable(labels[0])
-        super().__init__(inputs+parents+children, [self.out], [])
+        super().__init__(inputs+parents+children+exclude, [self.out], [])
 
     def to_cypher(self):
         labels = ':'.join(self.labels)
         match = f'({self.out}: {labels} {self.properties})'
-        wheres = ', '.join([f'({self.out})<--({p})' for p in self.parents] +
+        extras = ', '.join([f'({self.out})<--({p})' for p in self.parents] +
                             [f'({self.out})-->({c})' for c in self.children])
+        wheres = ' AND '.join([f"({self.out} <> {e})" for e in self.exclude] +
+                              [f"({self.out} <> {e})" for e in self.exclude_collection] +
+                              [f"all(p in {p} where exists( ({self.out})<--(p) ))" for p in self.collection_parents] +
+                              [f"all(c in {c} where exists( ({self.out})-->(c) ))" for c in self.collection_children])
+        if len(extras):
+            extras = f',{extras}'
         if len(wheres):
-            wheres = f'\n,{wheres}'
-        return f'WITH * OPTIONAL MATCH {match}{wheres}'
+            wheres = f' WHERE {wheres}'
+        return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
 
 
 class PropertyOverlapError(Exception):
@@ -479,7 +489,8 @@ def match_relationship(parent, child, reltype, properties, optional=False):
 
 
 def match_pattern_node(labels: List[str], properties: Dict[str, Union[str, int, float, CypherVariable]] = None,
-                       parents: List[CypherVariable] = None, children: List[CypherVariable] = None):
+                       parents: List[CypherVariable] = None, children: List[CypherVariable] = None,
+                       exclude: List[CypherVariable] = None):
     query = CypherQuery.get_context()  # type: CypherQuery
     if properties is None:
         properties = {}
@@ -487,7 +498,9 @@ def match_pattern_node(labels: List[str], properties: Dict[str, Union[str, int, 
         parents = []
     if children is None:
         children = []
-    statement = MatchPatternNode(labels, properties, parents, children)
+    if exclude is None:
+        exclude = []
+    statement = MatchPatternNode(labels, properties, parents, children, exclude)
     query.add_statement(statement)
     return statement.out
 

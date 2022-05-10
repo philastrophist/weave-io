@@ -32,7 +32,6 @@ class L1SingleSpectrum(L1Spectrum, Single):
     singular_name = 'l1single_spectrum'
     plural_name = 'l1single_spectra'
     parents = L1Spectrum.parents + [RawSpectrum, FibreTarget]
-    version_on = ['raw_spectrum', 'fibre_target']
     factors = L1Spectrum.factors + [
         'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
@@ -53,7 +52,6 @@ class L1OBStackSpectrum(L1StackSpectrum, OBStack):
     singular_name = 'l1obstack_spectrum'
     plural_name = 'l1obstack_spectra'
     parents = L1StackSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
-    version_on = ['l1single_spectra']
 
 
 class L1SuperstackSpectrum(L1StackSpectrum, Superstack):
@@ -63,7 +61,6 @@ class L1SuperstackSpectrum(L1StackSpectrum, Superstack):
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
     parents = L1StackSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
-    # version_on = ['l1single_spectra', 'fibre_target']
 
 
 class L1SupertargetSpectrum(L1Spectrum, Supertarget):
@@ -73,7 +70,6 @@ class L1SupertargetSpectrum(L1Spectrum, Supertarget):
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
     parents = L1Spectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
-    # version_on = ['l1single_spectra', 'weave_target']
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

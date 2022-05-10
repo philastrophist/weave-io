@@ -521,7 +521,9 @@ class Graphable(metaclass=GraphableMeta):
         return cls(do_not_create=True, **kwargs)
 
     @classmethod
-    def find(cls, anonymous_children=None, anonymous_parents=None, **kwargs):
+    def find(cls, anonymous_children=None, anonymous_parents=None,
+             exclude=None,
+             **kwargs):
         parent_names = [i.name if isinstance(i, Multiple) else i.singular_name for i in cls.parents]
         parents = [] if anonymous_parents is None else anonymous_parents
         anonymous_children = [] if anonymous_children is None else anonymous_children
@@ -539,7 +541,7 @@ class Graphable(metaclass=GraphableMeta):
             else:
                 raise ValueError(f"Unknown name {k} for {cls}")
         node = match_pattern_node(labels=cls.neotypes, properties=factors,
-                                  parents=parents, children=anonymous_children)
+                                  parents=parents, children=anonymous_children, exclude=exclude)
         obj = cls.without_creation(**kwargs)
         obj.node = node
         return obj
