@@ -186,6 +186,7 @@ class SurveyTarget(Hierarchy):
     """
     A target which was submitted by a subprogramme contained within a catalogue. This is likely
     the target you want if you not linking observations between subprogrammes.
+    targname is optional for MOS observations
     """
     parents = [SurveyCatalogue, WeaveTarget]
     factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse', 'targprog',
