@@ -10,27 +10,38 @@ import pandas as pd
 from py2neo.cypher import Cursor
 from tqdm import tqdm
 
-from weaveio.readquery.utilities import safe_name
 
 
-class Row(AstropyRow):
+class ColnameParser:
+    def __init__(self, parent, partial_colname: str):
+        self.parent = parent
+        self.partial_colname = partial_colname
+
+    def __getattr__(self, colname):
+        return self.parent.__getattr__(self.partial_colname + '.' + colname)
+
+
+class DotHandlerMixin:
     def __getattr__(self, attr):
         if attr in self.colnames:
             return self[attr]
-        return super(Row, self).__getattr__(attr)
+        if any(colname.startswith(attr) for colname in self.colnames if '.' in colname):
+            return ColnameParser(self, attr)
+        return super(DotHandlerMixin, self).__getattr__(attr)
 
 
-class Table(AstropyTable):  # allow using `.` to access columns
+class Row(DotHandlerMixin, AstropyRow):
+    pass
+
+
+class Table(DotHandlerMixin, AstropyTable):  # allow using `.` to access columns
     Row = Row
 
-    def __getattr__(self, attr):
-        if attr in self.colnames:
-            return self[attr]
-        return super(Table, self).__getattr__(attr)
 
 class ArrayHolder:
     def __init__(self, array):
         self.array = array
+
 
 def vstack(tables: List[Union[Table, Row]], *args, **kwargs) -> Table:
     shapes = zip(*[[col.shape for col in table] for table in tables])
@@ -119,7 +130,7 @@ class RowParser(FileHandler):
                     if isinstance(value[0], list):
                         value = value[0]
                     value = self.read(*value)
-            name = safe_name(cypher_name) if name is None or name == 'None' else name
+            name = cypher_name if name is None or name == 'None' else name
             mask = value is None or np.size(value) == 0
             try:
                 mask |= np.all(~np.isfinite(value))

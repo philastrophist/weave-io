@@ -28,6 +28,20 @@ class GenericObjectQuery(BaseQuery):
 class PathError(SyntaxError):
     pass
 
+def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
+    for i, (given_name, attr) in enumerate(zip(given_names, attrs)):
+        if given_name is None:
+            given_names[i] = attr._factor_name
+    if len(set(given_names)) == len(given_names):
+        return given_names
+    names = [a._factor_name for a in attrs]
+    if len(set(names)) == len(names):
+        return names
+    for i, n in enumerate(names):
+        if names.count(n) > 1:
+            j = names[:i].count(n)
+            names[i] = f"{n}{j}"
+    return [a._factor_name for a in attrs]  # todo: this could be better
 
 class ObjectQuery(GenericObjectQuery):
     def _precompile(self) -> 'TableQuery':
@@ -157,28 +171,23 @@ class ObjectQuery(GenericObjectQuery):
         obj['factora', 'obj.factorb']
         """
         attrs = []
-        names = []
         for item in items:
             if isinstance(item, ObjectQuery):
                 item = item._precompile()
             if isinstance(item, AttributeQuery):
                 attrs.append(item)
-                names.append(f"{item._names[0]}")
             else:
                 new = self.__getitem__(item)
                 if isinstance(new, ObjectQuery):
                     new = new._precompile()
                 if isinstance(new, list):
                     for a in new:
-                        if a._factor_name not in names or a._factor_name is None:
-                            names.append(f"{a._names[0]}")
-                            attrs.append(a)
-                elif new._factor_name not in names or new._factor_name is None:
-                    names.append(f"{new._names[0]}")
-                    attrs.append(new)
+                        attrs.append(a)
+                attrs.append(new)
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals, dropna=[self._node])
+        names = process_names([i if isinstance(i, str) else None for i in items], attrs)
         return TableQuery._spawn(self, n, names=names, is_products=is_products, attrs=attrs)
 
     def _traverse_to_relative_object(self, obj, index):
@@ -260,19 +269,12 @@ class ObjectQuery(GenericObjectQuery):
                 except (KeyError, ValueError):  # assume its an index of some kind
                     singular = self._data.singular_name(item)
                     if singular in self._data.relative_names:  # if it's a relative id
-                        if by_getitem:  # filter by relative relation: ob.runs['red'] gets red runs
-                            if singular != item:
-                                raise SyntaxError(f"Filtering by relative index `{item}` must use its singular name `{singular}`")
-                            print(self._data.relative_names[singular])
-                            if self._previous._obj not in self._data.relative_names[singular]:
-                                raise PathError(f"There are no `{singular}` `{self._obj}` of `{self._previous._obj}`")
-                            return self._previous._traverse_to_relative_object(self._obj, item)
-                        else:  # l1singlespectrum.adjunct gets the adjunct spectrum of a spectrum
-                            try:
-                                relation = self._data.relative_names[singular][self._obj]
-                            except KeyError:
-                                raise PathError(f"`{self._obj}` has no relative relation called `{singular}`")
-                            return self._traverse_to_relative_object(relation.node.__name__, item)
+                        # l1singlespectrum.adjunct gets the adjunct spectrum of a spectrum
+                        try:
+                            relation = self._data.relative_names[singular][self._obj]
+                        except KeyError:
+                            raise PathError(f"`{self._obj}` has no relative relation called `{singular}`")
+                        return self._traverse_to_relative_object(relation.node.__name__, item)
                     elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:

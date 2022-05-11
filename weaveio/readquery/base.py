@@ -1,6 +1,7 @@
 import logging
 import time
 from contextlib import contextmanager
+from copy import copy
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
 from .parser import QueryGraph
@@ -57,7 +58,8 @@ class BaseQuery:
             return self._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()})
 
     def _iterate(self, skip=0, limit=None):
-        yield from self._post_process_row(self._data.rowparser.iterate_cursor(self._execute(skip, limit), list(map(safe_name, self._names)), self._is_products))
+        yield from self._post_process_row(self._data.rowparser.iterate_cursor(self._execute(skip, limit), self._names, self._is_products))
+        yield from self._post_process_row(self._data.rowparser.iterate_cursor(self._execute(skip, limit), self._names, self._is_products))
 
     def __iter__(self):
         yield from self._iterate()
@@ -65,7 +67,7 @@ class BaseQuery:
     def _to_table(self, skip=0, limit=None) -> Table:
         with logtime('total streaming'):
             cursor = self._execute(skip, limit)
-            return self._data.rowparser.parse_to_table(cursor, list(map(safe_name, self._names)), self._is_products)
+            return self._data.rowparser.parse_to_table(cursor, self._names, self._is_products)
 
     def _post_process_table(self, result):
         if self.one_column:
@@ -135,8 +137,9 @@ class BaseQuery:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
         hs = [h for H in hs for h in self._data.expand_template_object(H) if self._get_path_to_object(h, False)[1]]
         if len(hs) > 1:
-            raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {hs}."
-                                     f" Please be specific e.g. `{hs.pop()}.{maybe_attribute}`")
+            names = [self._data.singular_name(h) for h in hs]
+            raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
+                                     f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
         obj = hs.pop()
         if self._obj is None:
             return obj, True, False
