@@ -36,12 +36,13 @@ import numpy as np
 from weaveio.config_tables import progtemp_config
 from weaveio.hierarchy import Hierarchy, Multiple, OneOf, Optional
 
+class ArrayHolder(Hierarchy):
+    is_template = True
 
-class WavelengthHolder(Hierarchy):
+class WavelengthHolder(ArrayHolder):
     singular_name = 'wavelength_holder'
     factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
-
 
 class Measurement(Hierarchy):
     factors = ['value', 'error']
