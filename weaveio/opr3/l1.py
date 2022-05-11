@@ -31,7 +31,7 @@ class L1SingleSpectrum(L1Spectrum, Single):
     """
     singular_name = 'l1single_spectrum'
     plural_name = 'l1single_spectra'
-    parents = L1Spectrum.parents + [RawSpectrum, FibreTarget]
+    parents = L1Spectrum.parents + [RawSpectrum, FibreTarget, ArmConfig]
     factors = L1Spectrum.factors + [
         'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
