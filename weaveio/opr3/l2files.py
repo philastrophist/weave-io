@@ -13,8 +13,8 @@ from weaveio.graph import Graph
 from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
 from weaveio.opr3.hierarchy import APS, FibreTarget, OB, OBSpec, Exposure, WeaveTarget, Fibre, _predicate, RawSpectrum, Run, ArmConfig
 from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum
-from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2Superstack, L2Supertarget, RedrockIngestedSpectrum, RVSpecFitIngestedSpectrum, FerreIngestedSpectrum, PPXFIngestedSpectrum, GandalfIngestedSpectrum, IngestedSpectrum, Fit, L2ModelSpectrum, RedrockFit, RedrockModelSpectrum, \
-    RVSpecFitModelSpectrum, RVSpecFitVersion, RVSpecFit, FerreFit, FerreModelSpectrum, FerreVersion, PPXFModelSpectrum, PPXFFit, PPXFVersion, GandalfFit, GandalfModelSpectrum, GandalfVersion, RedrockVersion
+from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2Superstack, L2Supertarget, RedrockIngestedSpectrum, RVSpecFitIngestedSpectrum, FerreIngestedSpectrum, PPXFIngestedSpectrum, GandalfIngestedSpectrum, IngestedSpectrum, Fit, ModelSpectrum, Redrock, RedrockModelSpectrum, \
+    RVSpecfitModelSpectrum, RVSpecfitVersion, RVSpecfit, Ferre, FerreModelSpectrum, FerreVersion, PPXFModelSpectrum, PPXF, PPXFVersion, Gandalf, GandalfModelSpectrum, GandalfVersion, RedrockVersion
 from weaveio.opr3.l1files import L1File, L1SuperstackFile, L1OBStackFile, L1SingleFile, L1SupertargetFile
 from weaveio.writequery import CypherData, groupby
 from weaveio.writequery.base import CypherFindReplaceStr
@@ -40,7 +40,7 @@ class L2File(File):
     is_template = True
     match_pattern = '.*APS.fits'
     antimatch_pattern = '.*cube.*'
-    software_versions = [RedrockVersion, PPXFVersion, GandalfVersion, FerreVersion, RVSpecFitVersion]
+    software_versions = [RedrockVersion, PPXFVersion, GandalfVersion, FerreVersion, RVSpecfitVersion]
     parents = [Multiple(L1File, 2, 3), APS, Multiple(L2)]
     children = []
     produces = software_versions
@@ -142,14 +142,14 @@ class L2File(File):
 
     @classmethod
     def read_l2product_table(cls, this_fname, spectrum_hdu, data_hdu, parent_l1filenames,
-                               IngestedSpectrumClass: Type[IngestedSpectrum],
-                               FitClass: Type[Fit],
-                               ModelSpectrumClass: Type[L2ModelSpectrum],
-                               fit_version,
-                               uses_combined_spectrum: Optional[bool],
-                               uses_disjoint_spectra: bool,
-                               formatter: str,
-                               aps):
+                             IngestedSpectrumClass: Type[IngestedSpectrum],
+                             FitClass: Type[Fit],
+                             ModelSpectrumClass: Type[ModelSpectrum],
+                             fit_version,
+                             uses_combined_spectrum: Optional[bool],
+                             uses_disjoint_spectra: bool,
+                             formatter: str,
+                             aps):
         if uses_combined_spectrum is None:
             uses_combined_spectrum = any('_C' in i for i in spectrum_hdu.data.names)
         safe_table = filter_products_from_table(Table(data_hdu.data), 10)
@@ -214,23 +214,23 @@ class L2File(File):
         hdu_nodes, file, astropy_hdus = cls.read_hdus(directory, fname, l1files=l1files, aps=aps, **hierarchies)
         fnames = cls.get_l1_filenames(header)
         cls.read_l2product_table(path, astropy_hdus[4], astropy_hdus[1], fnames,
-                                 RedrockIngestedSpectrum, RedrockFit,
+                                 RedrockIngestedSpectrum, Redrock,
                                  RedrockModelSpectrum, RedrockVersion.from_header(header),
                                  None, True, 'RR', aps)
         cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
-                                 RVSpecFitIngestedSpectrum, RVSpecFit,
-                                 RVSpecFitModelSpectrum, RVSpecFitVersion.from_header(header),
+                                 RVSpecFitIngestedSpectrum, RVSpecfit,
+                                 RVSpecfitModelSpectrum, RVSpecfitVersion.from_header(header),
                                  None, True, 'RVS', aps)
         cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
-                                 FerreIngestedSpectrum, FerreFit,
+                                 FerreIngestedSpectrum, Ferre,
                                  FerreModelSpectrum, FerreVersion.from_header(header),
                                  None, True, 'FR', aps)
         cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
-                                 PPXFIngestedSpectrum, PPXFFit,
+                                 PPXFIngestedSpectrum, PPXF,
                                  PPXFModelSpectrum, PPXFVersion.from_header(header),
                                  True, False, 'PPXF', aps)
         cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
-                                 GandalfIngestedSpectrum, GandalfFit,
+                                 GandalfIngestedSpectrum, Gandalf,
                                  GandalfModelSpectrum, GandalfVersion.from_header(header),
                                  True, False, 'GAND', aps)
 
@@ -250,7 +250,7 @@ class L2SingleFile(L2File):
 class L2OBStackFile(L2File):
     singular_name = 'l2obstack_file'
     children = []
-    parents = [Multiple(L1SingleFile, 0, 2, constrain=(OB,)), Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS, Multiple(L2OBStack)]
+    parents = [Multiple(L1OBStackFile, 1, 3, constrain=(OB,)), APS, Multiple(L2OBStack)]
 
     @classmethod
     def find_shared_hierarchy(cls, path) -> Dict:
