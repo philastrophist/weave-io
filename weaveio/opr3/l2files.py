@@ -186,15 +186,15 @@ class L2File(File):
                     if uses_disjoint_spectra:  # as well, so the colnames differentiate with a `C`
                         column_name += '_C'
                     combined.attach_product(product, spectrum_hdu, nrow, column_name)
-                combined_model = ModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=individual)
+                combined_model = CombinedModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=combined)
                 for product in combined_model.products:
                     combined_model.attach_product(product, spectrum_hdu, nrow, f'{product}_{formatter}_C')
                 d['combined_ingested_spectrum'] = combined
-                d['combined_model_spectrum'] = CombinedModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=combined)
-            fit = FitClass(ingested_spectra=individuals, ingested_combined_spectrum=combined,
-                           model_spectra=individual_models, model_combined_spectrum=combined_model,
+                d['combined_model_spectrum'] = combined_model
+            fit = FitClass(model_spectra=individual_models, model_combined_spectrum=combined_model,
                            tables=CypherData(safe_table)[nrow])
-            return fit
+        fits, l1s = collect(fit, l1spectra)
+        return fits, l1s
 
 
     @classmethod
@@ -213,26 +213,27 @@ class L2File(File):
         hierarchies = cls.find_shared_hierarchy(path)
         astropy_hdus = fits.open(path)
         fnames = cls.get_l1_filenames(header)
-        cls.read_l2product_table(path, astropy_hdus[4], astropy_hdus[1], fnames,
+        fit_rows, l1s = cls.read_l2product_table(path, astropy_hdus[4], astropy_hdus[1], fnames,
                                  RedrockIngestedSpectrum, RedrockCombinedIngestedSpectrum, Redrock,
                                  RedrockModelSpectrum, RedrockCombinedModelSpectrum,
                                  None, True, 'RR', aps)
-        cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
+        fit_rows, _ = cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
                                  IngestedSpectrum, CombinedIngestedSpectrum, RVSpecfit,
                                  ModelSpectrum, CombinedModelSpectrum,
                                  None, True, 'RVS', aps)
-        cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
+        fit_rows, _ = cls.read_l2product_table(path, astropy_hdus[5], astropy_hdus[2], fnames,
                                  IngestedSpectrum, CombinedIngestedSpectrum, Ferre,
                                  ModelSpectrum, CombinedModelSpectrum,
                                  None, True, 'FR', aps)
-        cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
+        fit_rows, _ = cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
                                  None, LogarithmicCombinedIngestedSpectrum, PPXF,
                                  None, LogarithmicCombinedModelSpectrum,
                                  True, False, 'PPXF', aps)
-        cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
+        fit_rows, _ = cls.read_l2product_table(path, astropy_hdus[6], astropy_hdus[3], fnames,
                                  None, GandalfIngestedSpectrum, Gandalf,
                                  None, GandalfModelSpectrum,
                                  True, False, 'GAND', aps)
+        cls.L2(l1spectra=l1s, )
         hdu_nodes, file, astropy_hdus = cls.read_hdus(directory, fname, l1files=l1files, aps=aps, **hierarchies)
 
 
