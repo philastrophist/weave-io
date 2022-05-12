@@ -1,5 +1,5 @@
 import sys
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from pathlib import Path
 from typing import Union, List, Dict, Type, Set, Tuple, Optional
 
@@ -16,9 +16,10 @@ from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy
 from weaveio.opr3.hierarchy import APS, OB, OBSpec, Exposure, WeaveTarget, _predicate, Run, ArmConfig, FibreTarget, Fibre
 from weaveio.opr3.l1 import L1Spectrum
 from weaveio.opr3.l2 import L2, L2Single, L2OBStack, L2Superstack, L2Supertarget, IngestedSpectrum, Fit, ModelSpectrum, Redrock, \
-    RVSpecfit, Ferre, PPXF, Gandalf, GandalfModelSpectrum, CombinedIngestedSpectrum, CombinedModelSpectrum, Template, RedshiftArray
+    RVSpecfit, Ferre, PPXF, Gandalf, GandalfModelSpectrum, CombinedIngestedSpectrum, CombinedModelSpectrum, Template, RedshiftArray, IvarIngestedSpectrum, IvarCombinedIngestedSpectrum, MaskedCombinedIngestedSpectrum, GandalfEmissionModelSpectrum, GandalfCleanModelSpectrum, \
+    GandalfCleanIngestedSpectrum
 from weaveio.opr3.l1files import L1File, L1SuperstackFile, L1OBStackFile, L1SingleFile, L1SupertargetFile
-from weaveio.writequery import CypherData
+from weaveio.writequery import CypherData, CypherVariable
 from weaveio.writequery.base import CypherFindReplaceStr, CypherAppendStr
 
 
@@ -40,6 +41,7 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
 
 
 FitSpecs = namedtuple('FitSpecs', ['individuals', 'individual_models', 'combined', 'combined_model', 'arm_codes', 'nrow'])
+GandalfSpecs = namedtuple('GandalfSpecs', ['model', 'ingested', 'emission', 'clean_model', 'clean_ingested', 'nrow'])
 
 
 class L2File(File):
@@ -156,7 +158,7 @@ class L2File(File):
     @classmethod
     def get_all_fibreids(cls, path):
         aps_ids = set()
-        for hdu in fits.open(path):
+        for hdu in fits.open(path)[1:]:
             try:
                 aps_ids |= set(hdu.data['APS_ID'].tolist())
             except KeyError:
@@ -174,7 +176,7 @@ class L2File(File):
             with unwind(specs.individuals, specs.arm_codes) as (spectrum, arm_code):
                 spectrum = IngestedSpectrum.from_cypher_variable(spectrum)
                 for product in spectrum.products:
-                    column_name = CypherAppendStr(f'{names[product]}_{formatter}_', arm_code)
+                    column_name = CypherAppendStr(f'{names.get(product, product)}_{formatter}_', arm_code)
                     spectrum.attach_product(product, hdu, column_name=column_name, index=specs.nrow, ignore_missing=True)
         if specs.combined_model is not None:
             spectrum = CombinedIngestedSpectrum.from_cypher_variable(specs.combined_model)
@@ -183,8 +185,14 @@ class L2File(File):
         if specs.combined is not None:
             spectrum = CombinedModelSpectrum.from_cypher_variable(specs.combined_model)
             for product in spectrum.products:
-                column_name = f'{names[product]}_{formatter}_C'
+                column_name = f'{names.get(product, product)}_{formatter}_C'
                 spectrum.attach_product(product, hdu, column_name=column_name, index=specs.nrow, ignore_missing=True)
+
+    @classmethod
+    def attach_products_to_gandalf_extra_spectra(cls, specs: GandalfSpecs, hdu):
+        specs.emission.attach_product('flux', hdu, column_name=f'emission_GAND', index=specs.nrow, ignore_missing=True)
+        specs.clean_model.emission.attach_product('flux', hdu, column_name=f'model_GAND', index=specs.nrow, ignore_missing=True)
+        specs.clean_ingested.emission.attach_product('flux', hdu, column_name=f'model_clean_GAND', index=specs.nrow, ignore_missing=True)
 
 
     @classmethod
@@ -201,8 +209,18 @@ class L2File(File):
                 tables=row, **templates)
 
     @classmethod
-    def read_l2product_table(cls, this_fname, spectrum_hdu, safe_table,
-                             fibreids: List,
+    def make_gandalf_structure(cls, specs, row):
+        model, ingested = specs.combined_model, specs.combined
+        emission = GandalfEmissionModelSpectrum(gandalf_model_spectrum=model)
+        clean_model = GandalfCleanModelSpectrum(gandalf_model_spectrum=model)
+        clean_ingested = GandalfCleanIngestedSpectrum(gandalf_ingested_spectrum=ingested)
+        gandalf = Gandalf(combined_model_spectrum=specs.combined_model, tables=row)
+        return gandalf, GandalfSpecs(model=model, ingested=ingested, emission=emission, clean_model=clean_model,
+                                     clean_ingested=clean_ingested, nrow=specs.nrow)
+
+    @classmethod
+    def read_l2product_table(cls, this_fname, spectrum_hdu, safe_table: CypherVariable,
+                             nrow_from_fibreid: CypherVariable,
                              parent_l1filenames,
                              IngestedSpectrumClass: Optional[Type[IngestedSpectrum]],
                              CombinedIngestedSpectrumClass: Optional[Type[CombinedIngestedSpectrum]],
@@ -213,9 +231,9 @@ class L2File(File):
                              uses_combined_spectrum: Optional[bool],
                              formatter: str,
                              aps):
+        # if the joint spectrum is not available, we dont read it, obvs
         if uses_combined_spectrum is None:
-            uses_combined_spectrum = any('_C' in i for i in spectrum_hdu.data.names)  # allow redshift
-        nrow_from_fibreid = CypherData({fibreid: np.where(safe_table['APS_ID'] == fibreid)[0] for fibreid in fibreids})
+            uses_combined_spectrum = any('_C' in i for i in spectrum_hdu.data.names)
         fibreid = Fibre.find(anonymous_children=[fibretarget])['id']
         nrow = nrow_from_fibreid[fibreid]
         with unwind(CypherData(parent_l1filenames)) as l1_fname:
@@ -234,8 +252,8 @@ class L2File(File):
             l1files, l1spectra, arm_codes = collect(l1file, l1spectrum, arm_code)
             individuals, individual_models = None, None
         if uses_combined_spectrum:
-            combined = CombinedIngestedSpectrumClass(sourcefile=this_fname, nrow=nrow, l1spectra=l1spectra, aps=aps)
-            combined_model = CombinedModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=combined)
+            combined = CombinedIngestedSpectrumClass(sourcefile=this_fname, nrow=nrow, l1spectra=l1spectra, arm_code='C', aps=aps)
+            combined_model = CombinedModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=combined, arm_code='C')
         else:
             combined, combined_model = None, None
         return FitSpecs(individuals, individual_models, combined, combined_model, arm_codes, nrow), safe_table[nrow]
@@ -251,62 +269,71 @@ class L2File(File):
         aps = APS(version=aps)
         hierarchies = cls.find_shared_hierarchy(path)
         astropy_hdus = fits.open(path)
-        fnames = cls.get_l1_filenames(header)
+        fnames = [l1.fname for l1 in l1files]
+        assert len(fnames) > 1, f"{fname} has only one L1 file"
         fibreids = cls.get_all_fibreids(path)
         safe_tables = {}
+        safe_cypher_tables = {}
+        nrow_from_fibreids = {}
         for i, hdu in enumerate(astropy_hdus[1:4], 1):
-            safe_tables[i] = CypherData(filter_products_from_table(Table(hdu.data), MAX_REDSHIFT_GRID_LENGTH))
+            safe_tables[i] = filter_products_from_table(Table(hdu.data), MAX_REDSHIFT_GRID_LENGTH)
+            safe_cypher_tables[i] =  CypherData(safe_tables[i])
+            nrow_from_fibreids[i] = CypherData({fibreid: np.where(safe_tables[i]['APS_ID'] == fibreid)[0] for fibreid in fibreids})
         # get a list of all fibretargets in this L2 data product file
         with unwind(fnames[:1]) as l1f:
             l1file = L1File.find(fname=l1f)
             l1spectrum = L1Spectrum.find(anonymous_parents=[l1file])
             fibretarget = FibreTarget.find(anonymous_children=[l1spectrum])
-            redrock_specs, row = cls.read_l2product_table(path, astropy_hdus[4], safe_tables[1], fibreids,
-                                             fnames, IngestedSpectrum,
-                                             CombinedIngestedSpectrum, fibretarget,
-                                             ModelSpectrum, CombinedModelSpectrum,
-                                             None, True, 'RR', aps)
 
+            redrock_specs, row = cls.read_l2product_table(path, astropy_hdus[4], safe_cypher_tables[1], nrow_from_fibreids[1],
+                                             fnames, IvarIngestedSpectrum,
+                                             IvarCombinedIngestedSpectrum, fibretarget,
+                                             ModelSpectrum, CombinedModelSpectrum,
+                                             True, None, 'RR', aps)
             redrock = cls.make_redrock_fit(redrock_specs, row)
 
-            rvs_specs, row = cls.read_l2product_table(path, astropy_hdus[5], safe_tables[2], fibreids,
+            rvs_specs, row = cls.read_l2product_table(path, astropy_hdus[5], safe_cypher_tables[2], nrow_from_fibreids[2],
                                                                  fnames, IngestedSpectrum,
                                                                  CombinedIngestedSpectrum, fibretarget,
                                                                  ModelSpectrum, CombinedModelSpectrum,
-                                                                 None, True, 'RVS', aps)
+                                                                 True, None, 'RVS', aps)
             rvspecfit = RVSpecfit(model_spectra=rvs_specs.individual_models,
                                   combined_model_spectrum=rvs_specs.combined_model, tables=row)
 
-            ferre_specs, row = cls.read_l2product_table(path, astropy_hdus[5], safe_tables[2], fibreids,
+            ferre_specs, row = cls.read_l2product_table(path, astropy_hdus[5], safe_cypher_tables[2], nrow_from_fibreids[2],
                                                          fnames, IngestedSpectrum,
                                                          CombinedIngestedSpectrum, fibretarget,
                                                          ModelSpectrum, CombinedModelSpectrum,
-                                                         None, True, 'FR', aps)
+                                                         True, None, 'FR', aps)
             ferre = Ferre(model_spectra=ferre_specs.individual_models,
                           combined_model_spectrum=ferre_specs.combined_model, tables=row)
 
-            ppxf_specs, row = cls.read_l2product_table(path, astropy_hdus[6], safe_tables[3], fibreids,
+            ppxf_specs, row = cls.read_l2product_table(path, astropy_hdus[6], safe_cypher_tables[3], nrow_from_fibreids[3],
                                                        fnames, None,
-                                                       CombinedIngestedSpectrum, fibretarget,
+                                                       MaskedCombinedIngestedSpectrum, fibretarget,
                                                        None, CombinedModelSpectrum,
-                                                       True, False, 'PPXF', aps)
+                                                       False, True, 'PPXF', aps)
             ppxf = PPXF(combined_model_spectrum=ppxf_specs.combined_model, tables=row)
 
-            specs, row = cls.read_l2product_table(path, astropy_hdus[6], safe_tables[3], fibreids,
+            gandalf_specs, row = cls.read_l2product_table(path, astropy_hdus[6], safe_cypher_tables[3], nrow_from_fibreids[3],
                                                              fnames, None,
-                                                             CombinedIngestedSpectrum, fibretarget,
+                                                             MaskedCombinedIngestedSpectrum, fibretarget,
                                                              None, GandalfModelSpectrum,
-                                                             True, False, 'GAND', aps)
-            gandalf, row = Gandalf(combined_model_spectrum=specs.combined_model, tables=row)
+                                                             False, True, 'GAND', aps)
+            gandalf, gandalf_extra_specs = cls.make_gandalf_structure(gandalf_specs, row)
+
         with unwind(fnames) as l1file_name:
             l1file = L1File.find(fname=l1file_name)
             l1spectrum = L1Spectrum.find(anonymous_parents=[l1file, fibretarget])
         l1spectra = collect(l1spectrum)
         l2 = cls.L2(l1spectra=l1spectra, aps=aps, redrock=redrock, rvspecfit=rvspecfit, ferre=ferre, ppxf=ppxf, gandalf=gandalf)
         hdu_nodes, file, _ = cls.read_hdus(directory, fname, l2=l2, l1files=l1files, aps=aps, **hierarchies)
-        names = {'logwvl': 'loglam', 'wvl': 'lambda', 'flux': 'flux', 'ivar': 'ivar', 'goodpix': 'goodpix'}
-        for acronym, spec in zip(['RR', 'RVS', 'FR', 'PPXF', 'GAND'], [redrock_specs, rvs_specs, ferre_specs, ppxf_specs, specs]):
-            cls.attach_products_to_spectra(spec, acronym, hdu_nodes, names)
+        names = {'logwvl': 'loglam', 'wvl': 'lambda'}
+        for acronym, spec, hdu in zip(['RR', 'RVS', 'FR', 'PPXF', 'GAND'],
+                                 [redrock_specs, rvs_specs, ferre_specs, ppxf_specs, gandalf_specs],
+                                 [astropy_hdus[4], astropy_hdus[5], astropy_hdus[5], astropy_hdus[6], astropy_hdus[6]]):
+            cls.attach_products_to_spectra(spec, acronym, hdu, names)
+        cls.attach_products_to_gandalf_extra_spectra(gandalf_extra_specs, astropy_hdus[6])
 
 
 class L2SingleFile(L2File):

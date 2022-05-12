@@ -29,18 +29,31 @@ class IngestedSpectrum(Spectrum1D):
     factors = ['sourcefile', 'nrow', 'name', 'arm_code']
     parents = [L1Spectrum, APS]
     identifier_builder = ['sourcefile', 'nrow', 'l1_spectrum', 'aps']
-    products = [ 'flux', 'error', 'wvl', 'ivar', 'logwvl', 'goodpix']
+    products = ['flux', 'error', 'wvl']
+
+
+class IvarIngestedSpectrum(IngestedSpectrum):
+    products = ['flux', 'ivar', 'wvl']
 
 
 class CombinedIngestedSpectrum(IngestedSpectrum):
     parents = [Multiple(L1Spectrum, 1, 3), APS]
+    identifier_builder = ['sourcefile', 'nrow', 'l1_spectra', 'aps']
 
 
-class ModelSpectrum(Spectrum):
+class IvarCombinedIngestedSpectrum(CombinedIngestedSpectrum):
+    products = ['flux', 'ivar', 'wvl']
+
+
+class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
+    products = ['flux', 'error', 'logwvl', 'goodpix']
+
+
+class ModelSpectrum(Spectrum1D):
     is_template = True
-    factors = ['sourcefile', 'nrow']
-    identifier_builder = ['sourcefile', 'nrow']
-    parents = [Optional(IngestedSpectrum, one2one=True)]
+    factors = ['sourcefile', 'nrow', 'arm_code']
+    parents = [OneOf(IngestedSpectrum, one2one=True)]
+    identifier_builder = ['sourcefile', 'nrow', 'arm_code']
     products = ['flux']
 
 
@@ -48,10 +61,25 @@ class CombinedModelSpectrum(ModelSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
 
 
-class GandalfModelSpectrum(CombinedModelSpectrum):
-    children = [OneOf(ModelSpectrum, idname='clean', one2one=True),
-                OneOf(ModelSpectrum, idname='emission', one2one=True)]
+# This allows us to use 'clean' to talk about the clean model or clean spectrum
+# IngestedSpectrum->ModelSpectrum->CleanModelSpectrum
+# IngestedSpectrum->CleanIngestedSpectrum
 
+class GandalfSpectrum(Spectrum1D):
+    is_template = True
+
+
+class GandalfModelSpectrum(CombinedModelSpectrum, GandalfSpectrum):
+    pass
+
+class GandalfEmissionModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
+    parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+
+class GandalfCleanModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
+    parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+
+class GandalfCleanIngestedSpectrum(GandalfModelSpectrum, GandalfSpectrum):
+    parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
 
 
 class Fit(Hierarchy):
@@ -133,6 +161,7 @@ class L2Single(L2Product, Single):
     """
     singular_name = 'l2single'
     parents = L2Product.parents[1:] + [Multiple(L1SingleSpectrum, 2, 2, constrain=(FibreTarget, Exposure), one2one=True)]
+    identifier_builder = ['l1single_spectra', 'fibre_target', 'exposure']
 
 
 class L2OBStack(L2Product, OBStack):
@@ -142,6 +171,7 @@ class L2OBStack(L2Product, OBStack):
     """
     singular_name = 'l2obstack'
     parents = L2Product.parents[1:] + [Multiple(L1OBStackSpectrum, 2, 2, constrain=(FibreTarget, OB), one2one=True)]
+    identifier_builder = ['l1obstack_spectra', 'fibre_target', 'ob']
 
 
 class L2Superstack(L2Product, Superstack):
@@ -151,6 +181,7 @@ class L2Superstack(L2Product, Superstack):
     """
     singular_name = 'l2superstack'
     parents = L2Product.parents[1:] + [Multiple(L1StackSpectrum, 2, 3, constrain=(FibreTarget, OBSpec))]
+    identifier_builder = ['l1stack_spectra', 'fibre_target', 'obspec']
 
 
 class L2Supertarget(L2Product, Supertarget):
@@ -160,6 +191,7 @@ class L2Supertarget(L2Product, Supertarget):
     """
     singular_name = 'l2supertarget'
     parents = L2Product.parents[1:] + [Multiple(L1SupertargetSpectrum, 2, 3, constrain=(WeaveTarget,), one2one=True)]
+    identifier_builder = ['l1supertarget_spectra', 'weave_target']
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

@@ -481,9 +481,10 @@ class Graphable(metaclass=GraphableMeta):
                 return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT ({key}) IS NODE KEY'
             elif cls.has_rel_identity():
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
-                if not len(key):
-                    raise TypeError(f"No factors are present in the identity builder of {name} to make an index from ")
-                return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
+                # if not len(key):
+                #     raise TypeError(f"No factors are present in the identity builder of {name} to make an index from ")
+                if len(key):
+                    return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
         elif cls.indexes:
             key = ', '.join([f'n.{i}' for i in cls.indexes])
             return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
