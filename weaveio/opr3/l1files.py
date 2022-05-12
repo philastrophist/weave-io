@@ -157,7 +157,7 @@ class RawFile(HeaderFibinfoFile):
         adjunct_run = hiers['adjunct_run']
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
-        raw = RawSpectrum(sourcefile=path.name, nrow=-1, name='raw', run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
+        raw = RawSpectrum(run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'], adjunct=adjunct_rawfile)
         where = {'counts1': 1, 'counts2': 2}
         for product in raw.products:
@@ -227,19 +227,16 @@ class L1SingleFile(L1File):
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_raw_file = RawFile.find(anonymous_parents=[adjunct_raw])
         adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
-        raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1, name='raw', run=hiers['run'])
+        raw = RawSpectrum(casu=casu, run=hiers['run'])
         rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file)  # merge this one instead of finding, then we can start from single or raw files
         wavelengths = cls.wavelengths(directory, fname)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)
-            single_spectrum = L1SingleSpectrum(sourcefile=fname.name, nrow=fibrow['nspec'], name='single',
-                                               raw_spectrum=raw, fibre_target=fibretarget,
+            single_spectrum = L1SingleSpectrum(raw_spectrum=raw, fibre_target=fibretarget,
                                                wavelength_holder=wavelengths, arm_config=hiers['arm_config'],
                                                tables=fibrow, adjunct=adjunct)
-            possible_duplicated = NoSS.find(sourcefile=fname.name, nrow=fibrow['nspec'], name='single_noss')
-            adjunct_noss = NoSS.find(anonymous_parents=[adjunct], exclude=[possible_duplicated])
-            noss = NoSS(l1_spectrum=single_spectrum, sourcefile=fname.name, nrow=fibrow['nspec'], name='single_noss',
-                        adjunct=adjunct_noss)
+            adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
+            noss = NoSS(l1_spectrum=single_spectrum, adjunct=adjunct_noss)
         single_spectra, nosses, fibrows = collect(single_spectrum, noss, fibrow)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
                                       l1single_spectra=single_spectra,
@@ -304,14 +301,12 @@ class L1StackedFile(L1File):
                 single_spectrum = L1SingleSpectrum.find(anonymous_parents=[fibretarget], anonymous_children=[single_file])
             single_spectra = collect(single_spectrum)
             # use the generic "L1stackspectrum" to avoid writing out again for superstacks
-            stack_spectrum = cls.SpectrumType(sourcefile=fname.name, nrow=fibrow['nspec'], name='stack',
-                                              l1single_spectra=single_spectra, ob=ob,
+            stack_spectrum = cls.SpectrumType(l1single_spectra=single_spectra, ob=ob,
                                               arm_config=armconfig, fibre_target=fibretarget,
                                               tables=fibrow,
                                               adjunct=adjunct, wavelength_holder=wavelengths)
-            possible_duplicated = NoSS.find(sourcefile=fname.name, nrow=fibrow['nspec'], name='stack_noss')
-            adjunct_noss = NoSS.find(anonymous_parents=[adjunct], exclude=[possible_duplicated])
-            noss = NoSS(l1_spectrum=stack_spectrum, sourcefile=fname.name, nrow=fibrow['nspec'], name='stack_noss', adjunct=adjunct_noss)
+            adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
+            noss = NoSS(l1_spectrum=stack_spectrum, adjunct=adjunct_noss)
         stack_spectra, nosses, fibrows = collect(stack_spectrum, noss, fibrow)
         d = {cls.SpectrumType.plural_name: stack_spectra}
         hdus, file, _ = cls.read_hdus(directory, fname, l1single_files=single_files,

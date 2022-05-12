@@ -5,10 +5,10 @@ import pandas as pd
 from pathlib import Path
 
 from weaveio.hierarchy import Multiple, Hierarchy, OneOf, Optional
-from weaveio.opr3.hierarchy import SourcedData, Spectrum, Author, APS, Measurement, \
+from weaveio.opr3.hierarchy import APS, Measurement, \
     Single, FibreTarget, Exposure, Stack, OB, Superstack, \
     OBSpec, Supertarget, WeaveTarget, _predicate, MCMCMeasurement, Line, SpectralIndex, RedshiftMeasurement, Spectrum1D, ArrayHolder
-from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1SupertargetSpectrum, L1SuperstackSpectrum, L1StackedSpectrum
+from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1SupertargetSpectrum, L1StackedSpectrum
 
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 gandalf_lines = pd.read_csv(HERE / 'expected_lines.csv', sep=' ')
@@ -26,9 +26,8 @@ class IngestedSpectrum(Spectrum1D):
     """
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
-    factors = ['sourcefile', 'nrow', 'name', 'arm_code']
     parents = [L1Spectrum, APS]
-    identifier_builder = ['sourcefile', 'nrow', 'l1_spectrum', 'aps']
+    identifier_builder = ['l1_spectrum', 'aps']
     products = ['flux', 'error', 'wvl']
 
 
@@ -38,7 +37,7 @@ class IvarIngestedSpectrum(IngestedSpectrum):
 
 class CombinedIngestedSpectrum(IngestedSpectrum):
     parents = [Multiple(L1Spectrum, 1, 3), APS]
-    identifier_builder = ['sourcefile', 'nrow', 'l1_spectra', 'aps']
+    identifier_builder = ['l1_spectra', 'aps']
 
 
 class IvarCombinedIngestedSpectrum(CombinedIngestedSpectrum):
@@ -51,14 +50,14 @@ class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
 
 class ModelSpectrum(Spectrum1D):
     is_template = True
-    factors = ['sourcefile', 'nrow', 'arm_code']
     parents = [OneOf(IngestedSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'arm_code']
     products = ['flux']
+    identifier_builder = ['ingested_spectrum']
 
 
 class CombinedModelSpectrum(ModelSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
+    identifier_builder = ['combined_ingested_spectrum']
 
 
 # This allows us to use 'clean' to talk about the clean model or clean spectrum
@@ -72,14 +71,20 @@ class GandalfSpectrum(Spectrum1D):
 class GandalfModelSpectrum(CombinedModelSpectrum, GandalfSpectrum):
     pass
 
+
 class GandalfEmissionModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+    identifier_builder = ['gandalf_model_spectrum']
+
 
 class GandalfCleanModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+    identifier_builder = ['gandalf_model_spectrum']
+
 
 class GandalfCleanIngestedSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
+    identifier_builder = ['combined_ingested_spectrum']
 
 
 class Fit(Hierarchy):

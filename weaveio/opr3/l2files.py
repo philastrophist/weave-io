@@ -243,9 +243,8 @@ class L2File(File):
             l1spectrum = L1Spectrum.find(anonymous_parents=[l1file, fibretarget])
             arm_code = ArmConfig.find(anonymous_children=[l1spectrum])['arm_code']
             if uses_disjoint_spectra:
-                individual = IngestedSpectrumClass(sourcefile=this_fname, nrow=nrow, name=formatter,
-                                                   l1spectrum=l1spectrum, aps=aps, arm_code=arm_code)
-                individual_model = ModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=individual)
+                individual = IngestedSpectrumClass(l1spectrum=l1spectrum, aps=aps)
+                individual_model = ModelSpectrumClass(ingested_spectra=individual)
         # now collect spec and models relative to the fibretarget
         if uses_disjoint_spectra:
             l1files, l1spectra, arm_codes, individuals, individual_models = collect(l1file, l1spectrum,
@@ -254,8 +253,8 @@ class L2File(File):
             l1files, l1spectra, arm_codes = collect(l1file, l1spectrum, arm_code)
             individuals, individual_models = None, None
         if uses_combined_spectrum:
-            combined = CombinedIngestedSpectrumClass(sourcefile=this_fname, nrow=nrow, l1spectra=l1spectra, arm_code='C', aps=aps)
-            combined_model = CombinedModelSpectrumClass(sourcefile=this_fname, nrow=nrow, ingested_spectra=combined, arm_code='C')
+            combined = CombinedIngestedSpectrumClass(l1spectra=l1spectra, aps=aps)
+            combined_model = CombinedModelSpectrumClass(ingested_spectra=combined)
         else:
             combined, combined_model = None, None
         return FitSpecs(individuals, individual_models, combined, combined_model, arm_codes, nrow), safe_table[nrow]

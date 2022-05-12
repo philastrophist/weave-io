@@ -199,7 +199,6 @@ class GraphableMeta(type):
             raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
         if cls.indexes and (cls.idname is not None or cls.identifier_builder is not None):
             raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
-        nparents_in_id = 0
         parentnames = {}
         cls.children = deepcopy(cls.children)  # sever link so that changes here dont affect base classes
         cls.parents = deepcopy(cls.parents)
@@ -242,7 +241,6 @@ class GraphableMeta(type):
                         raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
                     # if mx != mn:
                     #     raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
-                    nparents_in_id += mx
                 elif p in cls.factors:
                     pass
                 else:

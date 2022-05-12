@@ -22,6 +22,7 @@ class NoSS(Spectrum1D):
     singular_name = 'noss'
     products = ['flux', 'ivar']
     parents = [L1Spectrum]
+    identifier_builder = [L1Spectrum]
     children = [Optional('self', idname='adjunct')]
 
 
@@ -37,6 +38,7 @@ class L1SingleSpectrum(L1Spectrum, Single):
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
         'skyline_off1', 'skyline_rms1', 'skyline_off2', 'skyline_rms2',
         'sky_shift', 'sky_scale']
+    identifier_builder = ['raw_spectrum', 'fibre_target', 'arm_config']
 
 
 class L1StackedSpectrum(L1Spectrum, Stacked):
@@ -52,6 +54,7 @@ class L1StackSpectrum(L1StackedSpectrum, Stack):
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
     parents = L1StackedSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
+    identifier_builder = ['l1single_spectra', 'fibre_target', 'arm_config', 'ob']
 
 
 class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
@@ -61,6 +64,7 @@ class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
     parents = L1StackedSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
+    identifier_builder = ['l1single_spectra', 'fibre_target', 'arm_config', 'obspec']
 
 
 class L1SupertargetSpectrum(L1Spectrum, Supertarget):
@@ -70,6 +74,7 @@ class L1SupertargetSpectrum(L1Spectrum, Supertarget):
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
     parents = L1Spectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
+    identifier_builder = ['l1single_spectra', 'weave_target', 'arm_config']
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
