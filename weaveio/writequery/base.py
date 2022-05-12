@@ -244,6 +244,9 @@ class CypherFindReplaceStr(DerivedCypherVariable):
     def string_formatter(self, parent, replace):
         return f"replace({parent}, 'X', '{replace}')"
 
+class CypherAppendStr(DerivedCypherVariable):
+    def string_formatter(self, parent, append):
+        return f"{parent} + {append}"
 
 class Collection(CypherVariable):
     pass

@@ -18,7 +18,7 @@ gandalf_line_names = (gandalf_lines['name'] + '_' + gandalf_lines['lambda'].appl
 gandalf_index_names = gandalf_indices['name'].values.tolist()
 
 
-class L2(SourcedData):
+class L2(Hierarchy):
     is_template = True
 
 
@@ -26,50 +26,32 @@ class IngestedSpectrum(Spectrum1D):
     """
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
-    factors = ['sourcefile', 'nrow', 'name']
+    factors = ['sourcefile', 'nrow', 'name', 'arm_code']
     parents = [L1Spectrum, APS]
-    identifier_builder = ['sourcefile', 'nrow', 'l1_spectra']
-    products = [ 'flux', 'error', 'wvl']
+    identifier_builder = ['sourcefile', 'nrow', 'l1_spectrum', 'aps']
+    products = [ 'flux', 'error', 'wvl', 'ivar', 'logwvl', 'goodpix']
 
-class LogarithmicIngestedSpectrum(IngestedSpectrum):
-    products = ['flux', 'error', 'logwvl', 'goodpix']
-
-class RedrockIngestedSpectrum(IngestedSpectrum):
-    products = [ 'flux', 'ivar', 'wvl']
 
 class CombinedIngestedSpectrum(IngestedSpectrum):
     parents = [Multiple(L1Spectrum, 1, 3), APS]
-
-class LogarithmicCombinedIngestedSpectrum(CombinedIngestedSpectrum):
-    products = ['flux', 'error', 'logwvl', 'goodpix']
-
-class RedrockCombinedIngestedSpectrum(CombinedIngestedSpectrum):
-    products = [ 'flux', 'ivar', 'wvl']
 
 
 class ModelSpectrum(Spectrum):
     is_template = True
     factors = ['sourcefile', 'nrow']
     identifier_builder = ['sourcefile', 'nrow']
-    parents = [OneOf(IngestedSpectrum, one2one=True)]
-    products = ['flux', 'wvl']
-
-
-class LogarithmicModelSpectrum(ModelSpectrum):
-    products = ['logwvl', 'flux']
+    parents = [Optional(IngestedSpectrum, one2one=True)]
+    products = ['flux']
 
 
 class CombinedModelSpectrum(ModelSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
 
 
-class LogarithmicCombinedModelSpectrum(CombinedModelSpectrum):
-    products = ['logwvl', 'flux']
+class GandalfModelSpectrum(CombinedModelSpectrum):
+    children = [OneOf(ModelSpectrum, idname='clean', one2one=True),
+                OneOf(ModelSpectrum, idname='emission', one2one=True)]
 
-
-class GandalfModelSpectrum(LogarithmicCombinedModelSpectrum):
-    children = [OneOf(LogarithmicModelSpectrum, idname='clean', one2one=True),
-                OneOf(LogarithmicModelSpectrum, idname='emission', one2one=True)]
 
 
 class Fit(Hierarchy):
@@ -83,22 +65,24 @@ class Fit(Hierarchy):
 
 
 class RedshiftArray(ArrayHolder):
-    idname = 'hash'
-    factors = ['value']
+    factors = ['value', 'start', 'end', 'step']
+    identifier_builder = ['start', 'end', 'step']
 
 
-class RedrockTemplate(Hierarchy):
-    parents = [OneOf(RedshiftArray, one2one=True)]
+class Template(Fit):
+    parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
+    children = [OneOf(RedshiftArray, one2one=True)]
     factors = ['chi2_array', 'name']
     indexes = ['name']
 
 
 class Redrock(Fit):
-    factors = Fit.factors + ['flag', 'class', 'subclass', 'snr', 'best_chi2', 'deltachi2', 'ncoeff', 'coeff',
-                             'npixels', 'srvy_class'] + RedshiftMeasurement.as_factors('best_redshift')
+    factors = ['flag', 'class', 'subclass', 'snr', 'best_chi2', 'deltachi2', 'ncoeff', 'coeff',
+               'npixels', 'srvy_class'] + RedshiftMeasurement.as_factors('best_redshift')
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
-    children = [OneOf(RedrockTemplate, idname=x, one2one=True) for x in ['galaxy', 'qso', 'star_a', 'star_b', 'star_cv', 'star_f', 'star_g', 'star_k', 'star_m', 'star_wd']]
-    identifier_builder = ['ingested_spectra', 'snr']
+    template_names = ['galaxy', 'qso', 'star_a', 'star_b', 'star_cv', 'star_f', 'star_g', 'star_k', 'star_m', 'star_wd']
+    parents += [OneOf(Template, idname=x, one2one=True) for x in template_names]
+    identifier_builder = ['model_spectra', 'snr']
 
 
 class RVSpecfit(Fit):
@@ -106,32 +90,34 @@ class RVSpecfit(Fit):
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
     factors += Measurement.as_factors('vrad', 'logg', 'teff', 'feh', 'alpha')
-    identifier_builder = ['ingested_spectra', 'snr']
+    identifier_builder = ['model_spectra', 'snr']
 
 
 class Ferre(Fit):
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
     factors += Measurement.as_factors('micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
-    identifier_builder = ['ingested_spectra', 'snr']
+    identifier_builder = ['model_spectra', 'snr']
 
 
 class Gandalf(Fit):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
     factors = Fit.factors + ['fwhm_flag'] + Measurement.as_factors('zcorr')
     factors += Line.as_factors(gandalf_line_names) + SpectralIndex.as_factors(gandalf_index_names)
-    identifier_builder = ['gandalf_ingested_spectrum', 'zcorr']
+    identifier_builder = ['gandalf_model_spectrum', 'zcorr']
 
 
 class PPXF(Fit):
-    parents = [OneOf(LogarithmicCombinedModelSpectrum, one2one=True)]
+    parents = [OneOf(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6')
-    identifier_builder = ['logarithmic_combined_model_spectrum', 'v']
+    identifier_builder = ['combined_model_spectrum', 'v']
 
 
 class L2Product(L2):
     is_template = True
-    parents = [Multiple(L1Spectrum, 2, 3), APS, Redrock, RVSpecfit, Ferre, PPXF, Gandalf]
+    parents = [Multiple(L1Spectrum, 2, 3), APS,
+               Optional(Redrock, one2one=True), Optional(RVSpecfit, one2one=True),
+               Optional(Ferre, one2one=True), Optional(PPXF, one2one=True), Optional(Gandalf, one2one=True)]
 
 
 # L2 data products are formed from 2 or more L1 data products from different arms (red, blue, or green)
@@ -146,8 +132,7 @@ class L2Single(L2Product, Single):
 
     """
     singular_name = 'l2single'
-    parents = [Multiple(L1SingleSpectrum, 2, 2, constrain=(FibreTarget, Exposure), one2one=True), APS]
-    parents += [Redrock, RVSpecfit, Ferre, PPXF, Gandalf]
+    parents = L2Product.parents[1:] + [Multiple(L1SingleSpectrum, 2, 2, constrain=(FibreTarget, Exposure), one2one=True)]
 
 
 class L2OBStack(L2Product, OBStack):
@@ -156,8 +141,7 @@ class L2OBStack(L2Product, OBStack):
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
     singular_name = 'l2obstack'
-    parents = [Multiple(L1OBStackSpectrum, 2, 2, constrain=(FibreTarget, OB), one2one=True), APS]
-    parents += [Redrock, RVSpecfit, Ferre, PPXF, Gandalf]
+    parents = L2Product.parents[1:] + [Multiple(L1OBStackSpectrum, 2, 2, constrain=(FibreTarget, OB), one2one=True)]
 
 
 class L2Superstack(L2Product, Superstack):
@@ -166,8 +150,7 @@ class L2Superstack(L2Product, Superstack):
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
     singular_name = 'l2superstack'
-    parents = [Multiple(L1StackSpectrum, 2, 3, constrain=(FibreTarget, OBSpec)), APS]
-    parents += [Redrock, RVSpecfit, Ferre, PPXF, Gandalf]
+    parents = L2Product.parents[1:] + [Multiple(L1StackSpectrum, 2, 3, constrain=(FibreTarget, OBSpec))]
 
 
 class L2Supertarget(L2Product, Supertarget):
@@ -176,8 +159,7 @@ class L2Supertarget(L2Product, Supertarget):
     The L2 data products contain information generated by APS namely redshifts, emission line properties and model spectra.
     """
     singular_name = 'l2supertarget'
-    parents = [Multiple(L1SupertargetSpectrum, 2, 3, constrain=(WeaveTarget,), one2one=True), APS]
-    parents += [Redrock, RVSpecfit, Ferre, PPXF, Gandalf]
+    parents = L2Product.parents[1:] + [Multiple(L1SupertargetSpectrum, 2, 3, constrain=(WeaveTarget,), one2one=True)]
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
