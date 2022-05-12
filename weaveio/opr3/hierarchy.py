@@ -332,19 +332,19 @@ class Single(Hierarchy):
     is_template = True
 
 
-class Stack(Hierarchy):
+class Stacked(Hierarchy):
     is_template = True
 
 
-class OBStack(Stack):
+class Stack(Stacked):
     is_template = True
 
 
-class Superstack(Stack):
+class Superstack(Stacked):
     is_template = True
 
 
-class Supertarget(Stack):
+class Supertarget(Stacked):
     is_template = True
 
 

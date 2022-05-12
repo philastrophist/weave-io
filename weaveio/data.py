@@ -119,8 +119,8 @@ def expand_template_relation(relation):
     """
     Returns a list of relations that relate to each non-template class
     e.g.
-    >>> expand_template_relation(Multiple(L1StackSpectrum))
-    [Multiple(L1SingleSpectrum), Multiple(L1OBStackSpectrum), Multiple(L1SuperstackSpectrum)]
+    >>> expand_template_relation(Multiple(L1StackedSpectrum))
+    [Multiple(L1SingleSpectrum), Multiple(L1StackSpectrum), Multiple(L1SuperstackSpectrum)]
     """
     if not relation.node.is_template:
         return [relation]
