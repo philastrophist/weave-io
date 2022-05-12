@@ -528,7 +528,7 @@ class Data:
             filelist += [i for i in filetype.match_files(self.rootdir, self.graph)]
         if skip_extant_files:
             extant_fnames = self.get_extant_files() if skip_extant_files else []
-            filtered_filelist = [i for i in filelist if str(i.relative_to(self.rootdir)) not in extant_fnames]
+            filtered_filelist = [i for i in filelist if str(i.name) not in extant_fnames]
         else:
             filtered_filelist = filelist
         diff = len(filelist) - len(filtered_filelist)
