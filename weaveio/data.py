@@ -538,10 +538,10 @@ class Data:
         return filtered_filelist
 
     def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
-                        dryrun=False) -> pd.DataFrame:
+                        batch_size=None,dryrun=False) -> pd.DataFrame:
         filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
         return self.write_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
-                                dryrun=dryrun)
+                                dryrun=dryrun, batch_size=batch_size)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
