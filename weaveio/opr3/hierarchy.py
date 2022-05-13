@@ -93,12 +93,13 @@ class ArmConfig(Hierarchy):
     identifier_builder = ['resolution', 'vph', 'camera']
 
     def __init__(self, tables=None, **kwargs):
-        if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
-            kwargs['colour'] = 'green'
-        else:
-            kwargs['colour'] = kwargs['camera']
-        kwargs['colour_code'] = kwargs['colour'][0].upper()
-        super().__init__(tables, **kwargs)
+        if not kwargs.get('do_not_create', False):
+            if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
+                kwargs['colour'] = 'green'
+            else:
+                kwargs['colour'] = kwargs['camera']
+            kwargs['colour_code'] = kwargs['colour'][0].upper()
+        super().__init__(tables=tables, **kwargs)
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):

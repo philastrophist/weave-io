@@ -5,6 +5,7 @@ from warnings import warn
 
 import py2neo
 from astropy.table import Table
+from pathlib import Path
 from py2neo import Graph as NeoGraph
 
 import numpy as np
@@ -13,11 +14,12 @@ from weaveio.context import ContextMeta
 from weaveio.writequery import CypherQuery
 
 missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.inf, None: np.inf, bool: np.inf, datetime: datetime(1900, 1, 1, 0, 0)}
-convert_types = {int:  float, float: float, str: str, type(None): float, None: float, bool: float,
+convert_types = {int:  int, float: float, str: str, type(None): float, None: float, bool: float,
                  datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
                  list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
                  dict: dict, Table: Table,
-                 np.int64: int, np.float64: float, np.float32: float, np.int32:int}
+                 np.int64: int, np.float64: float, np.float32: float, np.int32:int,
+                 Path: str}
 
 def is_null(x):
     try:
@@ -41,7 +43,7 @@ def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=
             r = tuple(r)
         return r
     elif isinstance(x, dict):
-        return {_convert_datatypes(k, nan2missing, none2missing): _convert_datatypes(v, nan2missing, none2missing) for k, v in x.items()}
+        return {str(_convert_datatypes(k, nan2missing, none2missing)): _convert_datatypes(v, nan2missing, none2missing) for k, v in x.items()}
     elif isinstance(x, (pd.DataFrame, pd.Series)):
         return _convert_datatypes(pd.DataFrame(x).reset_index().to_dict('records'), nan2missing, none2missing)
     elif isinstance(x, Table):
@@ -115,10 +117,6 @@ class Graph(metaclass=ContextMeta):
             return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
-        lower = cypher.lower()
-        if not self.write_allowed and ('create' in lower or 'merge' in lower or
-                                       'set' in lower or 'delete' in lower or 'detach' in lower):
-            raise IOError(f"Write is not allowed, set `write=True` to permit writing.")
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
         try:
             return self._execute(cypher, d)

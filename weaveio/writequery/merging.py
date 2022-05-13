@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import List, Dict, Union, Tuple, Optional, Iterable
+from typing import List, Dict, Union, Tuple, Optional, Iterable, Type
 
 from . import CypherQuery
 from .base import camelcase, Varname, Statement, CypherVariable, CypherData, CypherVariableItem, Collection
@@ -138,6 +138,18 @@ class MatchPatternNode(Statement):
             wheres = f' WHERE {wheres}'
         return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
 
+class MatchBranchNode(Statement):
+    def __init__(self, *nodes_or_labels):
+        self.nodes_or_labels = nodes_or_labels
+        self.out = CypherVariable(nodes_or_labels)
+        inputs = [i for i in nodes_or_labels if isinstance(i, CypherVariable)]
+        outputs = [i  if isinstance(i, CypherVariable) else CypherVariable(i) for i in nodes_or_labels]
+        super().__init__(inputs, outputs, [])
+
+    def to_cypher(self):
+        nodes = [f'({o}:{n})' if isinstance(n, str) else f'({o})' for n, o in zip(self.nodes_or_labels, self.output_variables)]
+        path = '--'.join(map('{}'.format, nodes))
+        return f'WITH * OPTIONAL MATCH {path}'
 
 class PropertyOverlapError(Exception):
     pass
@@ -503,6 +515,13 @@ def match_pattern_node(labels: List[str], properties: Dict[str, Union[str, int, 
     statement = MatchPatternNode(labels, properties, parents, children, exclude)
     query.add_statement(statement)
     return statement.out
+
+
+def match_branch_node(*nodes_or_labels: Union[str, Type[CypherVariable]]):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MatchBranchNode(*nodes_or_labels)
+    query.add_statement(statement)
+    return statement.output_variables
 
 
 def merge_single_node(labels, identproperties, properties, collision_manager='track&flag'):

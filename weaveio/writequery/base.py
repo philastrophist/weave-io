@@ -192,6 +192,7 @@ class CypherVariable:
     def __init__(self, namehint=None):
         self.namehint = 'variable' if namehint is None else namehint
         self._name = None
+        self.is_mapping = None
 
     @property
     def name(self):
@@ -205,18 +206,40 @@ class CypherVariable:
     def __getitem__(self, item: Union[str, int]):
         return self.get(item, alias=True)
 
-    def get(self, item: Union[str, int], alias=False):
-        assert isinstance(item, (int, str))
+    def get(self, item: Union[str, int, 'CypherVariable'], alias=False):
+        assert isinstance(item, (int, str, CypherVariable))
+        if self.is_mapping:
+            if isinstance(item, CypherVariable):
+                item = CypherVariableToString(item)
+            else:
+                item = str(item)
         getitem = CypherVariableItem(self, item)
         if alias:
             query = CypherQuery.get_context()
             if isinstance(item, int):
                 item = f'{self.namehint}_index{item}'
+            if isinstance(item, CypherVariable):
+                item = f"{self.namehint}_index_{item.namehint}"
             alias_statement = Alias(getitem, str(item))
             query.add_statement(alias_statement)
             return alias_statement.out
         else:
             return getitem
+
+    def __sub__(self, other):
+        query = CypherQuery.get_context()
+        v =  ArithmeticCypherVariable('{} - {}', self, other)
+        alias_statement = Alias(v, 'sub')
+        query.add_statement(alias_statement)
+        return alias_statement.out
+
+    def __add__(self, other):
+        query = CypherQuery.get_context()
+        v =  ArithmeticCypherVariable('{} + {}', self, other)
+        alias_statement = Alias(v, 'add')
+        query.add_statement(alias_statement)
+        return alias_statement.out
+
 
 
 class DerivedCypherVariable(CypherVariable):
@@ -231,6 +254,14 @@ class DerivedCypherVariable(CypherVariable):
     @property
     def name(self):
         return self.string_formatter(self.parent, self.args)
+
+
+class ArithmeticCypherVariable(DerivedCypherVariable):
+    def __init__(self, op_string, *parents):
+        super().__init__(parents, op_string)
+
+    def string_formatter(self, parents, op_string):
+        return op_string.format(*parents)
 
 
 class CypherVariableItem(DerivedCypherVariable):
@@ -248,6 +279,14 @@ class CypherAppendStr(DerivedCypherVariable):
     def string_formatter(self, parent, append):
         return f"{parent} + {append}"
 
+
+class CypherVariableToString(DerivedCypherVariable):
+    def __init__(self, parent):
+        super().__init__(parent, None)
+
+    def string_formatter(self, parent, args):
+        return f"toStringOrNull({parent})"
+
 class Collection(CypherVariable):
     pass
 
@@ -259,6 +298,10 @@ class CypherData(CypherVariable):
         if not delay:
             query = CypherQuery.get_context()  # type: CypherQuery
             query.add_data(self)
+        if isinstance(data, dict):
+            self.is_mapping = True
+        else:
+            self.is_mapping = False
 
     def __repr__(self):
         return '$' + super(CypherData, self).__repr__()

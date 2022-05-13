@@ -51,9 +51,9 @@ class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
 
 class ModelSpectrum(Spectrum1D):
     is_template = True
-    factors = ['sourcefile', 'nrow', 'arm_code']
+    factors = ['sourcefile', 'nrow', 'name', 'arm_code']
     parents = [OneOf(IngestedSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'arm_code']
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'arm_code']
     products = ['flux']
 
 

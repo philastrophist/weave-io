@@ -31,18 +31,20 @@ def unwind(*args, enumerated=False, use_copy=True):
     query.statements.append(Collect(previous))  # allow the collections to be accessible - force
 
 
-def collect(*variables: CypherVariable):
+def collect(*variables: CypherVariable, skip_nones=True):
     query = CypherQuery.get_context()  # type: CypherQuery
     collector = query.statements[-1]
     if not isinstance(collector, Collect):
         raise NameError(f"You must use collect straight after a with context")
     for variable in variables:
         if variable not in query.closed_context:
-            raise ValueError(f"Cannot collect a non unwound variable")
-    collector = Collect(collector.previous, *variables)
+            if skip_nones and variable is None:
+                continue
+            raise ValueError(f"Cannot collect a non unwound variable {variable}")
+    collector = Collect(collector.previous, *[v for v in variables if v is not None])
     query.statements[-1] = collector
-    r = [collector[variable] for variable in variables]
-    query.open_contexts[-1] += r
+    r = [collector[v] if v is not None else None for v in variables]
+    query.open_contexts[-1] += [i for i in r if i is not None]
     if len(r) == 1:
         return r[0]
     return r

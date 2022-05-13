@@ -10,6 +10,7 @@ from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
 from .utilities import Varname, make_plural, int_or_none, camelcase2snakecase, snakecase2camelcase
+from .writequery.base import CypherVariableItem, Alias
 
 
 def _convert_types_to_node(x):
@@ -35,6 +36,7 @@ unwind = hierarchy_query_decorator(writequery.unwind)
 merge_node = hierarchy_query_decorator(writequery.merge_node)
 match_node = hierarchy_query_decorator(writequery.match_node)
 match_pattern_node = hierarchy_query_decorator(writequery.match_pattern_node)
+match_branch_node = hierarchy_query_decorator(writequery.match_branch_node)
 collect = hierarchy_query_decorator(writequery.collect)
 merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
 set_version = hierarchy_query_decorator(writequery.set_version)
@@ -73,6 +75,10 @@ class Multiple:
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
+
+    @property
+    def is_optional(self):
+        return self.minnumber == 0
 
     @property
     def name(self):
@@ -669,3 +675,38 @@ class Hierarchy(Graphable):
                 raise ValueError(f"Cannot assign an id of None to {self}")
             setattr(self, self.idname, self.identifier)
         super(Hierarchy, self).__init__(predecessors, successors, do_not_create)
+
+    def __getitem__(self, item):
+        assert isinstance(item, str)
+        getitem = CypherVariableItem(self.node, item)
+        query = CypherQuery.get_context()
+        if isinstance(item, int):
+            item = f'{self.namehint}_index{item}'
+        alias_statement = Alias(getitem, str(item))
+        query.add_statement(alias_statement)
+        return alias_statement.out
+
+    def attach_optionals(self, **optionals):
+        try:
+            query = CypherQuery.get_context()  # type: CypherQuery
+            collision_manager = query.collision_manager
+        except ContextError:
+            return
+        reltype = 'is_required_by'
+        parents = [getattr(p, 'relation_idname', None) or p.singular_name for p in self.parents if isinstance(p, Multiple) and p.is_optional]
+        children = [getattr(c, 'relation_idname', None) or c.singular_name for c in self.children if isinstance(c, Multiple) and c.is_optional]
+        for key, item in optionals.items():
+            if key in parents:
+                parent, child = item.node, self.node
+            elif key in children:
+                parent, child = self.node, item.node
+            else:
+                raise KeyError(f"{key} is not a parent or child of {self}")
+            merge_relationship(parent, child, reltype, {'order': 0, 'relation_id': key}, {}, collision_manager=collision_manager)
+
+def find_branch(*nodes_or_types):
+    """
+    Given a mix of variables and types along an undirected path (the input order), instantate those types from the graph
+    >>> _, _, l1spectrum, _ = find_branch(fibre, FibreTarget, L1Spectrum, l1file)
+    """
+    return match_branch_node(*[i.__name__ if isinstance(i, type) else i for i in nodes_or_types])
