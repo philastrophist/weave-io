@@ -37,7 +37,10 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
             if value.shape[1] > maxlength:
                 continue
         columns.append(i)
-    return table[columns]
+    t = table[columns]
+    for col in table.colnames:
+        t.rename_column(col, col.lower())
+    return t
 
 
 FitSpecs = namedtuple('FitSpecs', ['individuals', 'individual_models', 'combined', 'combined_model', 'arm_codes', 'nrow'])
@@ -371,7 +374,6 @@ class L2File(File):
             cls.add_zs_ids(safe_tables[i])
             safe_cypher_tables[i] =  CypherData(safe_tables[i])
         l2, redrocks, redrock_specs = cls.read_redrock(path, astropy_hdus[4], safe_cypher_tables[1], fnames, aps, **hierarchies)
-        return
         _, rvss, rvs_specs = cls.read_rvspecfit(path, astropy_hdus[5], safe_cypher_tables[2], fnames, aps, **hierarchies)
         _, ferres, ferre_specs = cls.read_ferre(path, astropy_hdus[5], safe_cypher_tables[2], fnames, aps, **hierarchies)
         _, ppxfs, ppxf_specs = cls.read_ppxf(path, astropy_hdus[6], safe_cypher_tables[3], fnames, aps, **hierarchies)

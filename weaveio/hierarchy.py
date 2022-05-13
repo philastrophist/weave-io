@@ -621,6 +621,7 @@ class Hierarchy(Graphable):
                     i.instantate_node(hierarchies)
 
     def __init__(self, do_not_create=False, tables=None, **kwargs):
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
         self.instantate_nodes()
         self.uses_tables = False
         if tables is None:
@@ -636,6 +637,8 @@ class Hierarchy(Graphable):
         # add any data held in a neo4j unwind table
         for k, v in self.specification.items():
             if k not in kwargs:
+                if isinstance(v, Multiple) and v.minnumber == 0:  # i.e. optional
+                    continue
                 if tables is not None:
                     kwargs[k] = tables.get(k, alias=False)
         self._kwargs = kwargs.copy()

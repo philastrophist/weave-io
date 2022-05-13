@@ -105,8 +105,8 @@ class Template(Fit):
 
 
 class Redrock(Fit):
-    factors = ['flag', 'class', 'subclass', 'snr', 'best_chi2', 'deltachi2', 'ncoeff', 'coeff',
-               'npixels', 'srvy_class'] + RedshiftMeasurement.as_factors('best_redshift')
+    factors = ['class', 'subclass', 'snr', 'best_chi2', 'deltachi2', 'ncoeff', 'coeff',
+               'npixels', 'srvy_class', 'z', 'zerr', 'zwarn']
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     template_names = ['galaxy', 'qso', 'star_a', 'star_b', 'star_cv', 'star_f', 'star_g', 'star_k', 'star_m', 'star_wd']
     parents += [OneOf(Template, idname=x, one2one=True) for x in template_names]

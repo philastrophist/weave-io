@@ -497,6 +497,8 @@ class Data:
                                         f"a match within the query returned no matches. "
                                         f"Adjust your `.read` method and query to allow for empty tables/data")
                     timestamps.append(timestamp)
+                else:
+                    self.graph.execute('EXPLAIN\n' + cypher, **params)
                 elapsed_times.append(time.time() - start)
             except (ClientError, DatabaseError, FileExistsError) as e:
                 logging.exception('ClientError:', exc_info=True)
