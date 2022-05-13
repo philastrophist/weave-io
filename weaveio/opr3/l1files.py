@@ -273,8 +273,7 @@ class L1StackedFile(L1File):
     @classmethod
     def get_single_files_fnames(cls, directory: Path, fname: Path):
         runids = cls.parent_runids(directory / fname)
-        subdir = fname.parents[0]
-        fnames = [str(subdir / L1SingleFile.fname_from_runid(runid)) for runid in runids]
+        fnames = [L1SingleFile.fname_from_runid(runid) for runid in runids]
         assert len(fnames) > 1, f'{fname} doesnt have more than one l1single runid'
         return fnames
 
@@ -289,7 +288,6 @@ class L1StackedFile(L1File):
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(directory / fname, slc)
         ob = hiers['ob']
         armconfig = hiers['arm_config']
-        casu = hiers['casu']
         # unwind all single files that went into making this stack
         single_fnames = cls.get_single_files_fnames(directory, fname)
         with unwind(CypherData(single_fnames)) as single_fname:
