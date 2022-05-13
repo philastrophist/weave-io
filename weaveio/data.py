@@ -493,8 +493,9 @@ class Data:
                             raise ConnectionError(f"{fname} could not be written to the database see neo4j logs for more details") from e
                         stats.append(r.stats())
                     if timestamp is None:
-                        logging.warning(f"This query terminated early due to an empty input table/data. "
-                             f"Adjust your `.read` method to allow for empty tables/data")
+                        logging.warning(f"This query terminated early due to either an empty input table/data or "
+                                        f"a match within the query returned no matches. "
+                                        f"Adjust your `.read` method and query to allow for empty tables/data")
                     timestamps.append(timestamp)
                 elapsed_times.append(time.time() - start)
             except (ClientError, DatabaseError, FileExistsError) as e:

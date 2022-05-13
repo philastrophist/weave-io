@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from time import sleep
 from warnings import warn
@@ -97,13 +98,13 @@ class Graph(metaclass=ContextMeta):
     def write(self, collision_manager):
         return CypherQuery(collision_manager)
 
-    def _execute(self, cypher, parameters, backoff=1, limit=10):
+    def _execute(self, cypher, parameters, backoff=1, limit=5):
         try:
             return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
-        except RuntimeError as e:
+        except (ConnectionError, RuntimeError) as e:
             if backoff >= limit:
                 raise e
-            warn(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
+            logging.info(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
             sleep(backoff)
             backoff *= 2
             return self._execute(cypher, parameters, backoff, limit)
