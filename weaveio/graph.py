@@ -101,7 +101,7 @@ class Graph(metaclass=ContextMeta):
     def _execute(self, cypher, parameters, backoff=1, limit=5):
         try:
             return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
-        except (ConnectionError, RuntimeError) as e:
+        except (ConnectionError, RuntimeError, IndexError) as e:
             if backoff >= limit:
                 raise e
             logging.info(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
