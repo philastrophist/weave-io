@@ -228,7 +228,7 @@ class L1SingleFile(L1File):
         adjunct_raw_file = RawFile.find(anonymous_parents=[adjunct_raw])
         adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
         raw = RawSpectrum(sourcefile=inferred_raw_fname, casu=casu, nrow=-1, name='raw', run=hiers['run'])
-        rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file)  # merge this one instead of finding, then we can start from single or raw files
+        rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file, path='<MISSING>')  # merge this one instead of finding, then we can start from single or raw files
         wavelengths = cls.wavelengths(directory, fname)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
             adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)

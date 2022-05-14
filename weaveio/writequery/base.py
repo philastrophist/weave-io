@@ -68,7 +68,7 @@ class CypherQuery(metaclass=ContextMeta):
                     d[namehint] += 1
                     v._name = f'{namehint}{i}'
 
-    def render_query(self, procedure_tag=''):
+    def render_query(self, procedure_tag='', as_lines=False):
         if not isinstance(self.statements[-1], Returns):
             self.returns(self.timestamp)
         self.make_variable_names()
@@ -78,8 +78,10 @@ class CypherQuery(metaclass=ContextMeta):
                 q = re.sub('\$[\w\d]+ as \$[\w\d]+,', '', q)
                 qs[i] = q
         # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
-        q = '\n'.join(qs)
         datadict = {d.name: d.data for d in self.data}
+        if as_lines:
+            return qs, datadict
+        q = '\n'.join(qs)
         return dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')), datadict
 
     def open_context(self):

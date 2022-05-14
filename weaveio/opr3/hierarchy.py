@@ -274,8 +274,9 @@ class Exposure(Hierarchy):
     These are called runs.
     """
     idname = 'mjd'  # globally unique
-    factors = ['exptime', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
-               'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
+    factors = ['exptime', 'seeingb', 'seeinge', 'windspb', 'windspe', 'telhumb', 'telhume',
+               'winddirb', 'winddire', 'airmass',
+               'teltempb', 'teltempe', 'skybrtel', 'observer', 'obstype']
     parents = [OB, CASU, System]
 
 

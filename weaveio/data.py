@@ -260,8 +260,11 @@ class Data:
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
             self.relation_graphs.append(make_relation_graph(hierarchies_from_files(*self.filetypes[:i+1])))
-        self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
-        self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
+        if self.filetypes:
+            self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
+            self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
+        else:
+            self.hierarchies = set()
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -435,7 +438,7 @@ class Data:
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
-                    dryrun=False, do_not_apply_constraints=False) -> pd.DataFrame:
+                    dryrun=False, do_not_apply_constraints=False, test_one=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -463,6 +466,8 @@ class Data:
         timestamps = []
         if dryrun:
             logging.info(f"Dryrun: will not write to database. However, reading is permitted")
+        if test_one:
+            batches = batches[:1]
         bar = tqdm(batches)
         for filetype, fname, slc, part in bar:
             bar.set_description(f'{fname}[{slc.start}:{slc.stop}:{part}]')
@@ -475,6 +480,8 @@ class Data:
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
                 cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
+                with open('debug.log', 'w') as f:
+                    f.write(cypher)
                 start = time.time()
                 if not dryrun:
                     try:
@@ -509,14 +516,15 @@ class Data:
             df = pd.DataFrame(stats)
             df['timestamp'] = timestamps
             df['elapsed_time'] = elapsed_times
-            _, df['fname'], slcs = zip(*batches)
+            _, df['fname'], slcs, parts = zip(*batches)
             df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
+            df['part'] = parts
         elif dryrun:
-            df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end'])
+            df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end', 'part'])
             df['elapsed_time'] = elapsed_times
         else:
             df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
-        return df.set_index(['fname', 'batch_start', 'batch_end'])
+        return df.set_index(['fname', 'batch_start', 'batch_end', 'part'])
 
     def find_files(self, *filetype_names, skip_extant_files=True):
         filelist = []

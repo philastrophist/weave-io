@@ -26,9 +26,9 @@ class IngestedSpectrum(Spectrum1D):
     """
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
-    factors = ['sourcefile', 'nrow', 'name', 'arm_code']
+    factors = ['sourcefile', 'nrow', 'name', 'colour_code']
     parents = [L1Spectrum, APS]
-    identifier_builder = ['sourcefile', 'nrow', 'l1_spectrum', 'aps']
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'l1_spectrum', 'aps']
     products = ['flux', 'error', 'wvl']
 
 
@@ -38,7 +38,7 @@ class IvarIngestedSpectrum(IngestedSpectrum):
 
 class CombinedIngestedSpectrum(IngestedSpectrum):
     parents = [Multiple(L1Spectrum, 1, 3), APS]
-    identifier_builder = ['sourcefile', 'nrow', 'l1_spectra', 'aps']
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'l1_spectra', 'aps']
 
 
 class IvarCombinedIngestedSpectrum(CombinedIngestedSpectrum):
@@ -51,14 +51,15 @@ class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
 
 class ModelSpectrum(Spectrum1D):
     is_template = True
-    factors = ['sourcefile', 'nrow', 'name', 'arm_code']
+    factors = ['sourcefile', 'nrow', 'name', 'colour_code']
     parents = [OneOf(IngestedSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'arm_code']
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'ingested_spectrum', 'colour_code']
     products = ['flux']
 
 
 class CombinedModelSpectrum(ModelSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'combined_ingested_spectrum', 'colour_code']
 
 
 # This allows us to use 'clean' to talk about the clean model or clean spectrum
@@ -74,12 +75,15 @@ class GandalfModelSpectrum(CombinedModelSpectrum, GandalfSpectrum):
 
 class GandalfEmissionModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'gandalf_model_spectrum', 'colour_code']
 
 class GandalfCleanModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'gandalf_model_spectrum', 'colour_code']
 
 class GandalfCleanIngestedSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
+    identifier_builder = ['sourcefile', 'nrow', 'name', 'combined_ingested_spectrum', 'colour_code']
 
 
 class Fit(Hierarchy):
