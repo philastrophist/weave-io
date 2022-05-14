@@ -620,7 +620,10 @@ class Hierarchy(Graphable):
                 if isinstance(i.node, str):
                     i.instantate_node(hierarchies)
 
-    def __init__(self, do_not_create=False, tables=None, **kwargs):
+    def __init__(self, do_not_create=False, tables=None, tables_replace: Dict = None,
+                 **kwargs):
+        if tables_replace is None:
+            tables_replace = {}
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         self.instantate_nodes()
         self.uses_tables = False
@@ -640,7 +643,7 @@ class Hierarchy(Graphable):
                 if isinstance(v, Multiple) and v.minnumber == 0:  # i.e. optional
                     continue
                 if tables is not None:
-                    kwargs[k] = tables.get(k, alias=False)
+                    kwargs[k] = tables.get(tables_replace.get(k, k), alias=False)
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}

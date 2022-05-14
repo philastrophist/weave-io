@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from typing import List, Callable, Union
 
-from .base import CypherQuery, CypherVariable, Collection, CustomStatement
+from .base import CypherQuery, CypherVariable, Collection, CustomStatement, CypherAppendStr, Alias
 from .statements import Unwind, Collect, GroupBy, Copy
 
 
@@ -82,3 +82,12 @@ def custom(statement: Callable, inputs: List[CypherVariable] = None, returns: Li
     query = CypherQuery.get_context()  # type: CypherQuery
     query.add_statement(statement)
     return returns
+
+def string_append(string, append, alias=False):
+    appended = CypherAppendStr(string, append)
+    if alias:
+        query = CypherQuery.get_context()
+        alias_statement = Alias(appended, 'append')
+        query.add_statement(alias_statement)
+        return alias_statement.out
+    return appended

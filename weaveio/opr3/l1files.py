@@ -134,7 +134,7 @@ class HeaderFibinfoFile(File):
         return AstropyTable(fits.open(path)[cls.fibinfo_i].data)
 
     @classmethod
-    def read(cls, directory: Path, fname: Path, slc: slice = None) -> 'File':
+    def read(cls, directory: Path, fname: Path, slc: slice = None, part=None) -> 'File':
         raise NotImplementedError
 
 
@@ -151,7 +151,7 @@ class RawFile(HeaderFibinfoFile):
         return f'r{runid:07.0f}.fit'
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None):
         path = Path(directory) / Path(fname)
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         adjunct_run = hiers['adjunct_run']
@@ -206,7 +206,7 @@ class L1SingleFile(L1File):
         return f'single_{runid:07.0f}.fit'
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None):
         fname = Path(fname)
         directory = Path(directory)
         absolute_path = directory / fname
@@ -278,7 +278,7 @@ class L1StackedFile(L1File):
         return fnames
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None):
         """
         L1Stack inherits everything from the lowest numbered single/raw files so we are missing data,
         therefore we require that all the referenced Runs are present before loading in
@@ -364,7 +364,7 @@ class L1SupertargetFile(L1StackedFile):
     recommended_batchsize = None
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None):
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None):
         raise NotImplementedError
 
 

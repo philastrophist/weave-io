@@ -434,7 +434,7 @@ class Data:
         return node_collisions, rel_collisions
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
-                    collision_manager='ignore', batch_size=None, halt_on_error=True,
+                    collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
@@ -456,22 +456,22 @@ class Data:
                 raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
             filetype = matches[0]
             filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
-            slices = filetype.get_batches(path, filetype_batch_size)
-            batches += [(filetype, path.relative_to(self.rootdir), slc) for slc in slices]
+            slices = filetype.get_batches(path, filetype_batch_size, parts)
+            batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
         timestamps = []
         if dryrun:
             logging.info(f"Dryrun: will not write to database. However, reading is permitted")
         bar = tqdm(batches)
-        for filetype, fname, slc in bar:
-            bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
+        for filetype, fname, slc, part in bar:
+            bar.set_description(f'{fname}[{slc.start}:{slc.stop}:{part}]')
             try:
                 if raise_on_duplicate_file:
                     if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
                         raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
                 with self.write_cypher(collision_manager) as query:
-                    filetype.read(self.rootdir, fname, slc)
+                    filetype.read(self.rootdir, fname, slc, part)
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
                 cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
@@ -498,7 +498,7 @@ class Data:
                                         f"Adjust your `.read` method and query to allow for empty tables/data")
                     timestamps.append(timestamp)
                 else:
-                    self.graph.execute('EXPLAIN\n' + cypher, **params)
+                    self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
                 elapsed_times.append(time.time() - start)
             except (ClientError, DatabaseError, FileExistsError) as e:
                 logging.exception('ClientError:', exc_info=True)
@@ -540,10 +540,10 @@ class Data:
         return filtered_filelist
 
     def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
-                        batch_size=None,dryrun=False) -> pd.DataFrame:
+                        batch_size=None, parts=None, dryrun=False) -> pd.DataFrame:
         filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
         return self.write_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
-                                dryrun=dryrun, batch_size=batch_size)
+                                dryrun=dryrun, batch_size=batch_size, parts=parts)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]

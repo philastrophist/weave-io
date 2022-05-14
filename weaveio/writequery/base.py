@@ -243,24 +243,24 @@ class CypherVariable:
 
 
 class DerivedCypherVariable(CypherVariable):
-    def __init__(self, parent, args):
+    def __init__(self, *args):
         super(DerivedCypherVariable, self).__init__()
-        self.parent = parent
+        self.parent = [i for i in args if isinstance(i, CypherVariable)][0]
         self.args = args
 
-    def string_formatter(self, parent, args):
+    def string_formatter(self, *args):
         raise NotImplementedError
 
     @property
     def name(self):
-        return self.string_formatter(self.parent, self.args)
+        return self.string_formatter(*self.args)
 
 
 class ArithmeticCypherVariable(DerivedCypherVariable):
     def __init__(self, op_string, *parents):
-        super().__init__(parents, op_string)
+        super().__init__(op_string, *parents)
 
-    def string_formatter(self, parents, op_string):
+    def string_formatter(self, op_string, *parents):
         return op_string.format(*parents)
 
 
@@ -276,15 +276,16 @@ class CypherFindReplaceStr(DerivedCypherVariable):
         return f"replace({parent}, 'X', '{replace}')"
 
 class CypherAppendStr(DerivedCypherVariable):
-    def string_formatter(self, parent, append):
-        return f"{parent} + {append}"
+    def string_formatter(self, *strings):
+        s = [f"'{i}'" if isinstance(i, str) else f"{i}" for i in strings]
+        return ' + '.join(s)
 
 
 class CypherVariableToString(DerivedCypherVariable):
     def __init__(self, parent):
-        super().__init__(parent, None)
+        super().__init__(parent)
 
-    def string_formatter(self, parent, args):
+    def string_formatter(self, parent):
         return f"toStringOrNull({parent})"
 
 class Collection(CypherVariable):
