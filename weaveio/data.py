@@ -396,7 +396,9 @@ class Data:
         return Graph(host=self.host, port=self.port, name=self.dbname, write=self.write_allowed, **d)
 
     def make_constraints_cypher(self):
-        return {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
+        d = {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
+        d['temporary'] = 'CREATE CONSTRAINT ON (t:TemporaryMerge) ASSERT t.id IS UNIQUE'
+        return d
 
     def apply_constraints(self):
         if not self.write_allowed:
@@ -414,9 +416,9 @@ class Data:
                        equivalencies.append(hier)
                        templates.append(hier)
         if len(templates):
-            print(f'No index/constraint was made for {templates}')
+            logging.info(f'No index/constraint was made for {templates}')
         if len(equivalencies):
-            print(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
+            logging.info(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
 
     def drop_all_constraints(self):
         if not self.write_allowed:
