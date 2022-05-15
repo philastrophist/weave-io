@@ -380,6 +380,24 @@ class MergeDependentNode(CollisionManager):
             parent_list.append(f"{parent}")
         dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents + self.relidentproperties + self.dummyrelvars)
         aliases = expand_to_cypher_alias(self.identproperties, *self.parents + self.relidentproperties)
+        variables = set()
+        for p in self.parents:
+            variables.add(p)
+        for v in self.identproperties.values():
+            try:
+                v = v.parent
+            except AttributeError:
+                pass
+            if not isinstance(v, CypherData):
+                variables.add(v)
+        for rel in self.relidentproperties:
+            for v in rel.values():
+                try:
+                    v = v.parent
+                except AttributeError:
+                    pass
+                if not isinstance(v, CypherData):
+                    variables.add(v)
         merge_temp_relations = '\n'.join([f'MERGE {r}' for r in temp_relations])
         merge_final_temp_relation = f"MERGE (temp)-[:TemporaryMerge]->({self.out}: {labels} {self.identproperties})"
         merge_real_relations = '\n'.join([f'MERGE {r}' for r in real_relations])
@@ -388,8 +406,8 @@ class MergeDependentNode(CollisionManager):
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
         optional_match = 'OPTIONAL MATCH ' + ', '.join(test_relations)
         rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
-        collection = f'CALL {{ ' \
-                     f'WITH {", ".join(parent_list)} {optional_match} ' \
+        collection = f'CALL {{ WITH {", ".join(map(str, variables))}' \
+                     f' {optional_match} ' \
                      f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}' \
                      f'}}'
         condition = f"size({self.dummy}) = 0"
@@ -404,7 +422,7 @@ class MergeDependentNode(CollisionManager):
         RETURN {self.out}, {on_create_rel_returns}
         """
         iffalse = f"RETURN ${self.dummy}[0] as {self.out}, {on_match_rel_returns}"
-        when = f"CALL apoc.do.when({condition}, '{iftrue}', '{iffalse}', {{ {dct}, time0:time0}}) yield value as {self.child_holder}"
+        when = f'CALL apoc.do.when({condition}, "{iftrue}", "{iffalse}", {{ {dct}, time0:time0}}) yield value as {self.child_holder}'
         when += f"\n WITH *, {rel_expansion}"
         return dedent(f"CALL apoc.lock.nodes({self.parents})\n{collection}\n{when}")
 

@@ -290,13 +290,7 @@ class Exposure(Hierarchy):
         return cls(ob=ob, casu=casu, system=sys, **factors)
 
 
-class SourcedData(Hierarchy):
-    is_template = True
-    factors = ['sourcefile', 'nrow', 'name']
-    identifier_builder = ['sourcefile', 'nrow', 'name']
-
-
-class Spectrum(SourcedData):
+class Spectrum(Hierarchy):
     is_template = True
     plural_name = 'spectra'
 
@@ -328,6 +322,7 @@ class RawSpectrum(Spectrum2D):
     parents = [CASU, OneOf(Run, one2one=True)]
     products = ['counts1', 'counts2']
     children = [Optional('self', idname='adjunct')]
+    identifier_builder = ['casu', 'run']
 
 
 class Single(Hierarchy):

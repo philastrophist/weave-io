@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 
 from weaveio.hierarchy import Multiple, Hierarchy, OneOf, Optional
-from weaveio.opr3.hierarchy import SourcedData, Spectrum, Author, APS, Measurement, \
+from weaveio.opr3.hierarchy import Spectrum, Author, APS, Measurement, \
     Single, FibreTarget, Exposure, Stack, OB, Superstack, \
     OBSpec, Supertarget, WeaveTarget, _predicate, MCMCMeasurement, Line, SpectralIndex, RedshiftMeasurement, Spectrum1D, ArrayHolder
 from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1SupertargetSpectrum, L1SuperstackSpectrum, L1StackedSpectrum

@@ -23,6 +23,7 @@ class NoSS(Spectrum1D):
     products = ['flux', 'ivar']
     parents = [L1Spectrum]
     children = [Optional('self', idname='adjunct')]
+    identifier_builder = ['l1_spectrum']
 
 
 class L1SingleSpectrum(L1Spectrum, Single):
@@ -32,6 +33,7 @@ class L1SingleSpectrum(L1Spectrum, Single):
     singular_name = 'l1single_spectrum'
     plural_name = 'l1single_spectra'
     parents = L1Spectrum.parents + [RawSpectrum, FibreTarget, ArmConfig]
+    identifier_builder = ['raw_spectrum', 'fibre_target', 'arm_config']
     factors = L1Spectrum.factors + [
         'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
         'wave_cor1', 'wave_corrms1', 'wave_cor2', 'wave_corrms2',
@@ -43,6 +45,8 @@ class L1StackedSpectrum(L1Spectrum, Stacked):
     is_template = True
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
+    parents = [Multiple(L1SingleSpectrum, 2)]
+    identifier_builder = ['l1single_spectra']
 
 
 class L1StackSpectrum(L1StackedSpectrum, Stack):
@@ -51,7 +55,7 @@ class L1StackSpectrum(L1StackedSpectrum, Stack):
     """
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
-    parents = L1StackedSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
 
 
 class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
@@ -60,16 +64,16 @@ class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
     """
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
-    parents = L1StackedSpectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
 
 
-class L1SupertargetSpectrum(L1Spectrum, Supertarget):
+class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
     """
     A stacked spectrum row processed from > 1 single spectrum, belonging to one weavetarget over many different OBSpecs.
     """
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
-    parents = L1Spectrum.parents + [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
