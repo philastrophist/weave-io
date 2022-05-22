@@ -449,7 +449,7 @@ class Data:
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
-                    dryrun=False, do_not_apply_constraints=False, test_one=False) -> pd.DataFrame:
+                    dryrun=False, do_not_apply_constraints=False, test_one=False, debug=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -480,6 +480,9 @@ class Data:
         if test_one:
             batches = batches[:1]
         bar = tqdm(batches)
+        if debug:
+            with open('debug-timestamp.log', 'w') as f:
+                pass
         for filetype, path, slc, part in bar:
             bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
             try:
@@ -491,8 +494,11 @@ class Data:
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
                 cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
-                with open('debug.log', 'w') as f:
-                    f.write(cypher)
+                if debug:
+                    with open('debug-query.log', 'w') as f:
+                        f.write(cypher)
+                    with open('debug-params.log', 'w') as f:
+                        f.write(self.graph.output_for_debug(**params, silent=True))
                 start = time.time()
                 if not dryrun:
                     try:
@@ -519,6 +525,9 @@ class Data:
                 else:
                     self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
                 elapsed_times.append(time.time() - start)
+                if debug:
+                    with open('debug-timestamp.log', 'a') as f:
+                        f.write(str(elapsed_times[-1]) + '\n')
             except (ClientError, DatabaseError, FileExistsError) as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:

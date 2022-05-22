@@ -125,10 +125,11 @@ class Graph(metaclass=ContextMeta):
             raise ConnectionResetError(f"Py2neo dropped the connection because it was taking too long. "
                                        f"Split up your query using batch_size=??")
 
-    def output_for_debug(self, **payload):
+    def output_for_debug(self,  silent=False, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
-        warn(f"When parameters are output for debug in the neo4j desktop, it cannot be guaranteed the data types will remain the same. "
-             f"For certain, infs/nans/None are converted to strings (to avoid this, run your query without using `output_for_debug`)")
+        if not silent:
+            warn(f"When parameters are output for debug in the neo4j desktop, it cannot be guaranteed the data types will remain the same. "
+                 f"For certain, infs/nans/None are converted to strings (to avoid this, run your query without using `output_for_debug`)")
         return f':params {d}'
 
 Graph._context_class = Graph
