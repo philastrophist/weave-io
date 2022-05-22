@@ -1,6 +1,6 @@
 import inspect
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from copy import deepcopy
 from functools import wraps, partial, reduce
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
@@ -474,29 +474,35 @@ class Graphable(metaclass=GraphableMeta):
         return any(n.name in cls.identifier_builder for n in cls.parents + cls.children)
 
     @classmethod
-    def make_schema(cls) -> _Optional[str]:
+    def make_schema(cls) -> List[str]:
         name = cls.__name__
-        if cls.idname is not None:
+        indexes = []
+        nonunique = False
+        if cls.is_template:
+            return []
+        elif cls.idname is not None:
             prop = cls.idname
-            return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY'
+            indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY')
         elif cls.identifier_builder:
-            if cls.has_factor_identity():
+            if cls.has_factor_identity():  # only of factors
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder])
-                return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT ({key}) IS NODE KEY'
-            elif cls.has_rel_identity():
+                indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT ({key}) IS NODE KEY')
+            elif cls.has_rel_identity():  # based on rels from parents/children
+                # create 1 index on id factors and 1 index per factor as well
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
-                # if not len(key):
-                #     raise TypeError(f"No factors are present in the identity builder of {name} to make an index from ")
-                if len(key):
-                    return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
-        elif cls.indexes:
-            key = ', '.join([f'n.{i}' for i in cls.indexes])
-            return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
-        elif cls.is_template:
-            return None
+                if key:  # joint index
+                    indexes.append(f'CREATE INDEX {name}_rel FOR (n:{name}) ON ({key})')
+                # separate indexes
+                indexes += [f'CREATE INDEX {name}_{f} FOR (n:{name}) ON (n.{f})' for f in cls.identifier_builder if f in cls.factors]
         else:
-            raise RuleBreakingException(f"A hierarchy must define an idname, identifier_builder, or index, "
+            nonunique = True
+        if cls.indexes:
+            id = cls.identifier_builder or []
+            indexes += [f'CREATE INDEX {name}_{i} FOR (n:{name}) ON (n.{i})' for i in cls.indexes if i not in id]
+        if not indexes and nonunique:
+            raise RuleBreakingException(f"{name} must define an idname, identifier_builder, or indexes, "
                                         f"unless it is marked as template class for something else (`is_template=True`)")
+        return indexes
 
     @classmethod
     def merge_strategy(cls):

@@ -402,15 +402,17 @@ class MergeDependentNode(CollisionManager):
         merge_final_temp_relation = f"MERGE (temp)-[:TemporaryMerge]->({self.out}: {labels} {self.identproperties})"
         merge_real_relations = '\n'.join([f'MERGE {r}' for r in real_relations])
         on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
-        on_match_rel_returns = ', '.join([f'${dummy}[0] as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
+        on_match_rel_returns = ', '.join([f'${dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
         optional_match = 'OPTIONAL MATCH ' + ', '.join(test_relations)
         rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
-        collection = f'CALL {{ WITH {", ".join(map(str, variables))}' \
-                     f' {optional_match} ' \
-                     f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}' \
-                     f'}}'
-        condition = f"size({self.dummy}) = 0"
+        # collection = f'CALL {{ WITH {", ".join(map(str, variables))}' \
+        #              f' {optional_match} ' \
+        #              f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}' \
+        #              f'}}'
+        collection = f'{optional_match} ' \
+                     # f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}' \
+        condition = f"{self.dummy} is null"
         iftrue = f"""
         WITH {aliases}
         MERGE (temp: TemporaryMerge {{id: $time0}})
@@ -421,7 +423,7 @@ class MergeDependentNode(CollisionManager):
         SET {self.out} += ${self.propvar}
         RETURN {self.out}, {on_create_rel_returns}
         """
-        iffalse = f"RETURN ${self.dummy}[0] as {self.out}, {on_match_rel_returns}"
+        iffalse = f"RETURN ${self.dummy} as {self.out}, {on_match_rel_returns}"
         when = f'CALL apoc.do.when({condition}, "{iftrue}", "{iffalse}", {{ {dct}, time0:time0}}) yield value as {self.child_holder}'
         when += f"\n WITH *, {rel_expansion}"
         return dedent(f"CALL apoc.lock.nodes({self.parents})\n{collection}\n{when}")
@@ -509,7 +511,7 @@ class MergeDependentNode(CollisionManager):
         aliases = expand_to_cypher_alias(self.out, self.propvar, *self.relvars+self.relpropsvars)
         return dedent(f"""
         // post merge
-        call apoc.do.when(size({self.dummy}) = 0,
+        call apoc.do.when({self.dummy} is null,
         "WITH {aliases}\n{self.on_create}\n RETURN $time0",
         "WITH {aliases}\n{self.on_match}\n RETURN $time0",
         {{ {dct} }}) yield value as {self.unnamed}

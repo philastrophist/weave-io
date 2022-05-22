@@ -101,20 +101,21 @@ class Graph(metaclass=ContextMeta):
         return CypherQuery(collision_manager)
 
     def _execute(self, cypher, parameters, backoff=1, limit=10):
-        try:
-            return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
-        except (ConnectionError) as e:
-            logging.info(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
-            if backoff >= limit:
-                raise e
-            sleep(backoff)
-            backoff *= 2
-        except (RuntimeError, IndexError) as e:
-            logging.info(f'Connection failed with an undefined py2neo error, waiting {backoff} seconds to retry. Actual error was {e}')
-            if backoff >= limit:
-                raise e
-            backoff *= 2  # dont sleep retry immediately
-            return self._execute(cypher, parameters, backoff, limit)
+        return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
+        # try:
+        #     pass
+        # except (ConnectionError) as e:
+        #     logging.info(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
+        #     if backoff >= limit:
+        #         raise e
+        #     sleep(backoff)
+        #     backoff *= 2
+        # except (RuntimeError, IndexError) as e:
+        #     logging.info(f'Connection failed with an undefined py2neo error, waiting {backoff} seconds to retry. Actual error was {e}')
+        #     if backoff >= limit:
+        #         raise e
+        #     backoff *= 2  # dont sleep retry immediately
+        #     return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)

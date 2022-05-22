@@ -397,7 +397,7 @@ class Data:
 
     def make_constraints_cypher(self):
         d = {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
-        d['temporary'] = 'CREATE CONSTRAINT ON (t:TemporaryMerge) ASSERT t.id IS UNIQUE'
+        d['temporary'] = ['CREATE CONSTRAINT ON (t:TemporaryMerge) ASSERT t.id IS UNIQUE']
         return d
 
     def apply_constraints(self):
@@ -405,10 +405,10 @@ class Data:
             raise IOError(f"Writing is not allowed")
         templates = []
         equivalencies = []
-        for hier, q in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
-            if q is None:
+        for hier, qs in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
+            if not qs:
                 templates.append(hier)
-            else:
+            for q in qs:
                 try:
                     self.graph.neograph.run(q)
                 except py2neo.ClientError as e:
@@ -420,12 +420,21 @@ class Data:
         if len(equivalencies):
             logging.info(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
 
-    def drop_all_constraints(self):
+    def drop_all_constraints(self, indexes=True):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
         constraints = self.graph.neograph.run('CALL db.constraints() YIELD name return "DROP CONSTRAINT " + name + ";"')
         for constraint in tqdm(constraints, desc='dropping constraints'):
             self.graph.neograph.run(str(constraint)[1:-1])
+        if indexes:
+            self.drop_all_indexes()
+
+    def drop_all_indexes(self):
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
+        indexes = self.graph.neograph.run('CALL db.indexes() yield name, labelsOrTypes where size(labelsOrTypes) > 0 return "DROP INDEX " + name + ";"')
+        for index in tqdm(indexes, desc='dropping indexes'):
+            self.graph.neograph.run(str(index)[1:-1])
 
     def get_extant_files(self):
         return self.graph.execute("MATCH (f:File) RETURN DISTINCT f.fname").to_series(dtype=str).values.tolist()
@@ -471,14 +480,14 @@ class Data:
         if test_one:
             batches = batches[:1]
         bar = tqdm(batches)
-        for filetype, fname, slc, part in bar:
-            bar.set_description(f'{fname}[{slc.start}:{slc.stop}:{part}]')
+        for filetype, path, slc, part in bar:
+            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
             try:
                 if raise_on_duplicate_file:
-                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
-                        raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
+                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=path.name)) != 0:
+                        raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
                 with self.write_cypher(collision_manager) as query:
-                    filetype.read(self.rootdir, fname, slc, part)
+                    filetype.read(self.rootdir, path, slc, part)
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
                 cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
@@ -490,16 +499,17 @@ class Data:
                         results = self.graph.execute(cypher, **params)
                         stats.append(results.stats())
                         timestamp = results.evaluate()
-                    except ConnectionError as e:
+                    except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
                         is_running = True
                         while is_running:
                             is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
                             time.sleep(1)
-                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=str(fname))
+                            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}] (waiting for query to finish)')
+                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
                         successful = r.evaluate()
                         timestamp = successful
                         if not successful:
-                            raise ConnectionError(f"{fname} could not be written to the database see neo4j logs for more details") from e
+                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
                         stats.append(r.stats())
                     if timestamp is None:
                         logging.warning(f"This query terminated early due to either an empty input table/data or "
