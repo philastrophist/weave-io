@@ -32,7 +32,7 @@ class L1SingleSpectrum(L1Spectrum, Single):
     """
     singular_name = 'l1single_spectrum'
     plural_name = 'l1single_spectra'
-    parents = L1Spectrum.parents + [RawSpectrum, FibreTarget, ArmConfig]
+    parents = [FibreTarget, RawSpectrum, ArmConfig] + L1Spectrum.parents  # order matters for speed! filters by fibretarget, then rawspectrum, then armconfig
     identifier_builder = ['raw_spectrum', 'fibre_target', 'arm_config']
     factors = L1Spectrum.factors + [
         'rms_arc1', 'rms_arc2', 'resol', 'helio_cor',
@@ -55,7 +55,7 @@ class L1StackSpectrum(L1StackedSpectrum, Stack):
     """
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(OB, FibreTarget, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OB, ArmConfig))]
 
 
 class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
@@ -64,7 +64,7 @@ class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
     """
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(OBSpec, FibreTarget, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OBSpec, ArmConfig))]
 
 
 class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):

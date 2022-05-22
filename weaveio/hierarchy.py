@@ -608,9 +608,9 @@ class Hierarchy(Graphable):
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
-        # parents = {p.singular_name if isinstance(p, (type, One2One)) else p.name: p for p in self.parents}
-        parents = {getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name: p for p in self.parents}
-        children = {getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name: c for c in self.children}
+        # ordered here since we need to use the first parent as a match point in merge_dependent_node
+        parents = OrderedDict([(getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name, p) for p in self.parents])
+        children = OrderedDict([(getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name, c) for c in self.children])
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)

@@ -311,7 +311,7 @@ class Run(Hierarchy):
     A run belongs to an exposure, which always consists of one or two runs (per arm).
     """
     idname = 'id'
-    parents = [ArmConfig, Exposure]
+    parents = [Exposure, ArmConfig]
     children = [Optional('self', idname='adjunct')]
 
 
