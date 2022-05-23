@@ -55,6 +55,10 @@ class File(Hierarchy):
         return (f for f in Path(directory).rglob('*.fit*') if cls.match_file(directory, f, graph))
 
     @classmethod
+    def check_mos(cls, path):
+        return 'IFU' not in fits.open(path)[0].header['OBSMODE']
+
+    @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None) -> 'File':
         raise NotImplementedError
 

@@ -45,7 +45,7 @@ class L1StackedSpectrum(L1Spectrum, Stacked):
     is_template = True
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2)]
+    parents = [Multiple(L1SingleSpectrum, 2)] + L1Spectrum.parents
     identifier_builder = ['l1single_spectra']
 
 
@@ -55,7 +55,7 @@ class L1StackSpectrum(L1StackedSpectrum, Stack):
     """
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OB, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OB, ArmConfig))] + L1Spectrum.parents
 
 
 class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
@@ -64,7 +64,7 @@ class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
     """
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OBSpec, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OBSpec, ArmConfig))] + L1Spectrum.parents
 
 
 class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
@@ -73,7 +73,7 @@ class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
     """
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))]
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))] + L1Spectrum.parents
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

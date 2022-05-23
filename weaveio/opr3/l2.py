@@ -26,9 +26,8 @@ class IngestedSpectrum(Spectrum1D):
     """
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
-    factors = ['sourcefile', 'nrow', 'name', 'colour_code']
     parents = [L1Spectrum, APS]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'l1_spectrum', 'aps']
+    identifier_builder = ['l1_spectrum', 'aps']
     products = ['flux', 'error', 'wvl']
 
 
@@ -38,7 +37,7 @@ class IvarIngestedSpectrum(IngestedSpectrum):
 
 class CombinedIngestedSpectrum(IngestedSpectrum):
     parents = [Multiple(L1Spectrum, 1, 3), APS]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'l1_spectra', 'aps']
+    identifier_builder = ['l1_spectra', 'aps']
 
 
 class IvarCombinedIngestedSpectrum(CombinedIngestedSpectrum):
@@ -51,15 +50,14 @@ class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
 
 class ModelSpectrum(Spectrum1D):
     is_template = True
-    factors = ['sourcefile', 'nrow', 'name', 'colour_code']
     parents = [OneOf(IngestedSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'ingested_spectrum', 'colour_code']
+    identifier_builder = ['ingested_spectrum']
     products = ['flux']
 
 
 class CombinedModelSpectrum(ModelSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'combined_ingested_spectrum', 'colour_code']
+    identifier_builder = ['combined_ingested_spectrum']
 
 
 # This allows us to use 'clean' to talk about the clean model or clean spectrum
@@ -75,15 +73,15 @@ class GandalfModelSpectrum(CombinedModelSpectrum, GandalfSpectrum):
 
 class GandalfEmissionModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'gandalf_model_spectrum', 'colour_code']
+    identifier_builder = ['gandalf_model_spectrum']
 
 class GandalfCleanModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'gandalf_model_spectrum', 'colour_code']
+    identifier_builder = ['gandalf_model_spectrum']
 
 class GandalfCleanIngestedSpectrum(GandalfModelSpectrum, GandalfSpectrum):
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
-    identifier_builder = ['sourcefile', 'nrow', 'name', 'combined_ingested_spectrum', 'colour_code']
+    identifier_builder = ['combined_ingested_spectrum']
 
 
 class Fit(Hierarchy):
@@ -105,7 +103,7 @@ class Template(Fit):
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     children = [OneOf(RedshiftArray, one2one=True)]
     factors = ['chi2_array', 'name']
-    indexes = ['name']
+    identifier_builder = ['model_spectra', 'combined_model_spectrum', 'name']
 
 
 class Redrock(Fit):
@@ -114,7 +112,7 @@ class Redrock(Fit):
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     template_names = ['galaxy', 'qso', 'star_a', 'star_b', 'star_cv', 'star_f', 'star_g', 'star_k', 'star_m', 'star_wd']
     parents += [OneOf(Template, idname=x, one2one=True) for x in template_names]
-    identifier_builder = ['model_spectra', 'snr']
+    identifier_builder = ['model_spectra', 'combined_model_spectrum']
 
 
 class RVSpecfit(Fit):
@@ -122,27 +120,27 @@ class RVSpecfit(Fit):
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
     factors += Measurement.as_factors('vrad', 'logg', 'teff', 'feh', 'alpha')
-    identifier_builder = ['model_spectra', 'snr']
+    identifier_builder = ['model_spectra', 'combined_model_spectrum']
 
 
 class Ferre(Fit):
     parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
     factors += Measurement.as_factors('micro', 'logg', 'teff', 'feh', 'alpha', 'elem')
-    identifier_builder = ['model_spectra', 'snr']
+    identifier_builder = ['model_spectra', 'combined_model_spectrum']
 
 
 class Gandalf(Fit):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
     factors = Fit.factors + ['fwhm_flag'] + Measurement.as_factors('zcorr')
     factors += Line.as_factors(gandalf_line_names) + SpectralIndex.as_factors(gandalf_index_names)
-    identifier_builder = ['gandalf_model_spectrum', 'zcorr']
+    identifier_builder = ['gandalf_model_spectrum']
 
 
 class PPXF(Fit):
     parents = [OneOf(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6')
-    identifier_builder = ['combined_model_spectrum', 'v']
+    identifier_builder = ['combined_model_spectrum']
 
 
 class L2Product(L2):

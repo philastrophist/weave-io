@@ -243,8 +243,8 @@ class GraphableMeta(type):
                         p = p.singular_name
                 if p in parentnames:
                     mn, mx = parentnames[p]
-                    if mn == 0:
-                        raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
+                    # if mn == 0:
+                    #     raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
                     # if mx != mn:
                     #     raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
                 elif p in cls.factors:

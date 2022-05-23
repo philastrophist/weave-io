@@ -428,42 +428,6 @@ class MergeDependentNode(CollisionManager):
         when += f"\n WITH *, {rel_expansion}"
         return dedent(f"CALL apoc.lock.nodes({self.parents})\n{collection}\n{when}")
 
-
-    # @property
-    # def merge_statement(self):
-    #     labels = ':'.join(map(str, self.labels))
-    #     relations = []
-    #     for i, (parent, reltype, relidentprop, dummyrelvar) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties, self.dummyrelvars)):
-    #         rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
-    #         if i == 0:
-    #             child = f'({self.dummy}: {labels} {self.identproperties})'
-    #         else:
-    #             child = f'({self.dummy})'
-    #         relations.append(rel + child)
-    #     optional_match = 'OPTIONAL MATCH ' + ',\n'.join(relations)
-    #     create = '\n'.join(['MERGE ' + r for r in relations])
-    #     for dummy, real in zip(self.dummyrelvars, self.relvars):
-    #         create = create.replace(f'[{dummy}:', f'[{real}:')
-    #     create = create.replace(f'{self.dummy}', f'{self.out}')
-    #     on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
-    #     on_match_rel_returns = ', '.join([f'{dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
-    #     rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
-    #     aliases = expand_to_cypher_alias(self.identproperties, *self.parents+self.relidentproperties+self.dummyrelvars)
-    #     dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents+self.relidentproperties+self.dummyrelvars)
-    #     query = f"""
-    #     CALL apoc.lock.nodes({self.parents}) // let's lock ahead this time
-    #     {optional_match}
-    #     call apoc.do.when({self.dummy} IS NULL,
-    #             "WITH {aliases}
-    #             {create}
-    #             SET {self.out} += ${self.propvar}
-    #             RETURN {self.out}, {on_create_rel_returns}",   // created
-    #         "RETURN ${self.dummy} as {self.out}, {on_match_rel_returns}",  // matched
-    #         {{ {dct} }}) yield value as {self.child_holder}
-    #     WITH *, {rel_expansion}
-    #     """
-    #     return dedent(query)
-
     @property
     def on_match(self):  # remember, we are in a call context
         query = ''

@@ -299,7 +299,7 @@ class L1StackedFile(L1File):
                 single_spectrum = L1SingleSpectrum.find(anonymous_parents=[fibretarget], anonymous_children=[single_file])
             single_spectra = collect(single_spectrum)
             # use the generic "L1stackspectrum" to avoid writing out again for superstacks
-            stack_spectrum = cls.SpectrumType(l1single_spectra=single_spectra, ob=ob,
+            stack_spectrum = cls.SpectrumType(l1single_spectra=[single_spectra[i] for i, _ in enumerate(single_fnames)], ob=ob,
                                               arm_config=armconfig, fibre_target=fibretarget,
                                               tables=fibrow,
                                               adjunct=adjunct, wavelength_holder=wavelengths)

@@ -449,7 +449,8 @@ class Data:
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
-                    dryrun=False, do_not_apply_constraints=False, test_one=False, debug=False) -> pd.DataFrame:
+                    dryrun=False, do_not_apply_constraints=False, test_one=False,
+                    debug=False, debug_time=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -479,8 +480,9 @@ class Data:
             logging.info(f"Dryrun: will not write to database. However, reading is permitted")
         if test_one:
             batches = batches[:1]
-        bar = tqdm(batches)
-        if debug:
+        _, path, slc, part = batches[0]
+        bar = tqdm(batches, desc=f'{path}[{slc.start}:{slc.stop}:{part}]')
+        if debug or debug_time:
             with open('debug-timestamp.log', 'w') as f:
                 pass
         for filetype, path, slc, part in bar:
@@ -525,7 +527,7 @@ class Data:
                 else:
                     self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
                 elapsed_times.append(time.time() - start)
-                if debug:
+                if debug or debug_time:
                     with open('debug-timestamp.log', 'a') as f:
                         f.write(str(elapsed_times[-1]) + '\n')
             except (ClientError, DatabaseError, FileExistsError) as e:
@@ -566,7 +568,7 @@ class Data:
         diff = len(filelist) - len(filtered_filelist)
         if diff:
             print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
-        return filtered_filelist
+        return [f for f in tqdm(filtered_filelist, desc='getting MOS files') if File.check_mos(f)]
 
     def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
                         batch_size=None, parts=None, dryrun=False) -> pd.DataFrame:
