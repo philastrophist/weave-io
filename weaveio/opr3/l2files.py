@@ -17,7 +17,7 @@ from weaveio.opr3.hierarchy import APS, OB, OBSpec, Exposure, WeaveTarget, _pred
 from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1SupertargetSpectrum
 from weaveio.opr3.l2 import L2, L2Single, L2Stack, L2Superstack, L2Supertarget, IngestedSpectrum, Fit, ModelSpectrum, Redrock, \
     RVSpecfit, Ferre, PPXF, Gandalf, GandalfModelSpectrum, CombinedIngestedSpectrum, CombinedModelSpectrum, Template, RedshiftArray, IvarIngestedSpectrum, IvarCombinedIngestedSpectrum, MaskedCombinedIngestedSpectrum, GandalfEmissionModelSpectrum, GandalfCleanModelSpectrum, \
-    GandalfCleanIngestedSpectrum, L2Product
+    GandalfCleanIngestedSpectrum, L2Product, gandalf_line_names, gandalf_index_names
 from weaveio.opr3.l1files import L1File, L1SuperstackFile, L1StackFile, L1SingleFile, L1SupertargetFile
 from weaveio.writequery import CypherData, CypherVariable
 from weaveio.writequery.actions import string_append
@@ -53,6 +53,35 @@ def filter_products_from_table(table: Table, maxlength: int) -> Table:
         t.rename_column(col, col.lower())
     return t
 
+
+def extract_lines_names(expected_line_names, colnames):
+    """
+    returns dictionary of required factor names and values that can be take from the hdu
+    """
+    actual_line_names = sorted([i[len('FLUX') + 1:] for i in colnames if i.startswith('FLUX')], key=lambda x: float(x.split('_')[1]))
+    # actual_line_names = [i.lower().replace(']', '').replace('[', '') for i in actual_line_columns]
+    d = {}
+    for name in actual_line_names:
+        if name in expected_line_names:
+            d[f"{name}_aon"] = f'AON_{name}'
+            d[f"{name}_ebmv"] = f'EBV_{name}'
+            d[f"{name}_flux"] = f'FLUX_{name}'
+            d[f"{name}_flux_error"] = f'ERR_FLUX_{name}'
+            d[f"{name}_amp_error"] = f'ERR_AMPL_{name}'
+            d[f"{name}_redshift"] = f'Z_{name}'
+            d[f"{name}_redshift_error"] = f'ERR_Z_{name}'
+            d[f"{name}_sigma"] = f'SIGMA_{name}'
+            d[f"{name}_sigma_error"] = f'ERR_SIGMA_{name}'
+    return d
+
+
+def extract_indices_names(expected_index_names, colnames):
+    d = {}
+    for name in expected_index_names:
+        if name in colnames:
+            d[f'{name}'] = name
+            d[f'{name}_error'] = f'ERR_{name}'
+    return d
 
 FitSpecs = namedtuple('FitSpecs', ['individuals', 'individual_models', 'combined', 'combined_model', 'colour_codes', 'nrow'])
 GandalfSpecs = namedtuple('GandalfSpecs', ['model', 'ingested', 'emission', 'clean_model', 'clean_ingested', 'nrow'])
@@ -358,6 +387,8 @@ class L2File(File):
         if len(spectrum_hdu.data) == 0:
             return
         replacements = column_name_acronym_replacements(colnames, 'gand')
+        replacements.update(extract_lines_names(gandalf_line_names, colnames))
+        replacements.update(extract_indices_names(gandalf_index_names, colnames))
         with unwind(safe_table, enumerated=True) as (row, nrow):
             gandalf_specs, l1spectra, fibretargets = cls.read_l2product_table(this_fname, spectrum_hdu, row, nrow,
                                                           parent_l1filenames, None,

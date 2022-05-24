@@ -352,9 +352,9 @@ class MCMCMeasurement(Measurement):
 
 class Line(Measurement):
     is_template = True
-    factors = ['wvl', 'aon', 'vaccum']
+    factors = ['aon']
     factors += Measurement.as_factors('flux', 'redshift', 'sigma', 'ebmv', 'amp')
-    indexes = ['wvl']
+    indexes = []
 
 
 class SpectralIndex(Measurement):

@@ -13,8 +13,8 @@ from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1Sup
 HERE = Path(os.path.dirname(os.path.abspath(__file__)))
 gandalf_lines = pd.read_csv(HERE / 'expected_lines.csv', sep=' ')
 gandalf_indices = pd.read_csv(HERE / 'expected_line_indices.csv', sep=' ')
-gandalf_lines['name'] = gandalf_lines['name'].str.replace('[', '').str.replace(']', '').str.lower()
-gandalf_line_names = (gandalf_lines['name'] + '_' + gandalf_lines['lambda'].apply(lambda x: f'{x:.0f}')).values.tolist()
+# gandalf_lines['name'] = gandalf_lines['name'].str.replace('[', '').str.replace(']', '').str.lower()
+gandalf_line_names = (gandalf_lines['name'] + '_' + gandalf_lines['lambda'].apply(lambda x: f'{x:.2f}')).values.tolist()
 gandalf_index_names = gandalf_indices['name'].values.tolist()
 
 
