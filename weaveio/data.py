@@ -119,8 +119,8 @@ def expand_template_relation(relation):
     """
     Returns a list of relations that relate to each non-template class
     e.g.
-    >>> expand_template_relation(Multiple(L1StackSpectrum))
-    [Multiple(L1SingleSpectrum), Multiple(L1OBStackSpectrum), Multiple(L1SuperstackSpectrum)]
+    >>> expand_template_relation(Multiple(L1StackedSpectrum))
+    [Multiple(L1SingleSpectrum), Multiple(L1StackSpectrum), Multiple(L1SuperstackSpectrum)]
     """
     if not relation.node.is_template:
         return [relation]
@@ -260,8 +260,11 @@ class Data:
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
             self.relation_graphs.append(make_relation_graph(hierarchies_from_files(*self.filetypes[:i+1])))
-        self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
-        self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
+        if self.filetypes:
+            self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
+            self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
+        else:
+            self.hierarchies = set()
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -393,17 +396,19 @@ class Data:
         return Graph(host=self.host, port=self.port, name=self.dbname, write=self.write_allowed, **d)
 
     def make_constraints_cypher(self):
-        return {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
+        d = {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
+        d['temporary'] = ['CREATE CONSTRAINT ON (t:TemporaryMerge) ASSERT t.id IS UNIQUE']
+        return d
 
     def apply_constraints(self):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
         templates = []
         equivalencies = []
-        for hier, q in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
-            if q is None:
+        for hier, qs in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
+            if not qs:
                 templates.append(hier)
-            else:
+            for q in qs:
                 try:
                     self.graph.neograph.run(q)
                 except py2neo.ClientError as e:
@@ -411,19 +416,36 @@ class Data:
                        equivalencies.append(hier)
                        templates.append(hier)
         if len(templates):
-            print(f'No index/constraint was made for {templates}')
+            logging.info(f'No index/constraint was made for {templates}')
         if len(equivalencies):
-            print(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
+            logging.info(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
 
-    def drop_all_constraints(self):
+    def drop_all_constraints(self, indexes=True):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
         constraints = self.graph.neograph.run('CALL db.constraints() YIELD name return "DROP CONSTRAINT " + name + ";"')
         for constraint in tqdm(constraints, desc='dropping constraints'):
             self.graph.neograph.run(str(constraint)[1:-1])
+        if indexes:
+            self.drop_all_indexes()
 
-    def get_extant_files(self):
-        return self.graph.execute("MATCH (f:File) RETURN DISTINCT f.fname").to_series(dtype=str).values.tolist()
+    def drop_all_indexes(self):
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
+        indexes = self.graph.neograph.run('CALL db.indexes() yield name, labelsOrTypes where size(labelsOrTypes) > 0 return "DROP INDEX " + name + ";"')
+        for index in tqdm(indexes, desc='dropping indexes'):
+            self.graph.neograph.run(str(index)[1:-1])
+
+    def get_extant_files(self, *filetypes, return_only_fname=True):
+        filetypes = [self.singular_hierarchies[self.singular_name(f)].__name__ for f in filetypes]
+        if not filetypes:
+            filetypes = ['File']
+        r = 'fname' if return_only_fname else 'path'
+        result = self.graph.execute(f"MATCH (f:File) where any(l in labels(f) where l in $filetypes) RETURN DISTINCT f.{r}", filetypes=filetypes).to_series(dtype=str).values.tolist()
+        if return_only_fname:
+            return result
+        return list(map(lambda x: self.rootdir / x, result))
+
 
     def raise_collisions(self):
         """
@@ -433,9 +455,24 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
+    def get_state_of_file(self, fname: str) -> int:
+        """Returns the state (timestamp) of the creation of the last data product belong to a given file"""
+        c = self.data.execute("match (f: File {fname: $fname}) optional match (f)<-[:is_required_by]-(h:Hierarchy) "
+                          "where not h:HDU with  h.`_dbcreated` as d order by d desc return d limit 1", fname=fname)
+        return c.evaluate()
+
+    def restore_state(self, state: int):
+        """
+        Restores database to the given state (timestamp). Danger zone here.
+        """
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
+        return self.graph.execute('match (n) where n.`_dbcreated` > $timestamp detach delete n', timestamp=state)
+
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
-                    collision_manager='ignore', batch_size=None, halt_on_error=True,
-                    dryrun=False, do_not_apply_constraints=False) -> pd.DataFrame:
+                    collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
+                    dryrun=False, do_not_apply_constraints=False, test_one=False,
+                    debug=False, debug_time=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -456,48 +493,66 @@ class Data:
                 raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
             filetype = matches[0]
             filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
-            slices = filetype.get_batches(path, filetype_batch_size)
-            batches += [(filetype, path.relative_to(self.rootdir), slc) for slc in slices]
+            slices = filetype.get_batches(path, filetype_batch_size, parts)
+            batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
         timestamps = []
         if dryrun:
             logging.info(f"Dryrun: will not write to database. However, reading is permitted")
-        bar = tqdm(batches)
-        for filetype, fname, slc in bar:
-            bar.set_description(f'{fname}[{slc.start}:{slc.stop}]')
+        if test_one:
+            batches = batches[:1]
+        _, path, slc, part = batches[0]
+        bar = tqdm(batches, desc=f'{path}[{slc.start}:{slc.stop}:{part}]')
+        if debug or debug_time:
+            with open('debug-timestamp.log', 'w') as f:
+                pass
+        for filetype, path, slc, part in bar:
+            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
             try:
                 if raise_on_duplicate_file:
-                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=fname)) != 0:
-                        raise FileExistsError(f"{fname} exists in the DB and raise_on_duplicate_file=True")
+                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=path.name)) != 0:
+                        raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
                 with self.write_cypher(collision_manager) as query:
-                    filetype.read(self.rootdir, fname, slc)
+                    filetype.read(self.rootdir, path, slc, part)
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
                 cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
+                if debug:
+                    with open('debug-query.log', 'w') as f:
+                        f.write(cypher)
+                    with open('debug-params.log', 'w') as f:
+                        f.write(self.graph.output_for_debug(**params, silent=True))
                 start = time.time()
                 if not dryrun:
                     try:
                         results = self.graph.execute(cypher, **params)
                         stats.append(results.stats())
                         timestamp = results.evaluate()
-                    except ConnectionError as e:
+                    except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
                         is_running = True
                         while is_running:
                             is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
                             time.sleep(1)
-                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=str(fname))
+                            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}] (waiting for query to finish)')
+                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
                         successful = r.evaluate()
                         timestamp = successful
                         if not successful:
-                            raise ConnectionError(f"{fname} could not be written to the database see neo4j logs for more details") from e
+                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
                         stats.append(r.stats())
                     if timestamp is None:
-                        logging.warning(f"This query terminated early due to an empty input table/data. "
-                             f"Adjust your `.read` method to allow for empty tables/data")
+                        logging.warning(f"This query terminated early due to either an empty input table/data or "
+                                        f"a match within the query returned no matches. "
+                                        f"Adjust your `.read` method and query to allow for empty tables/data")
                     timestamps.append(timestamp)
+                else:
+                    self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
                 elapsed_times.append(time.time() - start)
-            except (ClientError, DatabaseError, FileExistsError) as e:
+                if debug or debug_time:
+                    with open('debug-timestamp.log', 'a') as f:
+                        f.write(str(elapsed_times[-1]) + '\n')
+            except (ClientError, DatabaseError, FileExistsError, ConnectionError) as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:
                     raise e
@@ -506,14 +561,15 @@ class Data:
             df = pd.DataFrame(stats)
             df['timestamp'] = timestamps
             df['elapsed_time'] = elapsed_times
-            _, df['fname'], slcs = zip(*batches)
+            _, df['fname'], slcs, parts = zip(*batches)
             df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
+            df['part'] = parts
         elif dryrun:
-            df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end'])
+            df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end', 'part'])
             df['elapsed_time'] = elapsed_times
         else:
             df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
-        return df.set_index(['fname', 'batch_start', 'batch_end'])
+        return df.set_index(['fname', 'batch_start', 'batch_end', 'part'])
 
     def find_files(self, *filetype_names, skip_extant_files=True):
         filelist = []
@@ -528,19 +584,19 @@ class Data:
             filelist += [i for i in filetype.match_files(self.rootdir, self.graph)]
         if skip_extant_files:
             extant_fnames = self.get_extant_files() if skip_extant_files else []
-            filtered_filelist = [i for i in filelist if str(i.relative_to(self.rootdir)) not in extant_fnames]
+            filtered_filelist = [i for i in filelist if str(i.name) not in extant_fnames]
         else:
             filtered_filelist = filelist
         diff = len(filelist) - len(filtered_filelist)
         if diff:
             print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
-        return filtered_filelist
+        return [f for f in tqdm(filtered_filelist, desc='getting MOS files') if File.check_mos(f)]
 
     def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
-                        dryrun=False) -> pd.DataFrame:
+                        batch_size=None, parts=None, dryrun=False) -> pd.DataFrame:
         filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
         return self.write_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
-                                dryrun=dryrun)
+                                dryrun=dryrun, batch_size=batch_size, parts=parts)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]

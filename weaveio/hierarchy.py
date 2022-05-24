@@ -1,6 +1,6 @@
 import inspect
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from copy import deepcopy
 from functools import wraps, partial, reduce
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
@@ -10,6 +10,7 @@ from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
 from .utilities import Varname, make_plural, int_or_none, camelcase2snakecase, snakecase2camelcase
+from .writequery.base import CypherVariableItem, Alias
 
 
 def _convert_types_to_node(x):
@@ -35,6 +36,7 @@ unwind = hierarchy_query_decorator(writequery.unwind)
 merge_node = hierarchy_query_decorator(writequery.merge_node)
 match_node = hierarchy_query_decorator(writequery.match_node)
 match_pattern_node = hierarchy_query_decorator(writequery.match_pattern_node)
+match_branch_node = hierarchy_query_decorator(writequery.match_branch_node)
 collect = hierarchy_query_decorator(writequery.collect)
 merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
 set_version = hierarchy_query_decorator(writequery.set_version)
@@ -73,6 +75,10 @@ class Multiple:
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
+
+    @property
+    def is_optional(self):
+        return self.minnumber == 0
 
     @property
     def name(self):
@@ -199,7 +205,6 @@ class GraphableMeta(type):
             raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
         if cls.indexes and (cls.idname is not None or cls.identifier_builder is not None):
             raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
-        nparents_in_id = 0
         parentnames = {}
         cls.children = deepcopy(cls.children)  # sever link so that changes here dont affect base classes
         cls.parents = deepcopy(cls.parents)
@@ -238,11 +243,10 @@ class GraphableMeta(type):
                         p = p.singular_name
                 if p in parentnames:
                     mn, mx = parentnames[p]
-                    if mn == 0:
-                        raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
+                    # if mn == 0:
+                    #     raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
                     # if mx != mn:
                     #     raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
-                    nparents_in_id += mx
                 elif p in cls.factors:
                     pass
                 else:
@@ -470,28 +474,35 @@ class Graphable(metaclass=GraphableMeta):
         return any(n.name in cls.identifier_builder for n in cls.parents + cls.children)
 
     @classmethod
-    def make_schema(cls) -> _Optional[str]:
+    def make_schema(cls) -> List[str]:
         name = cls.__name__
-        if cls.idname is not None:
+        indexes = []
+        nonunique = False
+        if cls.is_template:
+            return []
+        elif cls.idname is not None:
             prop = cls.idname
-            return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY'
+            indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY')
         elif cls.identifier_builder:
-            if cls.has_factor_identity():
+            if cls.has_factor_identity():  # only of factors
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder])
-                return f'CREATE CONSTRAINT {name} ON (n:{name}) ASSERT ({key}) IS NODE KEY'
-            elif cls.has_rel_identity():
+                indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT ({key}) IS NODE KEY')
+            elif cls.has_rel_identity():  # based on rels from parents/children
+                # create 1 index on id factors and 1 index per factor as well
                 key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
-                if not len(key):
-                    raise TypeError(f"No factors are present in the identity builder of {name} to make an index from ")
-                return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
-        elif cls.indexes:
-            key = ', '.join([f'n.{i}' for i in cls.indexes])
-            return f'CREATE INDEX {name} FOR (n:{name}) ON ({key})'
-        elif cls.is_template:
-            return None
+                if key:  # joint index
+                    indexes.append(f'CREATE INDEX {name}_rel FOR (n:{name}) ON ({key})')
+                # separate indexes
+                indexes += [f'CREATE INDEX {name}_{f} FOR (n:{name}) ON (n.{f})' for f in cls.identifier_builder if f in cls.factors]
         else:
-            raise RuleBreakingException(f"A hierarchy must define an idname, identifier_builder, or index, "
+            nonunique = True
+        if cls.indexes:
+            id = cls.identifier_builder or []
+            indexes += [f'CREATE INDEX {name}_{i} FOR (n:{name}) ON (n.{i})' for i in cls.indexes if i not in id]
+        if not indexes and nonunique:
+            raise RuleBreakingException(f"{name} must define an idname, identifier_builder, or indexes, "
                                         f"unless it is marked as template class for something else (`is_template=True`)")
+        return indexes
 
     @classmethod
     def merge_strategy(cls):
@@ -597,9 +608,9 @@ class Hierarchy(Graphable):
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
-        # parents = {p.singular_name if isinstance(p, (type, One2One)) else p.name: p for p in self.parents}
-        parents = {getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name: p for p in self.parents}
-        children = {getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name: c for c in self.children}
+        # ordered here since we need to use the first parent as a match point in merge_dependent_node
+        parents = OrderedDict([(getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name, p) for p in self.parents])
+        children = OrderedDict([(getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name, c) for c in self.children])
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
@@ -613,7 +624,11 @@ class Hierarchy(Graphable):
                 if isinstance(i.node, str):
                     i.instantate_node(hierarchies)
 
-    def __init__(self, do_not_create=False, tables=None, **kwargs):
+    def __init__(self, do_not_create=False, tables=None, tables_replace: Dict = None,
+                 **kwargs):
+        if tables_replace is None:
+            tables_replace = {}
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
         self.instantate_nodes()
         self.uses_tables = False
         if tables is None:
@@ -629,8 +644,10 @@ class Hierarchy(Graphable):
         # add any data held in a neo4j unwind table
         for k, v in self.specification.items():
             if k not in kwargs:
+                if isinstance(v, Multiple) and v.minnumber == 0:  # i.e. optional
+                    continue
                 if tables is not None:
-                    kwargs[k] = tables.get(k, alias=False)
+                    kwargs[k] = tables.get(tables_replace.get(k, k), alias=False)
         self._kwargs = kwargs.copy()
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
@@ -668,3 +685,38 @@ class Hierarchy(Graphable):
                 raise ValueError(f"Cannot assign an id of None to {self}")
             setattr(self, self.idname, self.identifier)
         super(Hierarchy, self).__init__(predecessors, successors, do_not_create)
+
+    def __getitem__(self, item):
+        assert isinstance(item, str)
+        getitem = CypherVariableItem(self.node, item)
+        query = CypherQuery.get_context()
+        if isinstance(item, int):
+            item = f'{self.namehint}_index{item}'
+        alias_statement = Alias(getitem, str(item))
+        query.add_statement(alias_statement)
+        return alias_statement.out
+
+    def attach_optionals(self, **optionals):
+        try:
+            query = CypherQuery.get_context()  # type: CypherQuery
+            collision_manager = query.collision_manager
+        except ContextError:
+            return
+        reltype = 'is_required_by'
+        parents = [getattr(p, 'relation_idname', None) or p.singular_name for p in self.parents if isinstance(p, Multiple) and p.is_optional]
+        children = [getattr(c, 'relation_idname', None) or c.singular_name for c in self.children if isinstance(c, Multiple) and c.is_optional]
+        for key, item in optionals.items():
+            if key in parents:
+                parent, child = item.node, self.node
+            elif key in children:
+                parent, child = self.node, item.node
+            else:
+                raise KeyError(f"{key} is not a parent or child of {self}")
+            merge_relationship(parent, child, reltype, {'order': 0, 'relation_id': key}, {}, collision_manager=collision_manager)
+
+def find_branch(*nodes_or_types):
+    """
+    Given a mix of variables and types along an undirected path (the input order), instantate those types from the graph
+    >>> _, _, l1spectrum, _ = find_branch(fibre, FibreTarget, L1Spectrum, l1file)
+    """
+    return match_branch_node(*[i.__name__ if isinstance(i, type) else i for i in nodes_or_types])

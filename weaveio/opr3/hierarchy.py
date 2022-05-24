@@ -36,12 +36,13 @@ import numpy as np
 from weaveio.config_tables import progtemp_config
 from weaveio.hierarchy import Hierarchy, Multiple, OneOf, Optional
 
+class ArrayHolder(Hierarchy):
+    is_template = True
 
-class WavelengthHolder(Hierarchy):
+class WavelengthHolder(ArrayHolder):
     singular_name = 'wavelength_holder'
     factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
-
 
 class Measurement(Hierarchy):
     factors = ['value', 'error']
@@ -92,12 +93,13 @@ class ArmConfig(Hierarchy):
     identifier_builder = ['resolution', 'vph', 'camera']
 
     def __init__(self, tables=None, **kwargs):
-        if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
-            kwargs['colour'] = 'green'
-        else:
-            kwargs['colour'] = kwargs['camera']
-        kwargs['colour_code'] = kwargs['colour'][0].upper()
-        super().__init__(tables, **kwargs)
+        if not kwargs.get('do_not_create', False):
+            if kwargs['vph'] == 3 and kwargs['camera'] == 'blue':
+                kwargs['colour'] = 'green'
+            else:
+                kwargs['colour'] = kwargs['camera']
+            kwargs['colour_code'] = kwargs['colour'][0].upper()
+        super().__init__(tables=tables, **kwargs)
 
     @classmethod
     def from_progtemp_code(cls, progtemp_code):
@@ -186,6 +188,7 @@ class SurveyTarget(Hierarchy):
     """
     A target which was submitted by a subprogramme contained within a catalogue. This is likely
     the target you want if you not linking observations between subprogrammes.
+    targname is optional for MOS observations
     """
     parents = [SurveyCatalogue, WeaveTarget]
     factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse', 'targprog',
@@ -271,8 +274,9 @@ class Exposure(Hierarchy):
     These are called runs.
     """
     idname = 'mjd'  # globally unique
-    factors = ['exptime', 'seeing', 'windspb', 'windspe', 'humidb', 'humide', 'winddir', 'airpres',
-               'tempb', 'tempe', 'skybrght', 'observer', 'obstype']
+    factors = ['exptime', 'seeingb', 'seeinge', 'windspb', 'windspe', 'telhumb', 'telhume',
+               'winddirb', 'winddire', 'airmass',
+               'teltempb', 'teltempe', 'skybrtel', 'observer', 'obstype']
     parents = [OB, CASU, System]
 
 
@@ -286,13 +290,7 @@ class Exposure(Hierarchy):
         return cls(ob=ob, casu=casu, system=sys, **factors)
 
 
-class SourcedData(Hierarchy):
-    is_template = True
-    factors = ['sourcefile', 'nrow', 'name']
-    identifier_builder = ['sourcefile', 'nrow', 'name']
-
-
-class Spectrum(SourcedData):
+class Spectrum(Hierarchy):
     is_template = True
     plural_name = 'spectra'
 
@@ -313,7 +311,7 @@ class Run(Hierarchy):
     A run belongs to an exposure, which always consists of one or two runs (per arm).
     """
     idname = 'id'
-    parents = [ArmConfig, Exposure]
+    parents = [Exposure, ArmConfig]
     children = [Optional('self', idname='adjunct')]
 
 
@@ -324,25 +322,26 @@ class RawSpectrum(Spectrum2D):
     parents = [CASU, OneOf(Run, one2one=True)]
     products = ['counts1', 'counts2']
     children = [Optional('self', idname='adjunct')]
+    identifier_builder = ['casu', 'run']
 
 
 class Single(Hierarchy):
     is_template = True
 
 
-class Stack(Hierarchy):
+class Stacked(Hierarchy):
     is_template = True
 
 
-class OBStack(Stack):
+class Stack(Stacked):
     is_template = True
 
 
-class Superstack(Stack):
+class Superstack(Stacked):
     is_template = True
 
 
-class Supertarget(Stack):
+class Supertarget(Stacked):
     is_template = True
 
 
@@ -353,9 +352,9 @@ class MCMCMeasurement(Measurement):
 
 class Line(Measurement):
     is_template = True
-    factors = ['wvl', 'aon', 'vaccum']
+    factors = ['aon']
     factors += Measurement.as_factors('flux', 'redshift', 'sigma', 'ebmv', 'amp')
-    indexes = ['wvl']
+    indexes = []
 
 
 class SpectralIndex(Measurement):

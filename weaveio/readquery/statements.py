@@ -143,7 +143,7 @@ class GetProduct(Operation):
 
     def make_op_string(self, name):
         rel = f"({{}})<-[rel:product {{{{name: '{name}'}}}}]-(hdu: HDU)<--(file: File)"
-        found = f"[{rel} | [file.fname, hdu.extn, rel.index, rel.column_name, False]][0]"
+        found = f"[{rel} | [file.path, hdu.extn, rel.index, rel.column_name, False]][0]"
         return found
 
 

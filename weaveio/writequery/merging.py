@@ -1,5 +1,5 @@
 from textwrap import dedent
-from typing import List, Dict, Union, Tuple, Optional, Iterable
+from typing import List, Dict, Union, Tuple, Optional, Iterable, Type
 
 from . import CypherQuery
 from .base import camelcase, Varname, Statement, CypherVariable, CypherData, CypherVariableItem, Collection
@@ -31,7 +31,7 @@ def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, Cypher
 
 
 def sanitise_variablename(v):
-    return f'{str(v).replace("$", "")}'
+    return f'`{str(v).replace("$", "")}`'
 
 
 def expand_to_cypher_dict(*collections: Union[Dict[str, CypherVariable], CypherVariable]) -> str:
@@ -138,6 +138,18 @@ class MatchPatternNode(Statement):
             wheres = f' WHERE {wheres}'
         return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
 
+class MatchBranchNode(Statement):
+    def __init__(self, *nodes_or_labels):
+        self.nodes_or_labels = nodes_or_labels
+        self.out = CypherVariable(nodes_or_labels)
+        inputs = [i for i in nodes_or_labels if isinstance(i, CypherVariable)]
+        outputs = [i  if isinstance(i, CypherVariable) else CypherVariable(i) for i in nodes_or_labels]
+        super().__init__(inputs, outputs, [])
+
+    def to_cypher(self):
+        nodes = [f'({o}:{n})' if isinstance(n, str) else f'({o})' for n, o in zip(self.nodes_or_labels, self.output_variables)]
+        path = '--'.join(map('{}'.format, nodes))
+        return f'WITH * OPTIONAL MATCH {path}'
 
 class PropertyOverlapError(Exception):
     pass
@@ -350,37 +362,71 @@ class MergeDependentNode(CollisionManager):
     @property
     def merge_statement(self):
         labels = ':'.join(map(str, self.labels))
-        relations = []
-        for i, (parent, reltype, relidentprop, dummyrelvar) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties, self.dummyrelvars)):
-            rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
+        real_relations = []
+        temp_relations = []
+        test_relations = []
+        parent_list = []
+        for i, (parent, reltype, relidentprop, dummyrelvar, relvar) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties, self.dummyrelvars, self.relvars)):
             if i == 0:
                 child = f'({self.dummy}: {labels} {self.identproperties})'
             else:
                 child = f'({self.dummy})'
-            relations.append(rel + child)
-        optional_match = 'OPTIONAL MATCH ' + ',\n'.join(relations)
-        create = '\n'.join(['MERGE ' + r for r in relations])
-        for dummy, real in zip(self.dummyrelvars, self.relvars):
-            create = create.replace(f'[{dummy}:', f'[{real}:')
-        create = create.replace(f'{self.dummy}', f'{self.out}')
+            rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
+            real_rel = f'({parent})-[{relvar}:{reltype} {relidentprop}]->'
+            real_child = f'({self.out})'
+            real_relations.append(real_rel + real_child)
+            temp_relations.append(rel + '(temp)')
+            test_relations.append(rel + child)
+            parent_list.append(f"{parent}")
+        dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents + self.relidentproperties + self.dummyrelvars)
+        aliases = expand_to_cypher_alias(self.identproperties, *self.parents + self.relidentproperties)
+        variables = set()
+        for p in self.parents:
+            variables.add(p)
+        for v in self.identproperties.values():
+            try:
+                v = v.parent
+            except AttributeError:
+                pass
+            if not isinstance(v, CypherData):
+                variables.add(v)
+        for rel in self.relidentproperties:
+            for v in rel.values():
+                try:
+                    v = v.parent
+                except AttributeError:
+                    pass
+                if not isinstance(v, CypherData):
+                    variables.add(v)
+        merge_temp_relations = '\n'.join([f'MERGE {r}' for r in temp_relations])
+        merge_final_temp_relation = f"MERGE (temp)-[:TemporaryMerge]->({self.out}: {labels} {self.identproperties})"
+        merge_real_relations = '\n'.join([f'MERGE {r}' for r in real_relations])
         on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
-        on_match_rel_returns = ', '.join([f'{dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
+        on_match_rel_returns = ', '.join([f'${dummy}[0] as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
-        aliases = expand_to_cypher_alias(self.identproperties, *self.parents+self.relidentproperties+self.dummyrelvars)
-        dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents+self.relidentproperties+self.dummyrelvars)
-        query = f"""
-        CALL apoc.lock.nodes({self.parents}) // let's lock ahead this time
-        {optional_match}
-        call apoc.do.when({self.dummy} IS NULL, 
-                "WITH {aliases} 
-                {create}
-                SET {self.out} += ${self.propvar}
-                RETURN {self.out}, {on_create_rel_returns}",   // created
-            "RETURN ${self.dummy} as {self.out}, {on_match_rel_returns}",  // matched 
-            {{ {dct} }}) yield value as {self.child_holder}
-        WITH *, {rel_expansion}
+        optional_match = f'OPTIONAL MATCH {test_relations[0]}'
+        matches = '\n'.join([f'MATCH {t}' for t in test_relations])
+        rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
+        collection = f'CALL {{ WITH {", ".join(map(str, variables))}\n' \
+                     f'{optional_match}\n' \
+                     f'{matches}\n' \
+                     f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}\n' \
+                     f'}}'
+        condition = f"size({self.dummy}) = 0"
+        iftrue = f"""
+        WITH {aliases}
+        MERGE (temp: TemporaryMerge {{id: $time0}})
+        {merge_temp_relations}
+        {merge_final_temp_relation}
+        {merge_real_relations}
+        DETACH DELETE temp
+        SET {self.out} += ${self.propvar}
+        RETURN {self.out}, {on_create_rel_returns}
         """
-        return dedent(query)
+        iffalse = f"RETURN ${self.dummy}[0] as {self.out}, {on_match_rel_returns}"
+        when = f'CALL apoc.do.when({condition}, "{iftrue}", "{iffalse}", {{ {dct}, time0:time0}}) yield value as {self.child_holder}'
+        when += f"\n WITH *, {rel_expansion}"
+        return dedent(f"CALL apoc.lock.nodes({self.parents})\n{collection}\n{when}")
 
     @property
     def on_match(self):  # remember, we are in a call context
@@ -429,7 +475,7 @@ class MergeDependentNode(CollisionManager):
         aliases = expand_to_cypher_alias(self.out, self.propvar, *self.relvars+self.relpropsvars)
         return dedent(f"""
         // post merge
-        call apoc.do.when({self.dummy} IS NULL,
+        call apoc.do.when(size({self.dummy}) = 0,
         "WITH {aliases}\n{self.on_create}\n RETURN $time0",
         "WITH {aliases}\n{self.on_match}\n RETURN $time0",
         {{ {dct} }}) yield value as {self.unnamed}
@@ -503,6 +549,13 @@ def match_pattern_node(labels: List[str], properties: Dict[str, Union[str, int, 
     statement = MatchPatternNode(labels, properties, parents, children, exclude)
     query.add_statement(statement)
     return statement.out
+
+
+def match_branch_node(*nodes_or_labels: Union[str, Type[CypherVariable]]):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MatchBranchNode(*nodes_or_labels)
+    query.add_statement(statement)
+    return statement.output_variables
 
 
 def merge_single_node(labels, identproperties, properties, collision_manager='track&flag'):

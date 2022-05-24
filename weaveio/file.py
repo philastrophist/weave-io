@@ -12,9 +12,15 @@ from weaveio.hierarchy import Hierarchy, Multiple
 class File(Hierarchy):
     is_template = True
     idname = 'fname'
+    factors = ['path']
     match_pattern = '*.file'
     antimatch_pattern = '^$'
     recommended_batchsize = None
+    parts = [None]
+
+    @classmethod
+    def length(cls, path, part=None):
+        raise NotImplementedError
 
     def open(self):
         try:
@@ -27,14 +33,18 @@ class File(Hierarchy):
             kwargs['fname'] = str(kwargs['fname'])
         if 'path' in kwargs:
             kwargs['path'] = str(kwargs['path'])
+        else:
+            kwargs['path'] = None
         super().__init__(tables=None, **kwargs)
 
     @classmethod
-    def get_batches(cls, path, batch_size):
+    def get_batches(cls, path, batch_size, parts: List[Union[str, None]] = None):
+        if parts is None:
+            parts = cls.parts
+        parts = {p for p in parts if p in cls.parts}
         if batch_size is None:
-            return [slice(None, None)]
-        n = cls.length(path)
-        return (slice(i, i + batch_size) for i in range(0, n, batch_size))
+            return ((slice(None, None), part) for part in parts)
+        return ((slice(i, i + batch_size), part) for part in parts for i in range(0, cls.length(path, part), batch_size))
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -48,14 +58,19 @@ class File(Hierarchy):
         return (f for f in Path(directory).rglob('*.fit*') if cls.match_file(directory, f, graph))
 
     @classmethod
-    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None) -> 'File':
+    def check_mos(cls, path):
+        return 'IFU' not in fits.open(path)[0].header['OBSMODE']
+
+    @classmethod
+    def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None) -> 'File':
         raise NotImplementedError
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str],
                   **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int,'HDU'], 'File', List[_BaseHDU]]:
         path = Path(directory) / Path(fname)
-        file = cls(fname=fname, **hierarchies)
+        relative_path = path.relative_to(Path(directory))
+        file = cls(fname=path.name, path=str(relative_path), **hierarchies)
         hdus = [i for i in fits.open(path)]
         if len(hdus) != len(cls.hdus):
             raise TypeError(f"Class {cls} asserts there are {len(cls.hdus)} HDUs ({list(cls.hdus.keys())})"

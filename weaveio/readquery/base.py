@@ -44,30 +44,31 @@ class BaseQuery:
         """
         return self._G.cypher_lines(self._node), self._G.parameters
 
-    def _compile(self) -> Tuple[List[str], Dict[str, Any]]:
+    def _compile(self) -> Tuple['BaseQuery', Tuple[List[str], Dict[str, Any]]]:
         with logtime('compiling'):
-            return self._precompile()._to_cypher()
+            r = self._precompile()
+            return r, r._to_cypher()
 
     def _execute(self, skip=0, limit=None):
         with logtime('executing'):
-            lines, params = self._compile()
+            new, (lines, params) = self._compile()
             if skip > 0:
                 lines.append(f"SKIP {skip}")
             if limit is not None:
                 lines.append(f"LIMIT {limit}")
-            return self._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()})
+            return new._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()}), new
 
     def _iterate(self, skip=0, limit=None):
-        yield from self._post_process_row(self._data.rowparser.iterate_cursor(self._execute(skip, limit), self._names, self._is_products))
-        yield from self._post_process_row(self._data.rowparser.iterate_cursor(self._execute(skip, limit), self._names, self._is_products))
+        cursor, new = self._execute(skip, limit)
+        yield from new._post_process_row(new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products))
 
     def __iter__(self):
         yield from self._iterate()
 
-    def _to_table(self, skip=0, limit=None) -> Table:
+    def _to_table(self, skip=0, limit=None) -> Tuple[Table, 'BaseQuery']:
         with logtime('total streaming'):
-            cursor = self._execute(skip, limit)
-            return self._data.rowparser.parse_to_table(cursor, self._names, self._is_products)
+            cursor, new = self._execute(skip, limit)
+            return new._data.rowparser.parse_to_table(cursor, new._names, new._is_products), new
 
     def _post_process_table(self, result):
         if self.one_column:
@@ -80,7 +81,11 @@ class BaseQuery:
         return row
 
     def __call__(self, skip=0, limit=None, **kwargs):
-        return self._post_process_table(self._to_table(skip, limit))
+        tbl, new = self._to_table(skip, limit)
+        tbl = new._post_process_table(tbl)
+        if limit == 1:
+            return tbl[0]
+        return tbl
 
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,

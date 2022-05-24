@@ -1,7 +1,8 @@
+from collections import Counter
 from contextlib import contextmanager
 from typing import List, Callable, Union
 
-from .base import CypherQuery, CypherVariable, Collection, CustomStatement
+from .base import CypherQuery, CypherVariable, Collection, CustomStatement, CypherAppendStr, Alias
 from .statements import Unwind, Collect, GroupBy, Copy
 
 
@@ -31,18 +32,22 @@ def unwind(*args, enumerated=False, use_copy=True):
     query.statements.append(Collect(previous))  # allow the collections to be accessible - force
 
 
-def collect(*variables: CypherVariable):
+def collect(*variables: CypherVariable, skip_nones=True):
     query = CypherQuery.get_context()  # type: CypherQuery
     collector = query.statements[-1]
     if not isinstance(collector, Collect):
         raise NameError(f"You must use collect straight after a with context")
     for variable in variables:
         if variable not in query.closed_context:
-            raise ValueError(f"Cannot collect a non unwound variable")
-    collector = Collect(collector.previous, *variables)
+            if skip_nones and variable is None:
+                continue
+            raise ValueError(f"Cannot collect a non unwound variable {variable}")
+    is_duplicated = [v in variables[:i] and v is not None for i, v in enumerate(variables)]  # True only for first instance
+    to_collect = [v for dup, v in zip(is_duplicated, variables) if v is not None and not dup]
+    collector = Collect(collector.previous, *to_collect)
     query.statements[-1] = collector
-    r = [collector[variable] for variable in variables]
-    query.open_contexts[-1] += r
+    r = [collector[v] if v is not None else None for v in variables]  # will pick out duplicates and None after the fact
+    query.open_contexts[-1] += [i for i, dup in zip(r, is_duplicated) if i is not None and not dup]  # dont put duplicate variables into the stack
     if len(r) == 1:
         return r[0]
     return r
@@ -80,3 +85,12 @@ def custom(statement: Callable, inputs: List[CypherVariable] = None, returns: Li
     query = CypherQuery.get_context()  # type: CypherQuery
     query.add_statement(statement)
     return returns
+
+def string_append(string, append, alias=False):
+    appended = CypherAppendStr(string, append)
+    if alias:
+        query = CypherQuery.get_context()
+        alias_statement = Alias(appended, 'append')
+        query.add_statement(alias_statement)
+        return alias_statement.out
+    return appended

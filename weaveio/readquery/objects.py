@@ -51,12 +51,11 @@ class ObjectQuery(GenericObjectQuery):
         """
         Obj = self._data.class_hierarchies[self._obj]
         if Obj.idname is not None:
-            if len(Obj.products_and_factors) == 2:
-                attr = Obj.products_and_factors[0]  # take the only data in it
-            else:
-                attr = Obj.idname
+            attr = Obj.idname
         elif len(Obj.products_and_factors) == 1:
             attr = Obj.products_and_factors[0]  # take the only data in it
+        elif 'value' in Obj.products_and_factors:
+            attr = 'value'
         else:
             raise SyntaxError(f"{self._obj} cannot be returned/identified since it doesn't define any unique idname. "
                               f"If you want to return all singular data for {self._obj} use ...['*']")
