@@ -3,7 +3,9 @@ import time
 from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
-from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError
+from networkx import NetworkXNoPath
+
+from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
 from .parser import QueryGraph
 from .results import Table
 
@@ -135,12 +137,22 @@ class BaseQuery:
         hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
         if self._obj in hs:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
-        hs = [h for H in hs for h in self._data.expand_template_object(H) if self._get_path_to_object(h, False)[1]]
+        hs = []
+        for H in hs:
+            for h in self._data.expand_template_object(H):
+                try:
+                    if self._get_path_to_object(h, False)[1]:
+                        hs.append(h)
+                except NetworkXNoPath:
+                    pass
         if len(hs) > 1:
             names = [self._data.singular_name(h) for h in hs]
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
                                      f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
-        obj = hs.pop()
+        try:
+            obj = hs.pop()
+        except IndexError:
+            raise AttributeNameError(f"{self._obj} has no access to an attribute called {maybe_attribute}")
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):

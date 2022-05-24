@@ -822,7 +822,7 @@ class Data:
                     hier = h.singular_name
                     factors = h.products_and_factors
                 except NodeNotFound:
-                    pass
+                    continue
                 else:
                     hier = h.plural_name
                     factors = [self.plural_name(f) for f in h.products_and_factors]
