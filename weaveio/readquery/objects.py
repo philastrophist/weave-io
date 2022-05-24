@@ -13,7 +13,8 @@ from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
 
 from networkx import NetworkXNoPath
 
-from .base import BaseQuery, CardinalityError
+from .base import BaseQuery
+from .exceptions import CardinalityError, AttributeNameError, UserError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex, dtype_conversion
 from ..opr3.hierarchy import Exposure
@@ -21,12 +22,10 @@ from ..opr3.hierarchy import Exposure
 if TYPE_CHECKING:
     from weaveio.data import Data
 
+
 class GenericObjectQuery(BaseQuery):
     pass
 
-
-class PathError(SyntaxError):
-    pass
 
 def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
     for i, (given_name, attr) in enumerate(zip(given_names, attrs)):
@@ -259,7 +258,7 @@ class ObjectQuery(GenericObjectQuery):
                         obj, attr = item.split('.')
                         return self.__getitem__(obj).__getitem__(attr)
                     except ValueError:
-                        raise ValueError(f"{item} cannot be parsed as an `obj.attribute`.")
+                        raise AttributeNameError(f"{item} cannot be parsed as an `obj.attribute`.")
                 try: # try assuming its an object
                     obj, single = self._normalise_object(item)
                     if obj == self._obj:
@@ -272,18 +271,18 @@ class ObjectQuery(GenericObjectQuery):
                         try:
                             relation = self._data.relative_names[singular][self._obj]
                         except KeyError:
-                            raise PathError(f"`{self._obj}` has no relative relation called `{singular}`")
+                            raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
                         return self._traverse_to_relative_object(relation.node.__name__, item)
                     elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:
-                        raise KeyError(f"Unknown attribute `{item}`")
+                        raise AttributeNameError(f"Unknown attribute `{item}`")
 
     def _getitem_handled(self, item, by_getitem):
         try:
             return self._getitem(item, by_getitem)
-        except (KeyError, ValueError, NetworkXNoPath, CardinalityError) as e:
-            # self._data.autosuggest(item, self._obj)
+        except UserError as e:
+            self._data.autosuggest(item, self._obj)
             raise e
 
     def __getattr__(self, item):

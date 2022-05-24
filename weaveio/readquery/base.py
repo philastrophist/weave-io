@@ -1,24 +1,15 @@
 import logging
 import time
 from contextlib import contextmanager
-from copy import copy
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
+from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError
 from .parser import QueryGraph
 from .results import Table
-from .utilities import safe_name
 
 if TYPE_CHECKING:
     from .objects import ObjectQuery, Query, AttributeQuery
     from ..data import Data
-
-
-class AmbiguousPathError(Exception):
-    pass
-
-
-class CardinalityError(Exception):
-    pass
 
 
 @contextmanager
@@ -31,6 +22,10 @@ def logtime(name):
 class BaseQuery:
     one_row = False
     one_column = False
+
+    def raise_error_with_suggestions(self, obj, exception: Exception):
+        self._data.autosuggest(obj, self._obj, exception)
+        raise exception
 
     def __repr__(self):
         return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
@@ -225,7 +220,7 @@ class BaseQuery:
         try:
             n = self._G.add_filter(self._node, mask._node, direct=False)
         except SyntaxError:
-            raise SyntaxError(f"SyntaxError: {self} cannot be filtered by {mask} since there is no direct path between them")
+            raise DisjointPathError(f"{self} cannot be filtered by {mask} since there is no direct path between them")
         return self.__class__._spawn(self, n, single=self._single)
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
@@ -237,6 +232,6 @@ class BaseQuery:
             else:
                 n = self._G.add_aggregation(self._node, wrt._node, string_op, remove_infs, expected_dtype, self.dtype)
         except SyntaxError:
-            raise SyntaxError(f"Cannot aggregate {self} into {wrt} since they don't share a parent query")
+            raise DisjointPathError(f"Cannot aggregate {self} into {wrt} since they don't share a parent query")
         from .objects import AttributeQuery
         return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, dtype=returns_dtype, single=True)

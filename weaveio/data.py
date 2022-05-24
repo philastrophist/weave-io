@@ -5,7 +5,6 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from functools import reduce
-from operator import and_
 from pathlib import Path
 from typing import Union, List, Tuple, Type, Dict, Set, Callable
 from uuid import uuid4
@@ -22,10 +21,10 @@ from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
-from .hierarchy import Multiple, Hierarchy, Graphable, Optional, OneOf
+from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
 from .path_finding import find_path
 from .readquery import Query
-from .readquery.digraph import partial_reverse
+from .readquery.exceptions import UserError, CardinalityError
 from .readquery.results import RowParser
 from .utilities import make_plural, make_singular
 from .writequery import Unwind
@@ -304,7 +303,7 @@ class Data:
                 expanded_dependencies.add(o)
         return {o.__name__ for o in parents if o in expanded_dependencies}
 
-    def _path_to_hierarchy(self, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
+    def _path_to_hierarchy(self, g:nx.DiGraph, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
         """
         When searching for a path, the target is either above or below the source in one direction only
         If the target is defined as a child by another, then the search is redefined as for the predecessors of that child
@@ -319,7 +318,6 @@ class Data:
             If more than one path is returned, throw an ambiguous path exception
 
         """
-        g = self.relation_graphs[-1]
         return find_path(g, from_obj, to_obj, singular)
 
     def parents_of_defined_child(self, potential_child: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
@@ -336,9 +334,11 @@ class Data:
     def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
         a, b = map(self.singular_name, [from_obj, to_obj])
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
+        for g in self.relation_graphs:
+            if from_obj in g and to_obj in g:
+                break
         try:
-            path = self._path_to_hierarchy(from_obj, to_obj, singular)
-            g = self.relation_graphs[-1]
+            path = self._path_to_hierarchy(g, from_obj, to_obj, singular)
             singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
             forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
             arrows = make_arrows(path, [not f for f in forwards], descriptor)
@@ -719,7 +719,7 @@ class Data:
                     try:
                         return self.relative_names[name]
                     except KeyError:
-                        return self.singular_hierarchies[name].singular_name
+                        return self.singular_hierarchies[name].plural_name
         if '.' in name:
             pattern = name.lower().split('.')
             if any(map(self.is_plural_name, pattern)):
@@ -781,10 +781,16 @@ class Data:
         return all(self.is_singular_name(n) for n in pattern)
 
     def __getitem__(self, address):
-        return self.query.__getitem__(address)
+        try:
+            return self.query.__getitem__(address)
+        except (UserError, KeyError) as e:
+            self.query.raise_error_with_suggestions(address, e)
 
     def __getattr__(self, item):
-        return self.query.__getattr__(item)
+        try:
+            return self.query.__getattr__(item)
+        except (UserError, KeyError) as e:
+            self.query.raise_error_with_suggestions(item, e)
 
     def plot_relations(self, i=-1, show_hdus=True, fname='relations', format='pdf', include=None):
         graph = self.relation_graphs[i]
@@ -815,6 +821,8 @@ class Data:
                 except NetworkXNoPath:
                     hier = h.singular_name
                     factors = h.products_and_factors
+                except NodeNotFound:
+                    pass
                 else:
                     hier = h.plural_name
                     factors = [self.plural_name(f) for f in h.products_and_factors]
@@ -832,11 +840,11 @@ class Data:
         inorder = sorted(list(set(suggestions)), key=lambda x: distance(a, x), reverse=distance_reverse)
         return inorder[:3]
 
-    def autosuggest(self, a: str, relative_to: str = None, exception=None):
-        suffix = ''
-        try:
+    def autosuggest(self, a: str, relative_to: str = None, exception: Exception = None):
+        if isinstance(exception, CardinalityError):
+            l = [self.plural_name(a)]
+        else:
             l = self._autosuggest(a, relative_to)
-            string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
-        except ImportError:
-            raise AttributeError(f"`{a}` not understood.{suffix}") from exception
-        raise AttributeError(f"`{a}` not understood, did you mean one of:\n{string}{suffix}") from exception
+        string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
+        msg = f"did you mean one of:\n{string}"
+        raise exception.__class__(f"{str(exception.args[0])}\n{msg}") from exception
