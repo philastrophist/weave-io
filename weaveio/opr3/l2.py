@@ -132,14 +132,14 @@ class Ferre(Fit):
 
 class Gandalf(Fit):
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
-    factors = Fit.factors + ['fwhm_flag'] + Measurement.as_factors('zcorr')
+    factors = Fit.factors + ['fwhm_flag']
     factors += Line.as_factors(gandalf_line_names) + SpectralIndex.as_factors(gandalf_index_names)
     identifier_builder = ['gandalf_model_spectrum']
 
 
 class PPXF(Fit):
     parents = [OneOf(CombinedModelSpectrum, one2one=True)]
-    factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6')
+    factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6') + Measurement.as_factors('zcorr')
     identifier_builder = ['combined_model_spectrum']
 
 

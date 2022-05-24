@@ -70,10 +70,15 @@ class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
 class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
     """
     A stacked spectrum row processed from > 1 single spectrum, belonging to one weavetarget over many different OBSpecs.
+    A weavetarget can have more than supertarget spectrum so an ID is added to the filename
+    todo: This structure needs looking at.
     """
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
+    factors = ['id']
     parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))] + L1Spectrum.parents
+    identifier_builder = ['l1single_spectra', 'id']
+
 
 
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]

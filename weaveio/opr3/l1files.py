@@ -23,7 +23,7 @@ class HeaderFibinfoFile(File):
     is_template = True
 
     @classmethod
-    def length(cls, path):
+    def length(cls, path, part=None):
         return len(cls.read_fibinfo_dataframe(path))
 
     @classmethod

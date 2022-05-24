@@ -18,6 +18,10 @@ class File(Hierarchy):
     recommended_batchsize = None
     parts = [None]
 
+    @classmethod
+    def length(cls, path, part=None):
+        raise NotImplementedError
+
     def open(self):
         try:
             return fits.open(self.data.rootdir / self.fname)
@@ -40,8 +44,7 @@ class File(Hierarchy):
         parts = {p for p in parts if p in cls.parts}
         if batch_size is None:
             return ((slice(None, None), part) for part in parts)
-        n = cls.length(path)
-        return ((slice(i, i + batch_size), part) for i in range(0, n, batch_size) for part in parts)
+        return ((slice(i, i + batch_size), part) for part in parts for i in range(0, cls.length(path, part), batch_size))
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):

@@ -436,8 +436,16 @@ class Data:
         for index in tqdm(indexes, desc='dropping indexes'):
             self.graph.neograph.run(str(index)[1:-1])
 
-    def get_extant_files(self):
-        return self.graph.execute("MATCH (f:File) RETURN DISTINCT f.fname").to_series(dtype=str).values.tolist()
+    def get_extant_files(self, *filetypes, return_only_fname=True):
+        filetypes = [self.singular_hierarchies[self.singular_name(f)].__name__ for f in filetypes]
+        if not filetypes:
+            filetypes = ['File']
+        r = 'fname' if return_only_fname else 'path'
+        result = self.graph.execute(f"MATCH (f:File) where any(l in labels(f) where l in $filetypes) RETURN DISTINCT f.{r}", filetypes=filetypes).to_series(dtype=str).values.tolist()
+        if return_only_fname:
+            return result
+        return list(map(lambda x: self.rootdir / x, result))
+
 
     def raise_collisions(self):
         """
@@ -530,7 +538,7 @@ class Data:
                 if debug or debug_time:
                     with open('debug-timestamp.log', 'a') as f:
                         f.write(str(elapsed_times[-1]) + '\n')
-            except (ClientError, DatabaseError, FileExistsError) as e:
+            except (ClientError, DatabaseError, FileExistsError, ConnectionError) as e:
                 logging.exception('ClientError:', exc_info=True)
                 if halt_on_error:
                     raise e
