@@ -59,19 +59,19 @@ def extract_lines_names(expected_line_names, colnames):
     returns dictionary of required factor names and values that can be take from the hdu
     """
     actual_line_names = sorted([i[len('FLUX') + 1:] for i in colnames if i.startswith('FLUX')], key=lambda x: float(x.split('_')[1]))
-    # actual_line_names = [i.lower().replace(']', '').replace('[', '') for i in actual_line_columns]
     d = {}
     for name in actual_line_names:
         if name in expected_line_names:
-            d[f"{name}_aon"] = f'AON_{name}'
-            d[f"{name}_ebmv"] = f'EBV_{name}'
-            d[f"{name}_flux"] = f'FLUX_{name}'
-            d[f"{name}_flux_error"] = f'ERR_FLUX_{name}'
-            d[f"{name}_amp_error"] = f'ERR_AMPL_{name}'
-            d[f"{name}_redshift"] = f'Z_{name}'
-            d[f"{name}_redshift_error"] = f'ERR_Z_{name}'
-            d[f"{name}_sigma"] = f'SIGMA_{name}'
-            d[f"{name}_sigma_error"] = f'ERR_SIGMA_{name}'
+            name = name.lower()
+            d[f"{name}_aon"] = f'aon_{name}'
+            d[f"{name}_ebmv"] = f'ebv_{name}'
+            d[f"{name}_flux"] = f'flux_{name}'
+            d[f"{name}_flux_error"] = f'err_flux_{name}'
+            d[f"{name}_amp_error"] = f'err_ampl_{name}'
+            d[f"{name}_redshift"] = f'z_{name}'
+            d[f"{name}_redshift_error"] = f'err_z_{name}'
+            d[f"{name}_sigma"] = f'sigma_{name}'
+            d[f"{name}_sigma_error"] = f'err_sigma_{name}'
     return d
 
 
@@ -79,8 +79,9 @@ def extract_indices_names(expected_index_names, colnames):
     d = {}
     for name in expected_index_names:
         if name in colnames:
+            name = name.lower()
             d[f'{name}'] = name
-            d[f'{name}_error'] = f'ERR_{name}'
+            d[f'{name}_error'] = f'err_{name}'
     return d
 
 FitSpecs = namedtuple('FitSpecs', ['individuals', 'individual_models', 'combined', 'combined_model', 'colour_codes', 'nrow'])
@@ -224,12 +225,19 @@ class L2File(File):
     @classmethod
     def attach_products_to_spectra(cls, specs: FitSpecs, formatter, hdu, names: Dict[str, str], types, combined_suffix='_C'):
         IngestedSpectrum, CombinedIngestedSpectrum, ModelSpectrum, CombinedModelSpectrum = types
+        # this is less complicated than it looks
+        # `specs` is a namedtuple containing ingested and model spectra collections ([fibre1_spectrum, fibre2_spectrum, ...])
+        # in the case of `individual_models` and `individuals`, they are a collection of collections:
+        #    [[fibre1_red_spectrum, fibre2_red_spectrum], [fibre1_blue_spectrum, fibre2_blue_spectrum], ...]
+        # so we unwind those ones twice
         if specs.individual_models is not None:
             with unwind(specs.individual_models, specs.colour_codes, specs.nrow) as (spectra, colour_codes, nrow):
                 with unwind(spectra, colour_codes) as (spectrum, colour_code):
                     column_name = string_append(f'MODEL_{formatter}_'.upper(), colour_code)
                     spectrum = ModelSpectrum.from_cypher_variable(spectrum)
                     spectrum.attach_product('flux', hdu, column_name=column_name, index=nrow)
+                collect(spectrum)  # collect to avoid duplication of effort later
+            collect(nrow)  # collect to avoid duplication of effort later
         if specs.individuals is not None:
             with unwind(specs.individuals, specs.colour_codes, specs.nrow) as (spectra, colour_codes, nrow):
                 with unwind(spectra, colour_codes) as (spectrum, colour_code):
@@ -237,23 +245,32 @@ class L2File(File):
                     for product in spectrum.products:
                         column_name = string_append(f'{names.get(product, product)}_{formatter}_'.upper(), colour_code)
                         spectrum.attach_product(product, hdu, column_name=column_name, index=nrow)
+                collect(spectrum)  # collect to avoid duplication of effort later
+            collect(nrow)  # collect to avoid duplication of effort later
         if specs.combined_model is not None:
-            with unwind(specs.combined_model) as combined_model:
+            with unwind(specs.combined_model, specs.nrow) as (combined_model, nrow):
                 spectrum = CombinedModelSpectrum.from_cypher_variable(combined_model)
                 column_name = f'model_{formatter}{combined_suffix}'.upper()
-                spectrum.attach_product('flux', hdu, column_name=column_name, index=specs.nrow)
+                spectrum.attach_product('flux', hdu, column_name=column_name, index=nrow)
+            collect(spectrum)  # collect to avoid duplication of effort later
         if specs.combined is not None:
-            with unwind(specs.combined) as combined:
+            with unwind(specs.combined, specs.nrow) as (combined, nrow):
                 spectrum = CombinedIngestedSpectrum.from_cypher_variable(combined)
                 for product in spectrum.products:
                     column_name = f'{names.get(product, product)}_{formatter}{combined_suffix}'.upper()
-                    spectrum.attach_product(product, hdu, column_name=column_name, index=specs.nrow)
+                    spectrum.attach_product(product, hdu, column_name=column_name, index=nrow)
+            collect(spectrum)  # collect to avoid duplication of effort later
 
     @classmethod
     def attach_products_to_gandalf_extra_spectra(cls, specs: GandalfSpecs, hdu):
-        specs.emission.attach_product('flux', hdu, column_name=f'emission_gand', index=specs.nrow, ignore_missing=True)
-        specs.clean_model.emission.attach_product('flux', hdu, column_name=f'model_clean_gand', index=specs.nrow, ignore_missing=True)
-        specs.clean_ingested.emission.attach_product('flux', hdu, column_name=f'flux_clean_gand', index=specs.nrow, ignore_missing=True)
+        with unwind(specs.emission, specs.clean_model, specs.clean_ingested, specs.nrow) as (emission, clean_model, clean_ingested, nrow):
+            emission = GandalfEmissionModelSpectrum.from_cypher_variable(emission)
+            clean_model = GandalfCleanModelSpectrum.from_cypher_variable(clean_model)
+            clean_ingested = GandalfCleanIngestedSpectrum.from_cypher_variable(clean_ingested)
+            emission.attach_product('flux', hdu, column_name=f'EMISSION_GAND', index=nrow)
+            clean_model.attach_product('flux', hdu, column_name=f'MODEL_CLEAN_GAND', index=nrow)
+            clean_ingested.attach_product('flux', hdu, column_name=f'FLUX_CLEAN_GAND', index=nrow)
+        collect(nrow)  # collect to avoid duplication of effort later
 
     @classmethod
     def make_redrock_fit(cls, specs, zs, row, nl1specs, replacements):
@@ -391,10 +408,10 @@ class L2File(File):
         replacements.update(extract_indices_names(gandalf_index_names, colnames))
         with unwind(safe_table, enumerated=True) as (row, nrow):
             gandalf_specs, l1spectra, fibretargets = cls.read_l2product_table(this_fname, spectrum_hdu, row, nrow,
-                                                          parent_l1filenames, None,
-                                                         MaskedCombinedIngestedSpectrum,
-                                                         None, GandalfModelSpectrum,
-                                                         False, True, 'GAND', aps)
+                                                                              parent_l1filenames, None,
+                                                                              MaskedCombinedIngestedSpectrum,
+                                                                              None, GandalfModelSpectrum,
+                                                                              False, True, 'GAND', aps)
             gandalf, gandalf_extra_specs = cls.make_gandalf_structure(gandalf_specs, row, this_fname, nrow, replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), aps=aps, fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(gandalf=gandalf)
@@ -416,6 +433,8 @@ class L2File(File):
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None):
         if part is None:
             raise RuntimeError(f"{cls.__name__}.read() requires a part argument otherwise py2neo will crash")
+        if part not in cls.parts:
+            raise ValueError(f"Unrecognised part {part}. Only {cls.parts} are allowed")
         fname = Path(fname)
         directory = Path(directory)
         path = directory / fname
@@ -451,7 +470,7 @@ class L2File(File):
             hdu_node = 4
         elif part == 'GAND':
             l2, specfits, specs, extra_specs, *types = cls.read_gandalf(path, astropy_hdus[6], astropy_hdus[3].data.names,
-                                                            safe_cypher_tables[3], fnames, aps, **hierarchies)
+                             safe_cypher_tables[3], fnames, aps, **hierarchies)
             hdu_node = 6
         else:
             raise ValueError(f"{part} is not a valid part")

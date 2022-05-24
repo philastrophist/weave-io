@@ -31,7 +31,7 @@ def neo4j_dictionary(d: Union[dict, CypherVariable]) -> Tuple[Union[dict, Cypher
 
 
 def sanitise_variablename(v):
-    return f'{str(v).replace("$", "")}'
+    return f'`{str(v).replace("$", "")}`'
 
 
 def expand_to_cypher_dict(*collections: Union[Dict[str, CypherVariable], CypherVariable]) -> str:

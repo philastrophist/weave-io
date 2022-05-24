@@ -110,7 +110,7 @@ class Varname:
         self.key = key
 
     def __repr__(self):
-        return self.key
+        return f"`{self.key}`"
 
     def __eq__(self, other):
         return getattr(other, 'key', other) == self.key

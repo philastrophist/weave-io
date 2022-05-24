@@ -455,6 +455,20 @@ class Data:
         rel_collisions = self.graph.execute("MATCH ()-[c: _Collision]-() return c { .*}").to_data_frame()
         return node_collisions, rel_collisions
 
+    def get_state_of_file(self, fname: str) -> int:
+        """Returns the state (timestamp) of the creation of the last data product belong to a given file"""
+        c = self.data.execute("match (f: File {fname: $fname}) optional match (f)<-[:is_required_by]-(h:Hierarchy) "
+                          "where not h:HDU with  h.`_dbcreated` as d order by d desc return d limit 1", fname=fname)
+        return c.evaluate()
+
+    def restore_state(self, state: int):
+        """
+        Restores database to the given state (timestamp). Danger zone here.
+        """
+        if not self.write_allowed:
+            raise IOError(f"Writing is not allowed")
+        return self.graph.execute('match (n) where n.`_dbcreated` > $timestamp detach delete n', timestamp=state)
+
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False, test_one=False,
