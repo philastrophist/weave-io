@@ -173,7 +173,7 @@ class L1File(HeaderFibinfoFile):
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
     children = [Optional('self', idname='adjunct')]
     parents = [WavelengthHolder, Multiple(L1Spectrum), CASU]
-    produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
+    produces = [CASU, NoSS]  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
     def wavelengths(cls, rootdir: Path, fname: Union[Path, str]):

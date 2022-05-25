@@ -3,6 +3,9 @@ from tqdm import tqdm
 
 from weaveio import *
 import logging
+
+from weaveio.data import hierarchies_from_files
+
 logging.basicConfig(level=logging.INFO)
 
 data = Data(dbname='lowleveltest2')
@@ -37,21 +40,35 @@ data = Data(dbname='lowleveltest2')
 #     plt.plot(row.wvl, row.flux, 'k-', alpha=0.4)
 # plt.savefig('sky_spectra.png')
 
-# obs = data.obs[data.obs.mjd >= 57811]  # pick an OB that started after this date
-# fibre_targets = obs.fibre_targets[any(obs.fibre_targets.surveys == '/WL.*/', wrt=obs.fibre_targets)]  # / indicate regex is starting and ending
-# l2rows = fibre_targets.l2stacks
-# q = l2rows['ha_6562.80_flux']
-l2 = data.gandalfs
-q = l2['ha_6562.80_flux']
-# l2rows = l2[(l2.ob.mjd >= 57811) & any(l2.fibre_target.surveys == '/WL.*/', wrt=l2.fibre_target)]
-# q = l2rows['ha_6562.80_flux']
-print('\n'.join(q._precompile()._to_cypher()[0]))
-print(q(limit=100))
-
-
-# print(data.find_names('ha_6562_flux'))
+# l2s = data.l2stacks
+# l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]
+# l2s = l2s[l2s['ha_6562.80_flux'] > 0]
+# table = l2s[['ha_6562.80_flux', 'z']]()
+# plt.scatter(table['z'], table['ha_6562.80_flux'], s=1)
+# plt.yscale('log')
+# plt.savefig('ha-z.png')
+# hierarchies_from_files(data.filetypes[1])
+l1s = data.runs.l1single_spectra
+l1_blue_wl = l1s[(l1s.camera == 'blue') & any(l1s.fibre_target.surveys == '/WL.*/', wrt=l1s.fibre_target)]
+spectra = l1_blue_wl['wvl', 'flux', 'run.id', 'fibre.id', 'adjunct.wvl', 'adjunct.flux']
+# brightest = -1
+# brightest_spectrum = None
+# for spectrum in tqdm(spectra):
+#     continuum = np.median(spectra.flux[(spectrum.wvl > 4950) & (spectrum.wvl < 5050)])
+#     if continuum > brightest:
+#         brightest_spectrum = spectrum
+#         brightest = continuum
+#     break
 #
-# import matplotlib.pyplot as plt
-# # uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# # %matplotlib
-# plt.scatter(table['lineflux_ha_6562'], table['z'])
+# plt.plot(brightest_spectrum.wvl, brightest_spectrum.flux, 'k-')
+# plt.show()
+#
+#
+#
+#
+#
+#
+#
+#
+# q = count(l1_blue_wl)
+# print(q(limit=1))

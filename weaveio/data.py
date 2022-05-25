@@ -124,7 +124,7 @@ def expand_template_relation(relation):
     if not relation.node.is_template:
         return [relation]
     subclasses = [cls for cls in get_all_subclasses(relation.node) if not cls.is_template]
-    return [Multiple(subclass, 0, relation.maxnumber, relation.constrain, relation.relation_idname) for subclass in subclasses]
+    return [Multiple(subclass, 0, relation.maxnumber, relation.constrain, relation.relation_idname, relation.one2one) for subclass in subclasses]
 
 
 def add_relation_graph_edge(graph, parent, child, relation: Multiple):
@@ -757,6 +757,8 @@ class Data:
         return make_singular(name)
 
     def is_valid_name(self, name):
+        if self.is_plural_name(name) or self.is_singular_name(name):
+            return True
         if isinstance(name, str):
             pattern = name.split('.')
             if len(pattern) == 1:

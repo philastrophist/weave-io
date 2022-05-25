@@ -267,20 +267,17 @@ output:
 
 
 ```python
-from weaveio import * 
-data = Data()
-
-obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
-fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == '/WL|WQSO/')]  # / indicate regex is starting and ending
-
-l2rows = fibretargets.l2stack
-table = l2rows['lineflux_ha_6562', 'z']()
-
 import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# %matplotlib 
-plt.scatter(table['lineflux_ha_6562'], table['z'])
+data = Data()
+l2s = data.l2stacks
+l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]
+l2s = l2s[l2s['ha_6562.80_flux'] > 0]
+table = l2s[['ha_6562.80_flux', 'z']]()
+plt.scatter(table['z'], table['ha_6562.80_flux'], s=1)
+plt.yscale('log')
+plt.savefig('ha-z.png')
 ```
+<img src="ha-z.png" height="200">
 
 # 4. I want to identify the WL spectrum with the brightest continuum at 5000AA and plot the spectrum from both red and blue arms, together with the error (variance) spectrum. 
 
