@@ -536,3 +536,10 @@ class QueryGraph:
         end_time = time.perf_counter()
         timed = end_time - start_time
         return remove_successive_duplicate_lines(statements)
+
+    def node_is_null_statement(self, node):
+        if self.node_holds_type(node, 'aggr'):
+            return any(isinstance(d['statement'], NullStatement) for _, _, d in self.G.in_edges(node, data=True))
+        return False
+
+

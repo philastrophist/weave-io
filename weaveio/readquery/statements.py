@@ -126,7 +126,7 @@ class GetItem(Operation):
     ids = ['name']
 
     def __init__(self, input_variable, name, graph: 'QueryGraph'):
-        super().__init__(input_variable, [], f'{{}}.{name}', f'.{name}', graph)
+        super().__init__(input_variable, [], f'{{}}.`{name}`', f'.`{name}`', graph)
         self.name = name
 
 
@@ -211,6 +211,9 @@ class Aggregate(Statement):
         to_conserve = []
         for c in above:
             if not self.graph.node_holds_type(c, 'operation'):
+                if self.graph.node_is_null_statement(c):
+                    # this bit excludes fake aggregations where we have folded back along a single path (for consistency)
+                    continue
                 to_conserve.append(c)
         return to_conserve
 

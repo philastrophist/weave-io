@@ -334,17 +334,19 @@ class Data:
     def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
         a, b = map(self.singular_name, [from_obj, to_obj])
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
-        for g in self.relation_graphs:
+        for level, g in enumerate(self.relation_graphs):
             if from_obj in g and to_obj in g:
                 break
+        else:
+            raise nx.NodeNotFound(f"One of {from_obj} or {to_obj} is not in the graph".format(from_obj, to_obj))
         try:
             path = self._path_to_hierarchy(g, from_obj, to_obj, singular)
             singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
             forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
             arrows = make_arrows(path, [not f for f in forwards], descriptor)
             if return_objs:
-                return arrows, singular, path
-            return arrows, singular
+                return arrows, singular, level, path
+            return arrows, singular, level
         except nx.NetworkXNoPath:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
@@ -767,6 +769,9 @@ class Data:
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
+        if name in self.plural_hierarchies or name in self.plural_factors or\
+                   name in self.plural_idnames or name in self.plural_relative_names:
+            return True
         pattern = name.split('.')
         if len(pattern) == 1:
             return name in self.plural_hierarchies or name in self.plural_factors or\
@@ -774,6 +779,9 @@ class Data:
         return all(self.is_plural_name(n) for n in pattern)
 
     def is_singular_name(self, name):
+        if name in self.singular_hierarchies or name in self.singular_factors or \
+           name in self.singular_idnames or name in self.relative_names:
+            return True
         pattern = name.split('.')
         if len(pattern) == 1:
             return name in self.singular_hierarchies or name in self.singular_factors or \
@@ -805,6 +813,16 @@ class Data:
             include_list += [d for i in include for d in nx.descendants(G, i)]
             G = nx.subgraph_view(G, lambda n: n in include_list)
         plot_graph(G, fname, format)
+
+    def find_names(self, guess, n=10):
+        """
+        Finds the closest name to guess in the hierarchy. Returns the top n matches.
+        """
+        sources = [self.singular_hierarchies, self.plural_hierarchies, self.singular_factors, self.plural_factors]
+        suggestions = {i for source in sources for i in source}
+        inorder = sorted(suggestions, key=lambda x: textdistance.jaro_winkler(guess, x), reverse=True)
+        return inorder[0:n]
+
 
     def _autosuggest(self, a, relative_to=None):
         a = self.singular_name(a)

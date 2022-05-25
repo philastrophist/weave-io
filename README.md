@@ -201,10 +201,11 @@ It is analagous to an SQL query except that it is written in Python.
 ```python
 from weaveio import *
 data = Data()
-runid = 1002813
+runid = 1003453
 nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
 ```
+output: `[100]`
 
 ## 1b. I want to see how many sky targets each run has
 ```python
@@ -213,34 +214,54 @@ data = Data()
 nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
 print(nsky())
 ```
+output: `[100 299 299 100 100 200 160 ...]`
 
+## 1c. Put the above result into a table where I can see the runid
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
+query_table = data.runs[['id', nsky]]  # design a table by using the square brackets
+concrete_table = query_table()  # make it "real" by executing the query
+print(concrete_table)
+print(type(concrete_table))
+```
+output:
+```
+   id   sum0
+------- ----
+1003453  100
+1003440  299
+...      ...
+<class 'weaveio.readquery.results.Table'>  # although this is an astropy table really
+```
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
-Currently, it is only possible to filter once in a query so you have to do separate queries for each condition you want and then feed it back in. See below
-
 ```python
 from weaveio import *
-yesterday = 57634
-
 data = Data()
+yesterday = 57811
+
 runs = data.runs
 is_red = runs.camera == 'red'
-is_yesterday = floor(runs.expmjd) == yesterday
+is_yesterday = floor(runs.exposure.mjd) == yesterday  # round to integer, which is the day
 
-# we do 2 separate filters instead of 1 so to not read too much data into memory at once
 runs = runs[is_red & is_yesterday]  # filter the runs first
-singlespectra = runs.l1singlespectra
-is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
-chosen = singlespectra[is_sky_target]
+spectra = runs.l1single_spectra
+sky_spectra = spectra[spectra.targuse == 'S']
 
-table = chosen['wvl', 'flux'](limit=10)
+table = sky_spectra[['wvl', 'flux']]
 
 import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# %matplotlib 
-plt.plot(table['wvl'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
+for row in table:  # this may take a while to plot, there is a lot of data
+    plt.plot(row.wvl, row.flux, 'k-', alpha=0.4)
+plt.savefig('sky_spectra.png')
 ```
+output:
+
+<img src="sky_spectra.png" height="200">
+
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
 

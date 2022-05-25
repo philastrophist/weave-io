@@ -3,7 +3,7 @@ import time
 from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
-from networkx import NetworkXNoPath
+from networkx import NetworkXNoPath, NodeNotFound
 
 from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
 from .parser import QueryGraph
@@ -57,7 +57,10 @@ class BaseQuery:
 
     def _iterate(self, skip=0, limit=None):
         cursor, new = self._execute(skip, limit)
-        yield from new._post_process_row(new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products))
+        rows = new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products)
+        with logtime('total streaming (by iteration)'):
+            for row in rows:
+                yield new._post_process_row(row)
 
     def __iter__(self):
         yield from self._iterate()
@@ -137,27 +140,31 @@ class BaseQuery:
         hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
         if self._obj in hs:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
-        hs = []
+        # find the objects that are linked to this one and sort them by the amount of data they require
+        new_hs = []
         for H in hs:
             for h in self._data.expand_template_object(H):
                 try:
-                    if self._get_path_to_object(h, False)[1]:
-                        hs.append(h)
-                except NetworkXNoPath:
+                    level = self._get_path_to_object(h, False)[-1]
+                    new_hs.append((h, level))
+                except (NetworkXNoPath, NodeNotFound):
                     pass
+        new_hs.sort(key=lambda x: x[1])
+        lowest_level = min(list(zip(*new_hs))[1])
+        hs = [h for h, l in new_hs if l == lowest_level]  # pick the objs with the smallest data requirement
         if len(hs) > 1:
             names = [self._data.singular_name(h) for h in hs]
             raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
                                      f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
         try:
-            obj = hs.pop()
+            obj = hs[0]
         except IndexError:
             raise AttributeNameError(f"{self._obj} has no access to an attribute called {maybe_attribute}")
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
-        path, obj_is_singular = self._data.path_to_hierarchy(self._obj, obj, False)
+        path, obj_is_singular, _ = self._data.path_to_hierarchy(self._obj, obj, False)
         attr_is_singular = self._data.is_singular_name(maybe_attribute)
         if obj_is_singular and attr_is_singular:
             pass  # run.obid -> run.ob.obid
@@ -208,7 +215,7 @@ class BaseQuery:
     def _spawn(cls, parent: 'BaseQuery', node, obj=None, index_node=None, single=False, *args, **kwargs):
         return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
-    def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool]:
+    def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool, int]:
         return self._data.path_to_hierarchy(self._obj, obj, want_single)
 
     def _slice(self, slc):
