@@ -193,7 +193,7 @@ class SurveyTarget(Hierarchy):
     parents = [SurveyCatalogue, WeaveTarget]
     factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse', 'targprog',
                'targclass', 'targpmra', 'targpdec', 'targparal', 'targrio'] \
-              + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
+              + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mag_')
     identifier_builder = ['weave_target', 'survey_catalogue', 'targid', 'targra', 'targdec', 'targuse']
 
 
