@@ -1,3 +1,5 @@
+import math
+
 import networkx as nx
 
 def shortest_simple_paths(graph, source, target, weight=None):
@@ -42,20 +44,19 @@ def _find_path(graph, a, b, force_single):
         raise nx.NetworkXNoPath('No path found between {} and {}'.format(a, b))
     # then try to find a non-singular path with one direction, either -> or <-
     # we dont want ()->()<-() when it's multiple
-    restricted = nx.subgraph_view(graph, filter_edge=lambda u, v: 'relation' in graph.edges[u, v] or graph.edges[u, v]['singular'] and graph.edges[u, v]['actual_number'] > 0)
-    # restricted = nx.subgraph_view(graph, filter_edge=lambda u, v: 'relation' in graph.edges[u, v])
-    paths = []
-    for i, p in enumerate(shortest_simple_paths(restricted, a, b, 'actual_number')):
-        if p:
-            paths.append(p)
-        if i == 5: break
-    for i, p in enumerate(shortest_simple_paths(restricted.reverse(), a, b, 'actual_number')):
-        if p:
-            paths.append(p)
-        if i == 5: break
-    if paths:
-        return min(paths, key=len)
-    raise nx.NetworkXNoPath('No path found between {} and {}'.format(a, b))
+    restricted = nx.subgraph_view(graph, filter_edge=lambda u, v: graph.edges[u, v]['actual_number'] > 0)
+    forward = next(shortest_simple_paths(restricted, a, b, 'actual_number'))
+    forward_weight = nx.path_weight(restricted, forward, 'actual_number') or math.inf
+    reversed = restricted.reverse()
+    backward = next(shortest_simple_paths(reversed, a, b, 'actual_number'))
+    backward_weight = nx.path_weight(reversed, backward, 'actual_number') or math.inf
+    if not forward and not backward:
+        raise nx.NetworkXNoPath('No path found between {} and {}'.format(a, b))
+    if backward_weight < forward_weight:
+        return backward
+    return forward
+
+
 
 def find_path(graph, a, b, force_single):
     path = _find_path(graph, a, b, force_single)
