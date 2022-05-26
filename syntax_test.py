@@ -4,6 +4,7 @@ from tqdm import tqdm
 from weaveio import *
 import logging
 
+from weaveio.data import make_arrows
 from weaveio.path_finding import find_singular_simple_hierarchy_path
 
 logging.basicConfig(level=logging.INFO)
@@ -54,11 +55,16 @@ data = Data(dbname='lowleveltest2')
 # print('\n'.join(q._precompile()._to_cypher()[0]))
 # print(q(limit=100))
 
-# data.path_to_hierarchy('Redrock', 'Survey', False)
-start, end = data.class_hierarchies['OB'], data.class_hierarchies['Exposure']
-path = find_singular_simple_hierarchy_path(data.relation_graphs[0], start, end)
-print(path)
+# print(data.path_to_hierarchy('Redrock', 'Survey', False))
 
+g = data.relation_graphs[0]
+end, start = data.class_hierarchies['OB'], data.class_hierarchies['Run']
+
+path = find_singular_simple_hierarchy_path(g, start, end)
+singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
+forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
+arrows = make_arrows(path, [not f for f in forwards])
+print(start.__name__, arrows, end.__name__)
 # print(data.find_names('ha_6562_flux'))
 #
 # import matplotlib.pyplot as plt

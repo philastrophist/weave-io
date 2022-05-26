@@ -6,7 +6,6 @@ def shortest_simple_paths(graph, source, target):
     except nx.NetworkXNoPath:
         yield []
 
-
 def find_singular_simple_hierarchy_path(graph, start, end):
     """
     Assuming the graph contains only edges from top to bottom which are labelled singular and not optional.
@@ -15,12 +14,13 @@ def find_singular_simple_hierarchy_path(graph, start, end):
     """
     def filt(u, v):
         edge = graph.edges[u, v]
-        return edge['singular'] and 'relation' in edge and not edge['optional']
+        return edge['singular'] and not edge['optional']
     g = nx.subgraph_view(graph, filter_edge=filt)
     try:
-        return next(nx.shortest_simple_paths(g, end, start))
+        path = next(nx.shortest_simple_paths(g, end, start))[::-1]
     except nx.NetworkXNoPath:
-        return next(nx.shortest_simple_paths(g, start, end))
+        path = next(nx.shortest_simple_paths(g, start, end))
+    return path
 
 
 
