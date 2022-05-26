@@ -1,7 +1,7 @@
 import inspect
 import sys
 
-from weaveio.hierarchy import Optional, Multiple, Hierarchy
+from weaveio.hierarchy import Optional, Multiple, Hierarchy, OneOf
 from weaveio.opr3.hierarchy import Spectrum, Single, FibreTarget, Stacked, \
     Stack, OB, ArmConfig, Superstack, OBSpec, Supertarget, WeaveTarget, RawSpectrum, _predicate, Spectrum1D, MeanFlux
 
@@ -21,7 +21,7 @@ class NoSS(Spectrum1D):
     plural_name = 'nosses'
     singular_name = 'noss'
     products = ['flux', 'ivar']
-    parents = [L1Spectrum]
+    parents = [OneOf(L1Spectrum, one2one=True)]
     children = [Optional('self', idname='adjunct')]
     identifier_builder = ['l1_spectrum']
 
