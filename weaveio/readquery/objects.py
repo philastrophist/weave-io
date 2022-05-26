@@ -283,6 +283,8 @@ class ObjectQuery(GenericObjectQuery):
         try:
             return self._getitem(item, by_getitem)
         except UserError as e:
+            if isinstance(item, AttributeQuery):
+                raise e
             self._data.autosuggest(item, self._obj, e)
 
     def __getattr__(self, item):

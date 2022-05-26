@@ -147,7 +147,7 @@ class PPXF(Fit):
 class L2Product(L2):
     is_template = True
     parents = [Multiple(L1Spectrum, 2, 3), APS,
-               Optional(Redrock, one2one=True), Optional(RVSpecfit, one2one=True),
+               OneOf(Redrock, one2one=True), Optional(RVSpecfit, one2one=True),
                Optional(Ferre, one2one=True), Optional(PPXF, one2one=True), Optional(Gandalf, one2one=True)]
 
 

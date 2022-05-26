@@ -239,7 +239,8 @@ class BaseQuery:
         try:
             n = self._G.add_filter(self._node, mask._node, direct=False)
         except SyntaxError:
-            raise DisjointPathError(f"{self} cannot be filtered by {mask} since there is no direct path between them")
+            raise DisjointPathError(f"{self} cannot be filtered by {mask} since `{self._obj}` != `{mask._obj}`."
+                                    f"This may be because a nonsensical `wrt` has specified in an aggregation.")
         return self.__class__._spawn(self, n, single=self._single)
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):

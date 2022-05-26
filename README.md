@@ -10,14 +10,14 @@
 
 * An Exposure is one integration of both arms of the spectrograph. You can locate Exposures like so:  `data.exposures[mjd]`
 
-* A Run is a weave term for an exposure taken in one arm of the spectrograph (so there are always 2 Runs per Exposure). You can locate runs using their runid `data.runs[runid]` or their colour relative to the exposure `data.exposures[mjd].runs['red']`
+* A Run is a weave term for an exposure taken in one arm of the spectrograph (so there are always 2 Runs per Exposure). You can locate runs using their runid `data.runs[runid]`.
 
 * A `spectrum` in weaveio refers to a single spectrum of a single target (not the block of `spectr*a*`)
 
 * An L1 product refers to the spectra recorded in an L1File. All L1 data is separated by camera colour (red and blue). 
     * A single spectrum is the processed spectrum from the raw data
-    * A stacked spectrum is the spectrum resulting from stacking two or more single spectra in a single ob
-    * A superstacked spectrum results from stacking *between* OBs but with the same instrument configuration
+    * A stack spectrum is the spectrum resulting from stacking two or more single spectra in a single ob
+    * A superstack spectrum results from stacking *between* OBs but with the same instrument configuration
     * A supertarget spectrum results from stacking every single spectrum of a single WeaveTarget cname.
 
 * There are three types of `Target`
@@ -33,22 +33,22 @@
     1. File - A reference to a physical fits file on the herts system (it also stores references to individual fits.HDUs and their headers as separate objects, but the user doesn't need to know of their existence to use weave.io)
     2. Object - A object that references a concept in the WEAVE universe that has attributes (an OB object has an obid attribute, an exposure object has an attribute expmjd
     3. Attribute - A piece of data that belongs to some object
-    4. Product - A special type of attribute which references binary data not stored in the database itself (e.g. spectrum flux)
+    4. Product - A special type of attribute which references binary data not stored in the database itself (e.g. spectrum flux). You cannot perform arithmetic/indexing on product attributes.
 
 ## If confused, ignore...
 
 ### object/attribute 
-weave.io uses Python syntax to traverse a hierarchy of objects and their attributes. It is important to note that one object can be an attribute of another object (e.g. a run is an attribute of an OB). 
+weave.io uses Python syntax to traverse a hierarchy of objects and their attributes. 
+It is important to note that objects are linked to other objects (e.g. a run belongs to an OB and also to an exposure, which itself belongs to an OB). 
 
 You can stitch together these objects to form a hierarchy of objects:
 
-run <-- exposure <-- ob <--obspec
+`run <-- exposure <-- ob <--obspec(xml)`
 
 Every OB is a parent of multiple Exposures which in turn are parents exactly 2 runs each (one red, one blue).
 
 Because of this chain of parentage/relation, every object has access to all attributes where there is a chain, as if they were its own attributes.
 
-![image.png](attachment:image.png)
 
 ### Traversal syntax 
 

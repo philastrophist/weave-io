@@ -3,6 +3,9 @@ from tqdm import tqdm
 
 from weaveio import *
 import logging
+
+from weaveio.path_finding import find_singular_simple_hierarchy_path
+
 logging.basicConfig(level=logging.INFO)
 
 data = Data(dbname='lowleveltest2')
@@ -41,13 +44,20 @@ data = Data(dbname='lowleveltest2')
 # fibre_targets = obs.fibre_targets[any(obs.fibre_targets.surveys == '/WL.*/', wrt=obs.fibre_targets)]  # / indicate regex is starting and ending
 # l2rows = fibre_targets.l2stacks
 # q = l2rows['ha_6562.80_flux']
-l2 = data.gandalfs
-q = l2['ha_6562.80_flux']
-# l2rows = l2[(l2.ob.mjd >= 57811) & any(l2.fibre_target.surveys == '/WL.*/', wrt=l2.fibre_target)]
-# q = l2rows['ha_6562.80_flux']
-print('\n'.join(q._precompile()._to_cypher()[0]))
-print(q(limit=100))
 
+# l2 = data.redrocks.l2single
+# q = l2.surveys.name
+# q = l2['ha_6562.80_flux']
+# l2rows = l2[any(l2.surveys == '/WL.*/', wrt=l2)] #&(l2.ob.mjd >= 57811)]
+# q = l2rows['ha_6562.80_flux']
+# q = l2.targra
+# print('\n'.join(q._precompile()._to_cypher()[0]))
+# print(q(limit=100))
+
+# data.path_to_hierarchy('Redrock', 'Survey', False)
+start, end = data.class_hierarchies['OB'], data.class_hierarchies['Exposure']
+path = find_singular_simple_hierarchy_path(data.relation_graphs[0], start, end)
+print(path)
 
 # print(data.find_names('ha_6562_flux'))
 #
