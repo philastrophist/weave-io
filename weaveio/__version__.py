@@ -1,2 +1,2 @@
-__version__ = "2022.0.0"
-__changes__ = 'big overhaul for new L2'
+__version__ = "2022.0.1"
+__changes__ = 'L2 is in most queries function as expected'
