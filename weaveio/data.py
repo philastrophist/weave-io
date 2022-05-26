@@ -757,6 +757,8 @@ class Data:
         return make_singular(name)
 
     def is_valid_name(self, name):
+        if not isinstance(name, str):
+            return False
         if self.is_plural_name(name) or self.is_singular_name(name):
             return True
         if isinstance(name, str):
@@ -771,6 +773,8 @@ class Data:
         Returns True if name is a plural name of a hierarchy
         e.g. spectra is plural for Spectrum
         """
+        if not isinstance(name, str):
+            return False
         if name in self.plural_hierarchies or name in self.plural_factors or\
                    name in self.plural_idnames or name in self.plural_relative_names:
             return True
@@ -781,6 +785,8 @@ class Data:
         return all(self.is_plural_name(n) for n in pattern)
 
     def is_singular_name(self, name):
+        if not isinstance(name, str):
+            return False
         if name in self.singular_hierarchies or name in self.singular_factors or \
            name in self.singular_idnames or name in self.relative_names:
             return True

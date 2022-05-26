@@ -279,35 +279,6 @@ plt.savefig('ha-z.png')
 ```
 <img src="ha-z.png" height="200">
 
-# 4. I want to identify the WL spectrum with the brightest continuum at 5000AA and plot the spectrum from both red and blue arms, together with the error (variance) spectrum. 
-
-
-```python
-data = Data()
-stackedspectra = data.l1stackedspectra  # lots of different stacked spectra from many different OBs
-wl_stackedspectra = stackedspectra[any(stackedspectra.surveys == 'WL')]
-
-reds = wl_stackedspectra[wl_stackedspectra.camera == 'red']
-blues = wl_stackedspectra[wl_stackedspectra.camera == 'blue']
-
-continuum = []
-for red, blue in reds(), blues():  # this loop is offline
-    continuum.append(my_special_module.median_flux(red, blue, 4950, 5050))  # do some fancy function you have written
-index = np.argmax(continuum)
-
-red = reds[index]()
-blue = blues[index]()
-
-import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# %matplotlib 
-plt.plot(red.wvls, red.flux)
-plt.plot(blue.wvls, blue.flux)
-
-plt.plot(red.wvls,  1 / red.ivar, label='variance')
-plt.plot(blue.wvls, 1 /  blue.ivar, label='variance')
-```
-
 # 5. Get the brightest g-band target in an OB and plot some spectra 
 a. I would like to identify the brightest (g band) WL spectrum observed in an OB with `obid=1234` (using the g band magnitude in the stacked spectrum). Plot the stack, in both red and blue arms (on same plot)
 
