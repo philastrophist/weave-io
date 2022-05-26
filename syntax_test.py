@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 
 data = Data(dbname='lowleveltest2')
 
+
 # runid = 1003453
 # nsky = sum(data.runs[runid].targuses == 'S')
 # print("number of sky targets = {}".format(nsky()))
@@ -55,16 +56,29 @@ data = Data(dbname='lowleveltest2')
 # print('\n'.join(q._precompile()._to_cypher()[0]))
 # print(q(limit=100))
 
-# print(data.path_to_hierarchy('Redrock', 'Survey', False))
+print(data.path_to_hierarchy('Redrock', 'Survey', False))
+# import networkx as nx
+#
+# G = nx.DiGraph()
+# G.add_edge('a', 'b', weight=0)
+# G.add_edge('b', 'c', weight=0)
+# G.add_edge('a', 'c', weight=0)
+# G.add_edge('a', 'd', weight=0)
+# G.add_edge('d', 'e', weight=0)
+# G.add_edge('e', 'c', weight=0)
+# for path in nx.shortest_simple_paths(G, 'a', 'c', 'weight'):
+#     print(path)
 
-g = data.relation_graphs[0]
-end, start = data.class_hierarchies['OB'], data.class_hierarchies['Run']
+# g = data.relation_graphs[2]
+# a, b = data.class_hierarchies['CombinedIngestedSpectrum'], data.class_hierarchies['CombinedModelSpectrum']
+#
+# for (start, end) in [(a, b), (b, a)]:
+#     path = find_singular_simple_hierarchy_path(g, start, end)
+#     singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
+#     forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
+#     arrows = make_arrows(path, [not f for f in forwards])
+#     print(start.__name__, arrows, end.__name__)
 
-path = find_singular_simple_hierarchy_path(g, start, end)
-singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
-forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
-arrows = make_arrows(path, [not f for f in forwards])
-print(start.__name__, arrows, end.__name__)
 # print(data.find_names('ha_6562_flux'))
 #
 # import matplotlib.pyplot as plt

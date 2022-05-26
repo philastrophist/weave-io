@@ -147,25 +147,25 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
         if parent is child:
             for a, b in [(parent, child), (child, parent)]:
                 graph.add_edge(a, b, singular=relation.maxnumber == 1,
-                               optional=relation.minnumber == 0, style=relstyle)
+                               optional=relation.minnumber == 0, style=relstyle, actual_number=1)
         elif child_defines_parents:  # i.e. parents = [...] is set in the class for this object
             # child instance has n of type Parent, parent instance has unknown number of type Child
             parent = relation.node  # reset from new relations
             graph.add_edge(child, parent, singular=relation.maxnumber == 1,
-                           optional=relation.minnumber == 0, style=relstyle)
+                           optional=relation.minnumber == 0, style=relstyle, actual_number=1)
             if relation.one2one:
                 graph.add_edge(parent, child, singular=True, optional=True, style='solid',
-                               relation=relation)
+                               relation=relation, actual_number=1)
             else:
                 graph.add_edge(parent, child, singular=False, optional=True, style='dotted',
-                               relation=relation)
+                               relation=relation, actual_number=1)
         else:  # i.e. children = [...] is set in the class for this object
             # parent instance has n of type Child, each child instance has one of type Parent
             child = relation.node  # reset from new relations
             graph.add_edge(parent, child, singular=relation.maxnumber == 1,
                            optional=relation.minnumber == 0,
-                           relation=relation, style=relstyle)
-            graph.add_edge(child, parent, singular=True, optional=True, style='solid')
+                           relation=relation, style=relstyle, actual_number=1)
+            graph.add_edge(child, parent, singular=True, optional=True, style='solid', actual_number=1)
 
 
 def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
@@ -285,6 +285,25 @@ class Data:
                 self.relative_names[name][h.__name__] = relation
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
+        self.setup_cardinality()
+
+    def setup_cardinality(self):
+        multiples = [(a, b) for a, b, d in self.relation_graphs[-1].edges(data=True) if 'relation' in d]
+        forward_q = "MATCH (a:{})-[r:is_required_by]->(:{}) with a, count(r) as cnt with avg(cnt) as cnt RETURN CASE WHEN cnt is null THEN 0 ELSE cnt END"
+        backward_q = "MATCH (:{})-[r:is_required_by]->(a:{}) with a, count(r) as cnt with avg(cnt) as cnt RETURN CASE WHEN cnt is null THEN 0 ELSE cnt END"
+        for (a, b) in tqdm(multiples):
+            forward_n = self.graph.execute(forward_q.format(a.__name__, b.__name__)).evaluate()
+            backward_n = self.graph.execute(backward_q.format(a.__name__, b.__name__)).evaluate()
+            for g in self.relation_graphs:
+                try:
+                    g.edges[a, b]['actual_number'] = forward_n
+                    g.edges[b, a]['actual_number'] = backward_n
+                except KeyError:
+                    pass
+        for g in self.relation_graphs:
+            for edge in g.edges:
+                g.edges[edge]['weight'] = g.edges[edge]['actual_number'] if g.edges[edge]['actual_number'] > 1 else 1
+        1
 
     # noinspection PyTypeHints
     def expand_template_object(self, obj: str) -> Set[str]:
