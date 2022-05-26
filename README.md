@@ -279,7 +279,7 @@ plt.savefig('ha-z.png')
 ```
 <img src="ha-z.png" height="200">
 
-# 5. Get the brightest g-band target in an OB and plot some spectra 
+# 4. Get the brightest g-band target in an OB and plot some spectra 
 a. I would like to identify the brightest (g band) WL spectrum observed in an OB with `obid=1234` (using the g band magnitude in the stacked spectrum). Plot the stack, in both red and blue arms (on same plot)
 
 b. Plot the individual spectra that went into making the stack. 

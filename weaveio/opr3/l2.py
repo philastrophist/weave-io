@@ -134,7 +134,7 @@ class Gandalf(Fit):
     plural_name = 'gandalfs'
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
     factors = Fit.factors + ['fwhm_flag']
-    factors += Line.as_factors(gandalf_line_names) + SpectralIndex.as_factors(gandalf_index_names)
+    factors += Line.as_factors(*gandalf_line_names) + SpectralIndex.as_factors(*gandalf_index_names)
     identifier_builder = ['gandalf_model_spectrum']
 
 
