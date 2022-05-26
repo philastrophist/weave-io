@@ -10,14 +10,14 @@
 
 * An Exposure is one integration of both arms of the spectrograph. You can locate Exposures like so:  `data.exposures[mjd]`
 
-* A Run is a weave term for an exposure taken in one arm of the spectrograph (so there are always 2 Runs per Exposure). You can locate runs using their runid `data.runs[runid]` or their colour relative to the exposure `data.exposures[mjd].runs['red']`
+* A Run is a weave term for an exposure taken in one arm of the spectrograph (so there are always 2 Runs per Exposure). You can locate runs using their runid `data.runs[runid]`.
 
 * A `spectrum` in weaveio refers to a single spectrum of a single target (not the block of `spectr*a*`)
 
 * An L1 product refers to the spectra recorded in an L1File. All L1 data is separated by camera colour (red and blue). 
     * A single spectrum is the processed spectrum from the raw data
-    * A stacked spectrum is the spectrum resulting from stacking two or more single spectra in a single ob
-    * A superstacked spectrum results from stacking *between* OBs but with the same instrument configuration
+    * A stack spectrum is the spectrum resulting from stacking two or more single spectra in a single ob
+    * A superstack spectrum results from stacking *between* OBs but with the same instrument configuration
     * A supertarget spectrum results from stacking every single spectrum of a single WeaveTarget cname.
 
 * There are three types of `Target`
@@ -33,22 +33,22 @@
     1. File - A reference to a physical fits file on the herts system (it also stores references to individual fits.HDUs and their headers as separate objects, but the user doesn't need to know of their existence to use weave.io)
     2. Object - A object that references a concept in the WEAVE universe that has attributes (an OB object has an obid attribute, an exposure object has an attribute expmjd
     3. Attribute - A piece of data that belongs to some object
-    4. Product - A special type of attribute which references binary data not stored in the database itself (e.g. spectrum flux)
+    4. Product - A special type of attribute which references binary data not stored in the database itself (e.g. spectrum flux). You cannot perform arithmetic/indexing on product attributes.
 
 ## If confused, ignore...
 
 ### object/attribute 
-weave.io uses Python syntax to traverse a hierarchy of objects and their attributes. It is important to note that one object can be an attribute of another object (e.g. a run is an attribute of an OB). 
+weave.io uses Python syntax to traverse a hierarchy of objects and their attributes. 
+It is important to note that objects are linked to other objects (e.g. a run belongs to an OB and also to an exposure, which itself belongs to an OB). 
 
 You can stitch together these objects to form a hierarchy of objects:
 
-run <-- exposure <-- ob <--obspec
+`run <-- exposure <-- ob <--obspec(xml)`
 
 Every OB is a parent of multiple Exposures which in turn are parents exactly 2 runs each (one red, one blue).
 
 Because of this chain of parentage/relation, every object has access to all attributes where there is a chain, as if they were its own attributes.
 
-![image.png](attachment:image.png)
 
 ### Traversal syntax 
 
@@ -201,10 +201,11 @@ It is analagous to an SQL query except that it is written in Python.
 ```python
 from weaveio import *
 data = Data()
-runid = 1002813
+runid = 1003453
 nsky = sum(data.runs[runid].targuses == 'S')
 print("number of sky targets = {}".format(nsky()))
 ```
+output: `[100]`
 
 ## 1b. I want to see how many sky targets each run has
 ```python
@@ -213,84 +214,72 @@ data = Data()
 nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
 print(nsky())
 ```
+output: `[100 299 299 100 100 200 160 ...]`
 
+## 1c. Put the above result into a table where I can see the runid
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
+query_table = data.runs[['id', nsky]]  # design a table by using the square brackets
+concrete_table = query_table()  # make it "real" by executing the query
+print(concrete_table)
+print(type(concrete_table))
+```
+output:
+```
+   id   sum0
+------- ----
+1003453  100
+1003440  299
+...      ...
+<class 'weaveio.readquery.results.Table'>  # although this is an astropy table really
+```
 
 # 2. I want to plot all single sky spectra from last night in the red arm
 
-Currently, it is only possible to filter once in a query so you have to do separate queries for each condition you want and then feed it back in. See below
-
 ```python
 from weaveio import *
-yesterday = 57634
-
 data = Data()
+yesterday = 57811
+
 runs = data.runs
 is_red = runs.camera == 'red'
-is_yesterday = floor(runs.expmjd) == yesterday
+is_yesterday = floor(runs.exposure.mjd) == yesterday  # round to integer, which is the day
 
-# we do 2 separate filters instead of 1 so to not read too much data into memory at once
 runs = runs[is_red & is_yesterday]  # filter the runs first
-singlespectra = runs.l1singlespectra
-is_sky_target = singlespectra.targuse == 'S'  # then filter the spectra per filtered run
-chosen = singlespectra[is_sky_target]
+spectra = runs.l1single_spectra
+sky_spectra = spectra[spectra.targuse == 'S']
 
-table = chosen['wvl', 'flux'](limit=10)
+table = sky_spectra[['wvl', 'flux']]
 
 import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# %matplotlib 
-plt.plot(table['wvl'].data.T, table['flux'].data.T)  # the .T means that matplotlib uses the rows as separate lines on the plot
+for row in table:  # this may take a while to plot, there is a lot of data
+    plt.plot(row.wvl, row.flux, 'k-', alpha=0.4)
+plt.savefig('sky_spectra.png')
 ```
+output:
+
+<img src="sky_spectra.png" height="200">
+
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
 
 
 ```python
-from weaveio import * 
-data = Data()
-
-obs = data.obs[data.obs.obstartmjd >= 57787]  # pick an OB that started after this date
-fibretargets = obs.fibretargets[any(obs.fibretargets.surveys == '/WL|WQSO/')]  # / indicate regex is starting and ending
-
-l2rows = fibretargets.l2stack
-table = l2rows['lineflux_ha_6562', 'z']()
-
 import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# %matplotlib 
-plt.scatter(table['lineflux_ha_6562'], table['z'])
-```
-
-# 4. I want to identify the WL spectrum with the brightest continuum at 5000AA and plot the spectrum from both red and blue arms, together with the error (variance) spectrum. 
-
-
-```python
 data = Data()
-stackedspectra = data.l1stackedspectra  # lots of different stacked spectra from many different OBs
-wl_stackedspectra = stackedspectra[any(stackedspectra.surveys == 'WL')]
-
-reds = wl_stackedspectra[wl_stackedspectra.camera == 'red']
-blues = wl_stackedspectra[wl_stackedspectra.camera == 'blue']
-
-continuum = []
-for red, blue in reds(), blues():  # this loop is offline
-    continuum.append(my_special_module.median_flux(red, blue, 4950, 5050))  # do some fancy function you have written
-index = np.argmax(continuum)
-
-red = reds[index]()
-blue = blues[index]()
-
-import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# %matplotlib 
-plt.plot(red.wvls, red.flux)
-plt.plot(blue.wvls, blue.flux)
-
-plt.plot(red.wvls,  1 / red.ivar, label='variance')
-plt.plot(blue.wvls, 1 /  blue.ivar, label='variance')
+l2s = data.l2stacks
+l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]
+l2s = l2s[l2s['ha_6562.80_flux'] > 0]
+table = l2s[['ha_6562.80_flux', 'z']]()
+plt.scatter(table['z'], table['ha_6562.80_flux'], s=1)
+plt.yscale('log')
+plt.savefig('ha-z.png')
 ```
+<img src="ha-z.png" height="200">
 
-# 5. Get the brightest g-band target in an OB and plot some spectra 
+# 4. Get the brightest g-band target in an OB and plot some spectra 
 a. I would like to identify the brightest (g band) WL spectrum observed in an OB with `obid=1234` (using the g band magnitude in the stacked spectrum). Plot the stack, in both red and blue arms (on same plot)
 
 b. Plot the individual spectra that went into making the stack. 

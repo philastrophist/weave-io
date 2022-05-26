@@ -33,6 +33,13 @@ class Handler:
             start = starts.pop()
         pathsetdict, base, factor_name = self.data.find_factor_paths(start, factor_name, plural)
         is_product = factor_name in base.products.keys()
+        if len(pathsetdict) > 1:
+            names = [i.__name__.lower() for i in pathsetdict.keys()]
+            plural = self.data.plural_name(factor_name)
+            warn(f"This query for {factor_name} is ambiguous and will return all {plural} "
+                 f"for each of the following:\n {', '.join(names)}.\n"
+                 f"If this is not what you intended, you can use `.{names[0]}` before `{factor_name}` to choose only {plural} from {names[0]}",
+                 SyntaxWarning)
         return pathsetdict, base, is_product, factor_name
 
 

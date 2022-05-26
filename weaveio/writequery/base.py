@@ -68,19 +68,20 @@ class CypherQuery(metaclass=ContextMeta):
                     d[namehint] += 1
                     v._name = f'{namehint}{i}'
 
-    def render_query(self, procedure_tag=''):
+    def render_query(self, procedure_tag='', as_lines=False):
         if not isinstance(self.statements[-1], Returns):
             self.returns(self.timestamp)
         self.make_variable_names()
         qs = [s.to_cypher() for s in self.statements]
         for i, q in enumerate(qs):
-            if q.lower().startswith('with'):
-                q = re.sub('\$[\w\d]+,', '', q)
-                q = re.sub(',\$[\w\d]+', '', q)
+            if q.lower().startswith('with') and '$' in q:
+                q = re.sub('\$[\w\d]+ as \$[\w\d]+,', '', q)
                 qs[i] = q
         # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
-        q = '\n'.join(qs)
         datadict = {d.name: d.data for d in self.data}
+        if as_lines:
+            return qs, datadict
+        q = '\n'.join(qs)
         return dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')), datadict
 
     def open_context(self):
@@ -109,7 +110,7 @@ class Varname:
         self.key = key
 
     def __repr__(self):
-        return self.key
+        return f"`{self.key}`"
 
     def __eq__(self, other):
         return getattr(other, 'key', other) == self.key
@@ -193,6 +194,7 @@ class CypherVariable:
     def __init__(self, namehint=None):
         self.namehint = 'variable' if namehint is None else namehint
         self._name = None
+        self.is_mapping = None
 
     @property
     def name(self):
@@ -206,32 +208,62 @@ class CypherVariable:
     def __getitem__(self, item: Union[str, int]):
         return self.get(item, alias=True)
 
-    def get(self, item: Union[str, int], alias=False):
-        assert isinstance(item, (int, str))
+    def get(self, item: Union[str, int, 'CypherVariable'], alias=False):
+        assert isinstance(item, (int, str, CypherVariable))
+        if self.is_mapping:
+            if isinstance(item, CypherVariable):
+                item = CypherVariableToString(item)
+            else:
+                item = str(item)
         getitem = CypherVariableItem(self, item)
         if alias:
             query = CypherQuery.get_context()
             if isinstance(item, int):
                 item = f'{self.namehint}_index{item}'
+            if isinstance(item, CypherVariable):
+                item = f"{self.namehint}_index_{item.namehint}"
             alias_statement = Alias(getitem, str(item))
             query.add_statement(alias_statement)
             return alias_statement.out
         else:
             return getitem
 
+    def __sub__(self, other):
+        query = CypherQuery.get_context()
+        v =  ArithmeticCypherVariable('{} - {}', self, other)
+        alias_statement = Alias(v, 'sub')
+        query.add_statement(alias_statement)
+        return alias_statement.out
+
+    def __add__(self, other):
+        query = CypherQuery.get_context()
+        v =  ArithmeticCypherVariable('{} + {}', self, other)
+        alias_statement = Alias(v, 'add')
+        query.add_statement(alias_statement)
+        return alias_statement.out
+
+
 
 class DerivedCypherVariable(CypherVariable):
-    def __init__(self, parent, args):
+    def __init__(self, *args):
         super(DerivedCypherVariable, self).__init__()
-        self.parent = parent
+        self.parent = [i for i in args if isinstance(i, CypherVariable)][0]
         self.args = args
 
-    def string_formatter(self, parent, args):
+    def string_formatter(self, *args):
         raise NotImplementedError
 
     @property
     def name(self):
-        return self.string_formatter(self.parent, self.args)
+        return self.string_formatter(*self.args)
+
+
+class ArithmeticCypherVariable(DerivedCypherVariable):
+    def __init__(self, op_string, *parents):
+        super().__init__(op_string, *parents)
+
+    def string_formatter(self, op_string, *parents):
+        return op_string.format(*parents)
 
 
 class CypherVariableItem(DerivedCypherVariable):
@@ -240,6 +272,23 @@ class CypherVariableItem(DerivedCypherVariable):
             return f"{parent}['{attr}']"
         return f"{parent}[{attr}]"
 
+
+class CypherFindReplaceStr(DerivedCypherVariable):
+    def string_formatter(self, parent, replace):
+        return f"replace({parent}, 'X', '{replace}')"
+
+class CypherAppendStr(DerivedCypherVariable):
+    def string_formatter(self, *strings):
+        s = [f"'{i}'" if isinstance(i, str) else f"{i}" for i in strings]
+        return ' + '.join(s)
+
+
+class CypherVariableToString(DerivedCypherVariable):
+    def __init__(self, parent):
+        super().__init__(parent)
+
+    def string_formatter(self, parent):
+        return f"toStringOrNull({parent})"
 
 class Collection(CypherVariable):
     pass
@@ -252,6 +301,10 @@ class CypherData(CypherVariable):
         if not delay:
             query = CypherQuery.get_context()  # type: CypherQuery
             query.add_data(self)
+        if isinstance(data, dict):
+            self.is_mapping = True
+        else:
+            self.is_mapping = False
 
     def __repr__(self):
         return '$' + super(CypherData, self).__repr__()

@@ -1,2 +1,0 @@
-class Address(dict):
-    pass

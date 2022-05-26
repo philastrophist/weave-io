@@ -79,6 +79,15 @@ class GetItemStatement(Statement):
         return '\n'.join([convert, result])
 
 
+class Copy(Statement):
+    def __init__(self, *args):
+        outs = [CypherVariable(a.namehint + '_copy') for a in args]
+        super(Copy, self).__init__(args, outs)
+
+    def to_cypher(self):
+        eq = [f'{a} as {b}' for a, b in zip(self.input_variables, self.output_variables)]
+        return f"WITH *, {', '.join(eq)}"
+
 class GroupBy(Statement):
     def __init__(self, nodelist, propertyname):
         super(GroupBy, self).__init__([nodelist], [NodeMap(propertyname+'_dict')])

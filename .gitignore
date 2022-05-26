@@ -247,3 +247,4 @@ data/
 local_scripts/
 .last-checked
 lofar-data/
+*.pdf

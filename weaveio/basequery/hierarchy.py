@@ -67,7 +67,6 @@ class HierarchyFrozenQuery(FrozenQuery):
         elif isinstance(other, FrozenQuery):
             raise TypeError(f"Can only compare an object with another object not with {type(other)}")
         else:
-            warn(f"Comparing {self} with an id {other} assuming that you mean {self.hierarchy_type.singular_name}.{self.hierarchy_type.idname}={other}")
             parent = getattr(self, self.hierarchy_type.idname)
             data = parent.branch.add_data(other)
             inputs = {
@@ -126,10 +125,8 @@ class HeterogeneousHierarchyFrozenQuery(HierarchyFrozenQuery):
     def __getattr__(self, item):
         if item in self.data.plural_factors:
             return self._get_factor(item, plural=True)
-        elif item in self.data.singular_factors:
-            raise AmbiguousPathError(f"Cannot return a single factor from a heterogeneous dataset")
-        elif item in self.data.singular_hierarchies:
-            raise AmbiguousPathError(f"Cannot return a singular hierarchy without filtering first")
+        elif self.data.is_singular_name(item):
+            raise AmbiguousPathError(f"Cannot return only one {item} since the DB contains more than one. Either filter your query first or try {self.data.plural_name(item)}")
         elif item in self.data.plural_hierarchies:
             name = self.data.singular_name(item)
             return self._get_hierarchy(name, plural=True)
@@ -317,7 +314,7 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
         else:
             raise KeyError(f"Unknown item {item} for `{self}`")
         plurals = [not self.data.is_singular_name(i) for i in item]
-        branch, factor_variables, is_products = self._get_multifactor_query(keys, plurals, collect_plurals=len(plurals) > 1)
+        branch, factor_variables, is_products = self._get_multifactor_query(keys, plurals, collect_plurals=len(plurals) > 0)
         if len(factor_variables) == 1:
             return SingleFactorFrozenQuery(self.handler, branch, keys[0], factor_variables[0], is_products[0], self.parent)
         return TableFactorFrozenQuery(self.handler, branch, keys, factor_variables, plurals, is_products, return_keys, self.parent)
@@ -351,12 +348,14 @@ class DefiniteHierarchyFrozenQuery(HierarchyFrozenQuery):
             if all(valids):
                 return self._get_factor_table_query(item)
             elif any(valids):
-                bad = [i for i, v in zip(item, valids) if v]
+                bad = [i for i, v in zip(item, valids) if not v]
                 raise KeyError(f"{bad} are not recognised")
             else:
                 return self._filter_by_identifiers(item)
         if not self.data.is_valid_name(item):
             return self._filter_by_identifier(item)  # then assume its an ID
+        if isinstance(item, str) and self.data.is_valid_name(item):
+            return self._get_factor_table_query([item])
         else:
             return getattr(self, item)
 
