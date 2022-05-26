@@ -1,7 +1,7 @@
 py2neo==2021.1.5
 xxhash==2.0.0
 astropy==4.0.1.post1
-networkx==2.4
+networkx==2.6.3
 numpy==1.18.1
 pandas==1.0.3
 pytest==5.4.1

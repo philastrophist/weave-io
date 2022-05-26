@@ -243,9 +243,8 @@ class Data:
     def __init__(self, rootdir: Union[Path, str] = None,
                  host: str = None, port=None, dbname=None,
                  password=None, user=None, verbose=False):
-        if verbose:
-            logging.basicConfig(level=logging.INFO)
-        self.dbname = dbname or os.getenv('WEAVEIO_DB', 'neo4j')
+        self.verbose = verbose
+        self.dbname = dbname or os.getenv('WEAVEIO_DB', 'production')
         self.host = host or os.getenv('WEAVEIO_HOST', '127.0.0.1')
         self.port = port or os.getenv('WEAVEIO_PORT', 7687)
         self.password = password or os.getenv('WEAVEIO_PASSWORD', 'weavepassword')
@@ -285,6 +284,16 @@ class Data:
                 self.relative_names[name][h.__name__] = relation
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
+
+    @property
+    def verbose(self):
+        return self._verbose
+
+    @verbose.setter
+    def verbose(self, value):
+        self._verbose = value
+        if value:
+            logging.basicConfig(level=logging.INFO)
 
     # noinspection PyTypeHints
     def expand_template_object(self, obj: str) -> Set[str]:
