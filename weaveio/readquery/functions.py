@@ -1,5 +1,5 @@
 from typing import Callable
-from math import floor
+from math import floor, ceil
 
 import numpy as np
 

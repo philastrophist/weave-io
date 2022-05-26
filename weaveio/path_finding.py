@@ -44,7 +44,7 @@ def _find_path(graph, a, b, force_single):
         raise nx.NetworkXNoPath('No path found between {} and {}'.format(a, b))
     # then try to find a non-singular path with one direction, either -> or <-
     # we dont want ()->()<-() when it's multiple
-    restricted = nx.subgraph_view(graph, filter_edge=lambda u, v: graph.edges[u, v]['actual_number'] > 0)
+    restricted = nx.subgraph_view(graph, filter_edge=lambda u, v: graph.edges[u, v]['actual_number'] > 0 and 'relation' in graph.edges[u, v])
     forward = next(shortest_simple_paths(restricted, a, b, 'actual_number'))
     forward_weight = nx.path_weight(restricted, forward, 'actual_number') or math.inf
     reversed = restricted.reverse()

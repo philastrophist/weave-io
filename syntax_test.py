@@ -8,8 +8,9 @@ from weaveio.path_finding import find_singular_simple_hierarchy_path
 
 logging.basicConfig(level=logging.INFO)
 
-data = Data(dbname='lowleveltest2')
-
+# data = Data(dbname='lowleveltest2')
+data = Data()
+print(count(data.l2stacks)())
 # runid = 1003453
 # nsky = sum(data.runs[runid].targuses == 'S')
 # print("number of sky targets = {}".format(nsky()))
@@ -51,8 +52,11 @@ data = Data(dbname='lowleveltest2')
 # plt.yscale('log')
 # plt.show()
 
-
+#
 plt.figure()
 ob = data.obs[3756]
-l2stacks = ob.l2stacks[]
-l2stack = ob.l2stacks.l1stack_spectra.mean_flux_g
+l2stacks = ob.l2stacks[any(ob.l2stacks.surveys == '/WL.*/', wrt=ob.l2stacks)]
+gband = l2stacks.l1stack_spectra[l2stacks.l1stack_spectra.camera == 'blue'].mean_flux_g  # using "mean_flux_g" instead of "mag_g" will use the weave-observed flux not the input catalogue magnitude
+# l2stack = l2stacks[gband == max(gband, wrt=l2stacks)]
+print('\n'.join(gband._precompile()._to_cypher()[0]))
+# print(gband(limit=1))

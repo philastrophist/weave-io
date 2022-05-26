@@ -184,7 +184,7 @@ class L2Superstack(L2Product, Superstack):
     """
     singular_name = 'l2superstack'
     parents = L2Product.parents[1:] + [Multiple(L1StackedSpectrum, 2, 3, constrain=(FibreTarget, OBSpec))]
-    identifier_builder = ['l1stack_spectra', 'fibre_target', 'obspec']
+    identifier_builder = ['l1stacked_spectra', 'fibre_target', 'obspec']
 
 
 class L2Supertarget(L2Product, Supertarget):
