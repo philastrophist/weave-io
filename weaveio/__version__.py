@@ -1,2 +1,2 @@
-__version__ = "2022.0.0"
-__changes__ = 'big overhaul for new L2'
+__version__ = "2022.0.2"
+__changes__ = 'include data'
