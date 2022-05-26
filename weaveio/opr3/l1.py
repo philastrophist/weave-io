@@ -14,7 +14,7 @@ class L1Spectrum(Spectrum1D, L1):
     is_template = True
     children = [Optional('self', idname='adjunct')]
     products = ['flux', 'ivar', 'sensfunc']
-    factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp')
+    factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
 
 
 class NoSS(Spectrum1D):
@@ -43,8 +43,8 @@ class L1SingleSpectrum(L1Spectrum, Single):
 
 class L1StackedSpectrum(L1Spectrum, Stacked):
     is_template = True
-    singular_name = 'l1stack_spectrum'
-    plural_name = 'l1stack_spectra'
+    singular_name = 'l1stacked_spectrum'
+    plural_name = 'l1stacked_spectra'
     parents = [Multiple(L1SingleSpectrum, 2)] + L1Spectrum.parents
     identifier_builder = ['l1single_spectra']
 

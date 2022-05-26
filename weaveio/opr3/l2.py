@@ -134,7 +134,7 @@ class Gandalf(Fit):
     plural_name = 'gandalfs'
     parents = [OneOf(GandalfModelSpectrum, one2one=True)]
     factors = Fit.factors + ['fwhm_flag']
-    factors += Line.as_factors(gandalf_line_names) + SpectralIndex.as_factors(gandalf_index_names)
+    factors += Line.as_factors(*gandalf_line_names) + SpectralIndex.as_factors(*gandalf_index_names)
     identifier_builder = ['gandalf_model_spectrum']
 
 
@@ -184,7 +184,7 @@ class L2Superstack(L2Product, Superstack):
     """
     singular_name = 'l2superstack'
     parents = L2Product.parents[1:] + [Multiple(L1StackedSpectrum, 2, 3, constrain=(FibreTarget, OBSpec))]
-    identifier_builder = ['l1stack_spectra', 'fibre_target', 'obspec']
+    identifier_builder = ['l1stacked_spectra', 'fibre_target', 'obspec']
 
 
 class L2Supertarget(L2Product, Supertarget):

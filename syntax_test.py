@@ -52,9 +52,11 @@ print(count(data.l2stacks)())
 # plt.yscale('log')
 # plt.show()
 
-# print(data.find_names('ha_6562_flux'))
 #
-# import matplotlib.pyplot as plt
-# # uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# # %matplotlib
-# plt.scatter(table['lineflux_ha_6562'], table['z'])
+plt.figure()
+ob = data.obs[3756]
+l2stacks = ob.l2stacks[any(ob.l2stacks.surveys == '/WL.*/', wrt=ob.l2stacks)]
+gband = l2stacks.l1stack_spectra[l2stacks.l1stack_spectra.camera == 'blue'].mean_flux_g  # using "mean_flux_g" instead of "mag_g" will use the weave-observed flux not the input catalogue magnitude
+# l2stack = l2stacks[gband == max(gband, wrt=l2stacks)]
+print('\n'.join(gband._precompile()._to_cypher()[0]))
+# print(gband(limit=1))

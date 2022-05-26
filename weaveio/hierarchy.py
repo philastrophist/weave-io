@@ -579,12 +579,12 @@ class Hierarchy(Graphable):
         return thing
 
     @classmethod
-    def as_factors(cls, *names):
+    def as_factors(cls, *names, prefix=''):
         if len(names) == 1 and isinstance(names[0], list):
-            names = names[0]
+            names = prefix+names[0]
         if cls.parents+cls.children:
             raise TypeError(f"Cannot use {cls} as factors {names} since it has defined parents and children")
-        return [f"{name}_{factor}" if factor != 'value' else name for name in names for factor in cls.factors]
+        return [f"{prefix}{name}_{factor}" if factor != 'value' else f"{prefix}{name}" for name in names for factor in cls.factors]
 
     @classmethod
     def from_name(cls, name):

@@ -12,3 +12,4 @@ pkg_info
 semver
 textdistance
 inflect==5.3.0
+graphviz
