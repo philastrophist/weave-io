@@ -45,7 +45,7 @@ class L1StackedSpectrum(L1Spectrum, Stacked):
     is_template = True
     singular_name = 'l1stacked_spectrum'
     plural_name = 'l1stacked_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2)] + L1Spectrum.parents
+    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, ArmConfig, ))] + L1Spectrum.parents
     identifier_builder = ['l1single_spectra']
 
 
