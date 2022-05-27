@@ -148,10 +148,11 @@ class BaseQuery:
         for H in hs:
             for h in self._data.expand_template_object(H):
                 try:
-                    level = self._get_path_to_object(h, False)[-1]
-                    new_hs.append((h, level))
+                    _, sing, level = self._get_path_to_object(h, False)[-1]
+                    new_hs.append((h, level, sing))
                 except (NetworkXNoPath, NodeNotFound):
                     pass
+        if list(zip(*new_hs))[-1]
         new_hs.sort(key=lambda x: x[1])
         lowest_level = min(list(zip(*new_hs))[1])
         hs = [h for h, l in new_hs if l == lowest_level]  # pick the objs with the smallest data requirement
