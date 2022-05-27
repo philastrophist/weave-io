@@ -497,7 +497,8 @@ class AttributeQuery(BaseQuery):
         else:
             index = self._index_node
         r = self._G.add_results_table(index, [self._node], [not self._single], dropna=[self._node])
-        a = AttributeQuery._spawn(self, r, self._obj, index, self._single, factor_name=self._factor_name)
+        a = AttributeQuery._spawn(self, r, self._obj, index, self._single, is_products=self._is_products,
+                                  factor_name=self._factor_name)
         if index == 0:
             a.one_row = True
         return a
