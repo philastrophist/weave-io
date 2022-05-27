@@ -72,7 +72,9 @@ class BaseQuery:
 
     def _post_process_table(self, result):
         if self.one_column:
-            return result[result.colnames[0]].data
+            result = result[result.colnames[0]].data
+        if self.one_row:
+            result = result[0]
         return result
 
     def _post_process_row(self, row):
