@@ -522,6 +522,8 @@ class TableQuery(BaseQuery):
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, *args, **kwargs)
         self._attr_queries = attr_queries
 
+    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
+        return self._previous._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
 
 
 class ListAttributeQuery(AttributeQuery):
