@@ -366,6 +366,16 @@ class AttributeQuery(BaseQuery):
         self._factor_name = factor_name
         self.dtype = dtype
 
+    def __getitem__(self, item):
+        if not isinstance(item, AttributeQuery):
+            raise TypeError(f"You can only filter an attribute by another attribute i.e. `lines[lines > 0]` not `lines[0]`")
+        op_string = 'CASE WHEN toBoolean(toInteger({1})) THEN {0} ELSE null END'
+        try:
+            n, wrt = self._G.add_combining_operation(op_string, 'op-filter', self._node, item._node)
+        except ParserError:
+            raise SyntaxError(f"You may not perform an operation on {self} and {item} since one is not an ancestor of the other")
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=self.dtype)
+
     def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None):
         """
         arithmetics
