@@ -114,7 +114,7 @@ class MultiplicityError(Exception):
 def is_multiple_edge(graph, x, y):
     return not graph.edges[(x, y)]['multiplicity']
 
-def expand_template_relation(relation):
+def expand_template_relation(relation, allowed_hiers: Set[Type[Hierarchy]]):
     """
     Returns a list of relations that relate to each non-template class
     e.g.
@@ -123,11 +123,11 @@ def expand_template_relation(relation):
     """
     if not relation.node.is_template:
         return [relation]
-    subclasses = [cls for cls in get_all_subclasses(relation.node) if not cls.is_template]
+    subclasses = [cls for cls in get_all_subclasses(relation.node) if not cls.is_template and cls in allowed_hiers]
     return [Multiple(subclass, 0, relation.maxnumber, relation.constrain, relation.relation_idname, relation.one2one) for subclass in subclasses]
 
 
-def add_relation_graph_edge(graph, parent, child, relation: Multiple):
+def add_relation_graph_edge(graph, parent, child, relation: Multiple, allowed_hiers: Set[Type[Hierarchy]]):
     """
     if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
         P-(n)->O (1 object of type O has n parents of type P)
@@ -140,7 +140,7 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple):
     """
     relation.instantate_node()
     child_defines_parents = relation.node is parent
-    for relation in expand_template_relation(relation):
+    for relation in expand_template_relation(relation, allowed_hiers):
         relation.instantate_node()
         # only parent-->child is in the database
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
@@ -176,11 +176,11 @@ def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
         for child in h.children:
             rel = child if isinstance(child, Multiple) else OneOf(child)
             child = child.node if isinstance(child, Multiple) else child
-            add_relation_graph_edge(graph, h, child, rel)
+            add_relation_graph_edge(graph, h, child, rel, hierarchies)
         for parent in h.parents:
             rel = parent if isinstance(parent, Multiple) else OneOf(parent)
             parent = parent.node if isinstance(parent, Multiple) else parent
-            add_relation_graph_edge(graph, parent, h, rel)
+            add_relation_graph_edge(graph, parent, h, rel, hierarchies)
     return graph
 
 def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None, templates=False) -> Set[Type[Hierarchy]]:
@@ -257,7 +257,8 @@ class Data:
         self.filelists = {}
         self.relation_graphs = []
         for i, f in enumerate(self.filetypes):
-            self.relation_graphs.append(make_relation_graph(hierarchies_from_files(*self.filetypes[:i+1])))
+            hs = hierarchies_from_files(*self.filetypes[:i+1])
+            self.relation_graphs.append(make_relation_graph(hs))
         if self.filetypes:
             self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
             self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})

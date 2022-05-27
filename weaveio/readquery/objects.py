@@ -366,6 +366,16 @@ class AttributeQuery(BaseQuery):
         self._factor_name = factor_name
         self.dtype = dtype
 
+    def __getitem__(self, item):
+        if not isinstance(item, AttributeQuery):
+            raise TypeError(f"You can only filter an attribute by another attribute i.e. `lines[lines > 0]` not `lines[0]`")
+        op_string = 'CASE WHEN toBoolean(toInteger({1})) THEN {0} ELSE null END'
+        try:
+            n, wrt = self._G.add_combining_operation(op_string, 'op-filter', self._node, item._node)
+        except ParserError:
+            raise SyntaxError(f"You may not perform an operation on {self} and {item} since one is not an ancestor of the other")
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=self.dtype)
+
     def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None):
         """
         arithmetics
@@ -497,7 +507,11 @@ class AttributeQuery(BaseQuery):
         else:
             index = self._index_node
         r = self._G.add_results_table(index, [self._node], [not self._single], dropna=[self._node])
-        return AttributeQuery._spawn(self, r, self._obj, index, self._single, factor_name=self._factor_name)
+        a = AttributeQuery._spawn(self, r, self._obj, index, self._single, is_products=self._is_products,
+                                  factor_name=self._factor_name)
+        if index == 0:
+            a.one_row = True
+        return a
 
 
 class ProductAttributeQuery(AttributeQuery):
@@ -519,6 +533,8 @@ class TableQuery(BaseQuery):
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, *args, **kwargs)
         self._attr_queries = attr_queries
 
+    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
+        return self._previous._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
 
 
 class ListAttributeQuery(AttributeQuery):
