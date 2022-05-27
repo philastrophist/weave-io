@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Tuple
 
 import numpy as np
 import py2neo
@@ -43,27 +43,12 @@ class ArrayHolder:
         self.array = array
 
 
-def vstack(tables: List[Union[Table, Row]], *args, **kwargs) -> Table:
-    shapes = zip(*[[col.shape for col in table] for table in tables])
-    mismatched_column_shapes = [len(set(s)) != 1 for s in shapes]
-    if any(mismatched_column_shapes):
-        new_tables = []
-        for row in tables:
-            new_row = []
-            for i, mismatched in enumerate(mismatched_column_shapes):
-                if mismatched:
-                    col = Column([ArrayHolder(row[i])], name=row.colnames[i])
-                else:
-                    col = Column([row[i]], name=row.colnames[i])
-                new_row.append(col)
-            new_tables.append(Table(new_row))
-    else:
-        new_tables = tables
-    table = Table(astropy_vstack(new_tables), *args, **kwargs)
-    for colname, mismatched in zip(table.colnames, mismatched_column_shapes):
-        if mismatched:
-            table[colname][:] = [a.array for a in table[colname][:]]
-    return table
+def vstack_rows(rows: List[Tuple[List, List[bool], List[str]]], *args, **kwargs) -> Table:
+    # for each column, remove null rows, make table, put nulls back in
+    columns, names = zip(*rows)
+    names = names[0]
+    columns = list(zip(*columns))
+    return Table([MaskedColumn(c, name=n) for c, n in zip(columns, names)])
 
 def int_or_slice(x: Union[int, float, slice, None]) -> Union[int, slice]:
     if isinstance(x, (int, float)):
@@ -118,12 +103,14 @@ class FileHandler:
 
 
 class RowParser(FileHandler):
-    def parse_product_row(self, row: py2neo.cypher.Record, names: List[Union[str, None]], is_products: List[bool]):
+    def parse_product_row(self, row: py2neo.cypher.Record, names: List[Union[str, None]], is_products: List[bool],
+                          as_row: bool):
         """
         Take a pandas dataframe and replace the structure of ['fname', 'extn', 'index', 'key', 'header_only']
         with the actual data
         """
         columns = []
+        colnames = []
         for value, cypher_name, name, is_product in zip(row.values(), row.keys(), names, is_products):
             if is_product:
                 if value is not None:
@@ -136,18 +123,24 @@ class RowParser(FileHandler):
                 mask |= np.all(~np.isfinite(value))
             except TypeError:
                 pass
-            columns.append(MaskedColumn([value], name=name, mask=[mask]))
-        return Table(columns)[0]
+            if mask:
+                value = np.ma.masked
+            columns.append(value)
+            colnames.append(name)
+        if as_row:
+            columns = [MaskedColumn([value], name=name) for value, name in zip(columns, names)]
+            return Table(columns)[0]
+        return columns, colnames
 
-    def iterate_cursor(self, cursor: Cursor, names: List[Union[str, None]], is_products: List[bool]):
+    def iterate_cursor(self, cursor: Cursor, names: List[Union[str, None]], is_products: List[bool], as_row: bool):
         for row in cursor:
-            yield self.parse_product_row(row, names, is_products)
+            yield self.parse_product_row(row, names, is_products, as_row)
 
     def parse_to_table(self, cursor: Cursor, names: List[str], is_products: List[bool]):
-        rows = list(self.iterate_cursor(cursor, names, is_products))
+        rows = list(self.iterate_cursor(cursor, names, is_products, False))
         if not rows:
             return Table([Column([], name=name) for name in names])
-        return vstack(rows)
+        return vstack_rows(rows)
 
 
 if __name__ == '__main__':

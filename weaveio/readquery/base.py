@@ -53,11 +53,12 @@ class BaseQuery:
                 lines.append(f"SKIP {skip}")
             if limit is not None:
                 lines.append(f"LIMIT {limit}")
-            return new._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()}), new
+            cursor = new._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()})
+            return cursor, new
 
     def _iterate(self, skip=0, limit=None):
         cursor, new = self._execute(skip, limit)
-        rows = new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products)
+        rows = new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products, True)
         with logtime('total streaming (by iteration)'):
             for row in rows:
                 yield new._post_process_row(row)
