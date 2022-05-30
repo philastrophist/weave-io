@@ -148,22 +148,28 @@ class BaseQuery:
         for H in hs:
             for h in self._data.expand_template_object(H):
                 try:
-                    _, sing, level = self._get_path_to_object(h, False)[-1]
-                    new_hs.append((h, level, sing))
+                    _, sing, level = self._get_path_to_object(h, False)
+                    new_hs.append((h, sing, level))
                 except (NetworkXNoPath, NodeNotFound):
                     pass
-        if list(zip(*new_hs))[-1]
-        new_hs.sort(key=lambda x: x[1])
-        lowest_level = min(list(zip(*new_hs))[1])
-        hs = [h for h, l in new_hs if l == lowest_level]  # pick the objs with the smallest data requirement
-        if len(hs) > 1:
-            names = [self._data.singular_name(h) for h in hs]
-            raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
-                                     f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
-        try:
-            obj = hs[0]
-        except IndexError:
-            raise AttributeNameError(f"{self._obj} has no access to an attribute called {maybe_attribute}")
+        _, singulars, levels = zip(*new_hs)
+        new_hs.sort(key=lambda x: x[-1])
+        if sum(singulars) == 1:
+            # if there is exactly one singular hierarchy, choose it
+            obj = min(new_hs, key=lambda x: x[-1])[0]
+        else:
+            # otherwise, filter to the least data required
+            lowest_level = min(levels)
+            hs = [h for h, _, l in new_hs if l == lowest_level]  # pick the objs with the smallest data requirement
+            if len(hs) > 1:
+                names = [self._data.singular_name(h) for h in hs]
+                raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
+                                         f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
+            try:
+                obj = hs[0]
+            except IndexError:
+                # there arent any
+                raise AttributeNameError(f"{self._obj} has no access to an attribute called {maybe_attribute}")
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):

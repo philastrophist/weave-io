@@ -49,7 +49,6 @@ class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
 
 
 class ModelSpectrum(Spectrum1D):
-    is_template = True
     parents = [OneOf(IngestedSpectrum, one2one=True)]
     identifier_builder = ['ingested_spectrum']
     products = ['flux']
