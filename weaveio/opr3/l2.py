@@ -49,7 +49,6 @@ class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
 
 
 class ModelSpectrum(Spectrum1D):
-    is_template = True
     parents = [OneOf(IngestedSpectrum, one2one=True)]
     identifier_builder = ['ingested_spectrum']
     products = ['flux']
@@ -100,8 +99,7 @@ class RedshiftArray(ArrayHolder):
 
 
 class Template(Fit):
-    parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
-    children = [OneOf(RedshiftArray, one2one=True)]
+    parents = [OneOf(RedshiftArray, one2one=True), Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     factors = ['chi2_array', 'name']
     identifier_builder = ['model_spectra', 'combined_model_spectrum', 'name']
 
