@@ -16,7 +16,7 @@ from networkx import NetworkXNoPath
 from .base import BaseQuery
 from .exceptions import CardinalityError, AttributeNameError, UserError
 from .parser import QueryGraph, ParserError
-from .utilities import is_regex, dtype_conversion
+from .utilities import is_regex, dtype_conversion, mask_infs
 from ..opr3.hierarchy import Exposure
 
 if TYPE_CHECKING:
@@ -396,11 +396,13 @@ class AttributeQuery(BaseQuery):
             # op_string = op_string.replace('{0}', f'to{expected_dtype}({{0}})')
             # op_string = op_string.replace('{1}', f'to{expected_dtype}({{1}})')  # both arguments
         if isinstance(other, BaseQuery):
+            op_string = op_string.format(mask_infs('{0}'), mask_infs('{1}'))
             try:
                 n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
             except ParserError:
                 raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
         else:
+            op_string = op_string.format(mask_infs('{0}'))
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype)
 
