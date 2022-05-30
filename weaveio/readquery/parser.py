@@ -477,7 +477,7 @@ class QueryGraph:
         else:
             return self.add_aggregation(other_node, shared, 'collect')
 
-    def add_results_table(self, index_node, column_nodes, force_plurals: List[bool], dropna: List):
+    def add_results_table(self, index_node, column_nodes, force_plurals: List[bool], dropna=None):
         # fold back column data into the index node
         column_nodes = [self.collect_or_not(index_node, d, p) for d, p in zip(column_nodes, force_plurals)] # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
@@ -485,10 +485,13 @@ class QueryGraph:
             vs = self.G.nodes[index_node]['variables'][0]
         except IndexError:
             vs = None
-        try:
-            dropna = self.G.nodes[index_node]['variables'][0]
-        except IndexError:
-            dropna = None
+        if dropna is None:
+            try:
+                dropna = self.G.nodes[index_node]['variables'][0]
+            except IndexError:
+                dropna = None
+        else:
+            dropna = self.G.nodes[dropna]['variables'][0]
         statement = Return(deps, vs, dropna, self)
         return add_return(self.G, index_node, column_nodes, statement)
 
