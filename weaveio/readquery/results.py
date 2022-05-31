@@ -114,9 +114,10 @@ class RowParser(FileHandler):
         for value, cypher_name, name, is_product in zip(row.values(), row.keys(), names, is_products):
             if is_product:
                 if value is not None:
-                    if isinstance(value[0], list):
-                        value = value[0]
-                    value = self.read(*value)
+                    if isinstance(value[0], list):  # i.e. its a list of product addresses that have been collected
+                        value = [self.read(*v) for v in value]
+                    else:
+                        value = self.read(*value)
             name = cypher_name if name is None or name == 'None' else name
             mask = value is None or np.size(value) == 0
             try:
