@@ -303,7 +303,6 @@ class Data:
         for g in self.relation_graphs:
             for edge in g.edges:
                 g.edges[edge]['weight'] = g.edges[edge]['actual_number'] if g.edges[edge]['actual_number'] > 1 else 1
-        1
 
     @property
     def verbose(self):
