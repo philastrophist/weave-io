@@ -20,8 +20,8 @@ graph properties:
 
 principles:
     * Use as few files as possible 
-    * only allow unidirectional paths
-    * prefer non-optional relations
+    * only allow unidirectional paths - solution=do two searches: up & down
+    * prefer non-optional relations - 
     * shortest path in terms of weight
     * Must use the most template node if available
 
@@ -33,5 +33,4 @@ steps:
     add guidenumber to multiples?
 
 
-put templates into relation graph
-
+put templates into relation graph and change dijkstra to decide on priority at each node
