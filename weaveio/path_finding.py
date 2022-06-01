@@ -1,4 +1,5 @@
 import math
+from itertools import zip_longest
 
 import networkx as nx
 
@@ -57,7 +58,7 @@ def _find_path(graph, a, b, force_single):
     return forward
 
 def shortest_simple_paths_with_weight(graph, a, b, weight):
-    for path in nx.shortest_simple_paths(graph, a, b, weight):
+    for path in shortest_simple_paths(graph, a, b, weight):
         yield path, nx.path_weight(graph, path, weight)
 
 def find_paths(graph, a, b, force_single):
@@ -66,23 +67,30 @@ def find_paths(graph, a, b, force_single):
     Conditions:
         1. Cannot mix -> and <-, since that would allow nonsense like l2single->aps<-l2stack
         2. Prefer paths with as few "optional" edges as possible
-        3. Prefer paths that are single in some direction
+        3. Prefer paths that are single in some direction.
+    In the case of generic traversals e.g. `ingested.camera`, there are multiple paths
     """
     # should decide how to include optional edges
-    real = nx.subgraph_view(graph, filter_edge=lambda u, v: graph.edges[u, v]['actual_number'] > 0)
-    paths = shortest_simple_paths_with_weight(real, a, b, weight='actual_number')
+    real = nx.subgraph_view(graph, filter_edge=lambda u, v: graph.edges[u, v]['actual_number'] > 0 and 'relation' in graph.edges[u, v])
+    flipped = nx.subgraph_view(graph, filter_edge=lambda *e: e[::-1] in real.edges)
+    real_paths = shortest_simple_paths_with_weight(real, a, b, weight='actual_number')
+    flipped_paths = shortest_simple_paths_with_weight(flipped, a, b, weight='actual_number')
+    paths = ((p, w) for paths in zip_longest(real_paths, flipped_paths, fillvalue=(None, None)) for p, w in paths if p)
     buffer = []
     buffer_weight = None
     for path, weight in paths:
-        if weight == buffer_weight or buffer_weight is None:
+        length = len(path)
+        if length == buffer_weight or buffer_weight is None:
             buffer.append(path)
-            buffer_weight = weight
-        elif weight > buffer_weight:
+            buffer_weight = length
+        elif length > buffer_weight:
             break
-        elif weight < buffer_weight:
+        elif length < buffer_weight:
             buffer = [path]
-            buffer_weight = weight
-    return buffer
+            buffer_weight = length
+    if buffer:
+        return buffer
+    raise nx.NetworkXNoPath(f"No path found between {a} and {b}")
     # equivalent paths will be removed later at the arrow stage
 
 
@@ -93,7 +101,8 @@ def find_paths(graph, a, b, force_single):
 
 
 def find_path(graph, a, b, force_single):
-    find_paths(graph, a, b, force_single)
+    paths = find_paths(graph, a, b, force_single)
+    return paths[0]
     # nonoptional = nx.subgraph_view(graph, filter_edge=lambda *e: not graph.edges[e]['optional'])
     # try:
     #     path = _find_path(nonoptional, a, b, force_single)

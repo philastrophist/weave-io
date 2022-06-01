@@ -367,6 +367,7 @@ class Data:
                 break
         else:
             raise nx.NodeNotFound(f"One of {from_obj} or {to_obj} is not in the graph".format(from_obj, to_obj))
+        g = self.relation_graphs[-1]
         try:
             path = self._path_to_hierarchy(g, from_obj, to_obj, singular)
             singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
