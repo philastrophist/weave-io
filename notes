@@ -22,7 +22,9 @@ principles:
     * Use as few files as possible 
     * only allow unidirectional paths
     * prefer non-optional relations
-    * shortest path
+    * shortest path in terms of weight
+    * Must use the most template node if available
+
 
 
 
@@ -30,4 +32,6 @@ steps:
     split ingested -> [singleingested, combinedingested]
     add guidenumber to multiples?
 
+
+put templates into relation graph
 
