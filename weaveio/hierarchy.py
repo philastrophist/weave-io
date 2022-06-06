@@ -6,6 +6,8 @@ from functools import wraps, partial, reduce
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
 from warnings import warn
 
+import networkx as nx
+
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
@@ -243,10 +245,6 @@ class GraphableMeta(type):
                         p = p.singular_name
                 if p in parentnames:
                     mn, mx = parentnames[p]
-                    # if mn == 0:
-                    #     raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
-                    # if mx != mn:
-                    #     raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
                 elif p in cls.factors:
                     pass
                 else:
@@ -284,6 +282,7 @@ class GraphableMeta(type):
             if isinstance(relative, Multiple):
                 if relative.relation_idname is not None:
                     cls.relative_names[relative.relation_idname] = relative
+
         super().__init__(name, bases, dct)
 
 

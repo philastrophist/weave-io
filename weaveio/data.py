@@ -140,7 +140,7 @@ def add_relation_graph_edge(graph, parent, child, relation: Multiple, allowed_hi
     """
     relation.instantate_node()
     child_defines_parents = relation.node is parent
-    for relation in expand_template_relation(relation, allowed_hiers):
+    for relation, only_direct in expand_template_relation(relation, allowed_hiers):
         relation.instantate_node()
         # only parent-->child is in the database
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
