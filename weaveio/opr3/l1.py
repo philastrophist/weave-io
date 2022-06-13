@@ -15,14 +15,14 @@ class L1Spectrum(Spectrum1D, L1):
     children = [Optional('self', idname='adjunct')]
     products = ['flux', 'ivar', 'sensfunc']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
+    parents = [FibreTarget]
 
 
 class NoSS(Spectrum1D):
     plural_name = 'nosses'
     singular_name = 'noss'
     products = ['flux', 'ivar']
-    parents = [OneOf(L1Spectrum, one2one=True)]
-    children = [Optional('self', idname='adjunct')]
+    children = [Optional('self', idname='adjunct'), OneOf(L1Spectrum, one2one=True)]
     identifier_builder = ['l1_spectrum']
 
 

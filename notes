@@ -19,9 +19,9 @@ graph properties:
 
 
 principles:
-    * Use as few files as possible 
+    * Use as few files as possible - solution=add files to graph one at a time and do path finding each time
     * only allow unidirectional paths - solution=do two searches: up & down
-    * prefer non-optional relations - 
+    * prefer non-optional relations - solution=look for non-optional paths, then allow optional paths
     * shortest path in terms of weight
     * Must use the most template node if available
 
@@ -33,4 +33,7 @@ steps:
     add guidenumber to multiples?
 
 
-put templates into relation graph and change dijkstra to decide on priority at each node
+put templates into relation graph when they are used as a parent/child
+
+
+get all shortest paths by weight (where inheritance has 0 weight)

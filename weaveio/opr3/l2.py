@@ -90,7 +90,7 @@ class Fit(Hierarchy):
     otherwise, there are more.
     """
     is_template = True
-    parents = [Multiple(ModelSpectrum, 0, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
+    parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
 
 
 class RedshiftArray(ArrayHolder):
