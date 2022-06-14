@@ -224,15 +224,19 @@ def find_forking_path(graph, top, bottom, weight=None):
         path = [_path[0]]
         for i, (edge, typ) in enumerate(zip(edges, types)):
             if typ == 'is_a':
+                # try to find a path using the superclass
                 subpaths = find_forking_path(parents, top, edge[0], weight)
                 if subpaths:
                     for subpath in subpaths:
-                        done.add(tuple(path[:-1])+subpath)
-                else:
+                        done.add((*path[:-1], *subpath))
+                else:  # otherwise expand all classes
                     subclasses = [i for i in get_all_subclasses(edge[0]) if not i.is_template]
-                    for subclass in subclasses:
-                        for subpath in find_forking_path(graph, top, subclass, weight):
-                            done.add(tuple(path)+subpath)
+                    if top in subclasses:
+                        done.add((*path, top))
+                    else:
+                        for subclass in subclasses:
+                            for subpath in find_forking_path(graph, top, subclass, weight):
+                                done.add((*path, *subpath))
                 break
             else:
                 path.append(edge[1])
@@ -252,7 +256,7 @@ if __name__ == '__main__':
 
     # G = graph.ancestor_subgraph(L2StackFile).copy().parents_and_inheritance
     # nodes = L1StackSpectrum, Redrock
-    nodes = L1StackSpectrum , Survey
+    nodes = L2Single, L2SingleFile
     G = graph.parents_and_inheritance
     sorted_nodes = G.sort_deepest(*nodes)
     paths = find_forking_path(G.reverse(), *sorted_nodes)
