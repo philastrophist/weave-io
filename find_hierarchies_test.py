@@ -2,6 +2,7 @@ import math
 from itertools import zip_longest
 from typing import Type, Union, Set, List
 import networkx as nx
+from networkx.classes.filters import no_filter
 
 from weaveio.data import get_all_class_bases, plot_graph
 from weaveio.hierarchy import Multiple, OneOf, Hierarchy
@@ -145,26 +146,29 @@ class HierarchyGraph(nx.DiGraph):
         nodes.add(source)
         return nx.subgraph(self, nodes).copy()
 
+    def subgraph_view(self, filter_node=no_filter, filter_edge=no_filter) -> 'HierarchyGraph':
+        return nx.subgraph_view(self, filter_node, filter_edge)  # type: HierarchyGraph
+
     @property
     def inheritance(self):
-        return nx.subgraph_view(self, filter_edge=lambda *e: self.edges[e]['type'] == 'is_a').copy()
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_a').copy()
 
     @property
     def parents_and_subclassed_by(self):
         allowed = ['is_parent_of', 'subclassed_by']
-        return nx.subgraph_view(self, filter_edge=lambda *e: any(i == self.edges[e]['type'] for i in allowed)).copy()
+        return self.subgraph_view(filter_edge=lambda *e: any(i == self.edges[e]['type'] for i in allowed)).copy()
 
     @property
     def parents(self):
-        return nx.subgraph_view(self, filter_edge=lambda *e: self.edges[e]['type'] == 'is_parent_of').copy()
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_parent_of').copy()
 
     @property
     def children(self):
-        return nx.subgraph_view(self, filter_edge=lambda *e: graph.edges[e]['type'] == 'is_child_of').copy()
+        return self.subgraph_view(filter_edge=lambda *e: graph.edges[e]['type'] == 'is_child_of').copy()
 
     @property
     def parents_and_inheritance(self):
-        return nx.subgraph_view(self, filter_edge=lambda *e: self.edges[e]['type'] == 'is_parent_of' or 'is_a' == self.edges[e]['type']).copy()
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_parent_of' or 'is_a' == self.edges[e]['type']).copy()
 
     @property
     def traversal(self):
@@ -172,11 +176,11 @@ class HierarchyGraph(nx.DiGraph):
             edge = self.edges[u, v]
             typ = edge['type']
             return (typ == 'is_parent_of') or (typ == 'is_a') or edge['one2one']
-        return nx.subgraph_view(self, filter_edge=func)
+        return self.subgraph_view(filter_edge=func)
 
     @property
     def children_and_inheritance(self):
-        return nx.subgraph_view(self, filter_edge=lambda *e: self.edges[e]['type'] == 'is_child_of' or 'is_a' == self.edges[e]['type']).copy()
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_child_of' or 'is_a' == self.edges[e]['type']).copy()
 
     def shortest_unidirectional_paths(self, a, b, weight=None):
         """Returns a generator of unidirectional paths between a and b where a and b can both be source or target"""
@@ -190,28 +194,51 @@ class HierarchyGraph(nx.DiGraph):
             if x is None and y is None:
                 raise nx.NetworkXNoPath(f"No unidirectional path between {a} and {b}")
 
-    def deepest(self, a, b):
+    def sort_deepest(self, a, b):
         """Returns a or b, whichever is the deepest in the graph"""
+        if a not in self:
+            raise nx.NodeNotFound(f"Node {a} not found in graph")
+        if b not in self:
+            raise nx.NodeNotFound(f"Node {b} not found in graph")
         if b in nx.ancestors(self.parents_and_inheritance, a):
-            return a
+            return b, a
         elif a in nx.ancestors(self.parents_and_inheritance, b):
-            return b
+            return a, b
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
 
+
+
 def find_forking_path(graph, top, bottom, weight=None):
-    done = []
-    todo = [next(nx.shortest_simple_paths(graph, top, bottom))]
+    done = set()
+    parents = nx.subgraph_view(graph, filter_edge=lambda *e: graph.edges[e]['type'] != 'is_a').copy()
+    gen = nx.shortest_simple_paths(graph, bottom, top)
+    try:
+        todo = [next(gen)]
+    except nx.NetworkXNoPath:
+        return []
     while todo:
         _path = todo.pop()
+        edges = list(zip(_path[:-1], _path[1:]))
+        types = [graph.edges[edge]['type'] for edge in edges]
         path = [_path[0]]
-        for edge in zip(_path[:-1], _path[1:]):
-            typ = graph.edges[edge]['type']
-            if typ == 'is_a' or typ == 'subclassed_by':
-
+        for i, (edge, typ) in enumerate(zip(edges, types)):
+            if typ == 'is_a':
+                subpaths = find_forking_path(parents, top, edge[0], weight)
+                if subpaths:
+                    for subpath in subpaths:
+                        done.add(tuple(path[:-1])+subpath)
+                else:
+                    subclasses = [i for i in get_all_subclasses(edge[0]) if not i.is_template]
+                    for subclass in subclasses:
+                        for subpath in find_forking_path(graph, top, subclass, weight):
+                            done.add(tuple(path)+subpath)
+                break
             else:
                 path.append(edge[1])
-        done.append(path)
+        else:  # only append here, if we've cycled through all edges without breaking
+            done.add(tuple(path))
+    return done
 
 
 
@@ -222,28 +249,33 @@ if __name__ == '__main__':
     from weaveio.opr3.l1files import *
     from weaveio.opr3.l2files import *
 
-    nodes = OB, Redrock
 
-    G = graph.ancestor_subgraph(L2StackFile).copy()
-    plot_graph(G.traversal, 'data', 'pdf')
-    paths = []
-    for i, path in enumerate(nx.shortest_simple_paths(G.parents_and_inheritance.reverse(), *nodes[::-1], weight='weight')):
-        weight = nx.path_weight(graph, path, 'weight')
-        optional = sum(graph.edges[u, v]['optional'] for u, v in zip(path[:-1], path[1:]))
-        if i == 0:
-            first_weight = weight
-        if weight > first_weight:
-            break
-        print('-'.join(n.__name__ for n in path), weight)
-        paths.append((path, optional))
-    else:
-        print('exhausted')
-    if not all(list(zip(*paths))[1]):
-        paths = [p for p, o in paths if not o]
-    else:
-        paths, optionals = zip(*paths)
-    paths = sorted(paths, key=len)
-    paths = [p for p in paths if len(p) == len(paths[0])]
-    print('final list')
+    # G = graph.ancestor_subgraph(L2StackFile).copy().parents_and_inheritance
+    # nodes = L1StackSpectrum, Redrock
+    nodes = L1StackSpectrum , Survey
+    G = graph.parents_and_inheritance
+    sorted_nodes = G.sort_deepest(*nodes)
+    paths = find_forking_path(G.reverse(), *sorted_nodes)
+
+    # plot_graph(G.traversal, 'data', 'pdf')
+    # paths = []
+    # for i, path in enumerate(nx.shortest_simple_paths(G.parents_and_inheritance.reverse(), *nodes[::-1], weight='weight')):
+    #     weight = nx.path_weight(graph, path, 'weight')
+    #     optional = sum(graph.edges[u, v]['optional'] for u, v in zip(path[:-1], path[1:]))
+    #     if i == 0:
+    #         first_weight = weight
+    #     if weight > first_weight:
+    #         break
+    #     print('-'.join(n.__name__ for n in path), weight)
+    #     paths.append((path, optional))
+    # else:
+    #     print('exhausted')
+    # if not all(list(zip(*paths))[1]):
+    #     paths = [p for p, o in paths if not o]
+    # else:
+    #     paths, optionals = zip(*paths)
+    # paths = sorted(paths, key=len)
+    # paths = [p for p in paths if len(p) == len(paths[0])]
+    # print('final list')
     for path in paths:
         print('-'.join(n.__name__ for n in path))
