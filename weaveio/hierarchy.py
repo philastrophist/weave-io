@@ -69,6 +69,8 @@ class Multiple:
     def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False):
         self.node = node
         self.minnumber = int_or_none(minnumber) or 0
+        if maxnumber is None:
+            warn(f"maxnumber is None for {node}", RuntimeWarning)
         self.maxnumber = int_or_none(maxnumber)
         self.constrain = [] if constrain is None else (constrain, ) if not isinstance(constrain, (list, tuple)) else tuple(constrain)
         self.relation_idname = idname

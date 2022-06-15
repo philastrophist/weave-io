@@ -95,7 +95,7 @@ class L2File(File):
     antimatch_pattern = '.*cube.*'
     L2 = L2Product
     L1 = L1Spectrum
-    parents = [Multiple(L1File, 2, 3), APS, Multiple(L2)]
+    parents = [Multiple(L1File, 2, 3), APS, Multiple(L2, maxnumber=1000)]
     children = []
     parts = ['RR', 'RVS', 'FR', 'GAND', 'PPXF']
     hdus = {
@@ -487,7 +487,7 @@ class L2File(File):
 class L2SingleFile(L2File):
     singular_name = 'l2single_file'
     children = []
-    parents = [Multiple(L1SingleFile, 2, 3, constrain=(Exposure,)), APS, Multiple(L2Single)]
+    parents = [Multiple(L1SingleFile, 2, 3, constrain=(Exposure,)), APS, Multiple(L2Single, maxnumber=1000)]
     L2 = L2Single
     L1 = L1SingleSpectrum
 
@@ -503,7 +503,7 @@ class L2SingleFile(L2File):
 class L2StackFile(L2File):
     singular_name = 'l2stack_file'
     children = []
-    parents = [Multiple(L1StackFile, 1, 3, constrain=(OB,)), APS, Multiple(L2Stack)]
+    parents = [Multiple(L1StackFile, 1, 3, constrain=(OB,)), APS, Multiple(L2Stack, maxnumber=1000)]
     L2 = L2Stack
     L1 = L1StackSpectrum
 
@@ -519,7 +519,7 @@ class L2SuperstackFile(L2File):
     parents = [Multiple(L1SingleFile, 0, 3, constrain=(OBSpec,)),
                Multiple(L1StackFile, 0, 3, constrain=(OBSpec,)),
                Multiple(L1SuperstackFile, 0, 3, constrain=(OBSpec,)),
-               APS, Multiple(L2Superstack)]
+               APS, Multiple(L2Superstack, maxnumber=1000)]
     L2 = L2Superstack
     L1 = L1Spectrum
 

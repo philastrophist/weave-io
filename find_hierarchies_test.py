@@ -64,6 +64,41 @@ def shortest_simple_paths(G, source, target, weight):
     except nx.NetworkXNoPath:
         return None
 
+def find_forking_path(graph, top, bottom, weight=None):
+    done = set()
+    parents = nx.subgraph_view(graph, filter_edge=lambda *e: graph.edges[e]['type'] != 'is_a')
+    gen = nx.shortest_simple_paths(graph, bottom, top, weight)
+    try:
+        todo = [next(gen)]
+    except nx.NetworkXNoPath:
+        return []
+    while todo:
+        _path = todo.pop()
+        edges = list(zip(_path[:-1], _path[1:]))
+        types = [graph.edges[edge]['type'] for edge in edges]
+        path = [_path[0]]
+        for i, (edge, typ) in enumerate(zip(edges, types)):
+            if typ == 'is_a' and edge[1] != top:
+                # try to find a path using the superclass
+                subpaths = find_forking_path(parents, top, edge[0], weight)
+                if subpaths:
+                    for subpath in subpaths:
+                        done.add((*path[:-1], *subpath))
+                else:  # otherwise expand all classes
+                    subclasses = [i for i in get_all_subclasses(edge[0]) if not i.is_template]
+                    if top in subclasses:
+                        done.add((*path, top))
+                    else:
+                        for subclass in subclasses:
+                            for subpath in find_forking_path(graph, top, subclass, weight):
+                                done.add((*path, *subpath))
+                break
+            else:
+                path.append(edge[1])
+        else:  # only append here, if we've cycled through all edges without breaking
+            done.add(tuple(path))
+    return done
+
 
 class HierarchyGraph(nx.DiGraph):
     def initialise(self):
@@ -80,30 +115,30 @@ class HierarchyGraph(nx.DiGraph):
         relation, parent = normalise_relation(parent)
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
         self.add_edge(child, parent, singular=relation.maxnumber == 1, one2one=relation.one2one,
-                       optional=relation.minnumber == 0, style=relstyle, actual_number=1, type='is_child_of')
+                       optional=relation.minnumber == 0, style=relstyle, actual_number=relation.maxnumber, type='is_child_of')
         if relation.one2one:
             self.add_edge(parent, child, singular=True, optional=relation.minnumber == 0, style='solid',
                           type='is_parent_of', one2one=relation.one2one,
-                          relation=relation, actual_number=1)
+                          relation=relation, actual_number=relation.maxnumber)
         else:
             self.add_edge(parent, child, singular=False, optional=relation.minnumber == 0, style='dashed',
                           type='is_parent_of', one2one=relation.one2one,
-                          relation=relation, actual_number=1)
+                          relation=relation, actual_number=relation.maxnumber)
 
     def _add_child(self, parent: Type[Hierarchy], child: Union[Type[Hierarchy], Multiple]):
         relation, child = normalise_relation(child)
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
         self.add_edge(parent, child, singular=relation.maxnumber == 1, one2one=relation.one2one,
                        optional=relation.minnumber == 0, type='is_parent_of',
-                       relation=relation, style=relstyle, actual_number=1)
+                       relation=relation, style=relstyle, actual_number=relation.maxnumber)
         self.add_edge(child, parent, singular=True, optional=relation.minnumber == 0,  one2one=relation.one2one,
-                      style='solid', type='is_child_of', actual_number=1)
+                      style='solid', type='is_child_of', actual_number=relation.maxnumber)
 
     def _add_self_reference(self, relation):
         relation, h = normalise_relation(relation)
         relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
         self.add_edge(h, h, singular=relation.maxnumber == 1, optional=relation.minnumber == 0,
-                      one2one=relation.one2one, style=relstyle, actual_number=1, type='is_parent_of')
+                      one2one=relation.one2one, style=relstyle, actual_number=relation.maxnumber, type='is_parent_of')
 
 
     def _add_inheritance(self, hierarchy, base):
@@ -119,7 +154,7 @@ class HierarchyGraph(nx.DiGraph):
             elif d['singular']:
                 weight = 0
             else:
-                weight = 1
+                weight = d['actual_number']
             self.edges[u, v]['weight'] = weight
 
     def _add_hierarchy(self, hierarchy: Type[Hierarchy]):
@@ -207,43 +242,24 @@ class HierarchyGraph(nx.DiGraph):
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
 
-
-
-def find_forking_path(graph, top, bottom, weight=None):
-    done = set()
-    parents = nx.subgraph_view(graph, filter_edge=lambda *e: graph.edges[e]['type'] != 'is_a').copy()
-    gen = nx.shortest_simple_paths(graph, bottom, top)
-    try:
-        todo = [next(gen)]
-    except nx.NetworkXNoPath:
-        return []
-    while todo:
-        _path = todo.pop()
-        edges = list(zip(_path[:-1], _path[1:]))
-        types = [graph.edges[edge]['type'] for edge in edges]
-        path = [_path[0]]
-        for i, (edge, typ) in enumerate(zip(edges, types)):
-            if typ == 'is_a':
-                # try to find a path using the superclass
-                subpaths = find_forking_path(parents, top, edge[0], weight)
-                if subpaths:
-                    for subpath in subpaths:
-                        done.add((*path[:-1], *subpath))
-                else:  # otherwise expand all classes
-                    subclasses = [i for i in get_all_subclasses(edge[0]) if not i.is_template]
-                    if top in subclasses:
-                        done.add((*path, top))
-                    else:
-                        for subclass in subclasses:
-                            for subpath in find_forking_path(graph, top, subclass, weight):
-                                done.add((*path, *subpath))
-                break
-            else:
-                path.append(edge[1])
-        else:  # only append here, if we've cycled through all edges without breaking
-            done.add(tuple(path))
-    return done
-
+    def find_paths(self, a, b):
+        G = self.parents_and_inheritance.reverse()
+        sorted_nodes = self.sort_deepest(*nodes)
+        _paths = find_forking_path(G, *sorted_nodes, 'weight')
+        # put in requested order (a-->b)
+        if sorted_nodes != (a, b):
+            _paths = [path[::-1] for path in _paths]
+        # now remove chains of is_a
+        # so x-l1spectrum-l1stacked-l1stack becomes x-l1stack
+        reduced_paths = set()
+        for ip, path in enumerate(_paths):
+            reduced_path = []
+            for ic, current in enumerate(path[1:-1], 1):
+                right = path[ic + 1]
+                if not (issubclass(current, right) or issubclass(right, current)):
+                    reduced_path.append(current)
+            reduced_paths.add((path[0], *reduced_path, path[-1]))
+        return reduced_paths
 
 
 if __name__ == '__main__':
@@ -255,31 +271,7 @@ if __name__ == '__main__':
 
 
     # G = graph.ancestor_subgraph(L2StackFile).copy().parents_and_inheritance
-    # nodes = L1StackSpectrum, Redrock
-    nodes = L2Single, L2SingleFile
-    G = graph.parents_and_inheritance
-    sorted_nodes = G.sort_deepest(*nodes)
-    paths = find_forking_path(G.reverse(), *sorted_nodes)
-
-    # plot_graph(G.traversal, 'data', 'pdf')
-    # paths = []
-    # for i, path in enumerate(nx.shortest_simple_paths(G.parents_and_inheritance.reverse(), *nodes[::-1], weight='weight')):
-    #     weight = nx.path_weight(graph, path, 'weight')
-    #     optional = sum(graph.edges[u, v]['optional'] for u, v in zip(path[:-1], path[1:]))
-    #     if i == 0:
-    #         first_weight = weight
-    #     if weight > first_weight:
-    #         break
-    #     print('-'.join(n.__name__ for n in path), weight)
-    #     paths.append((path, optional))
-    # else:
-    #     print('exhausted')
-    # if not all(list(zip(*paths))[1]):
-    #     paths = [p for p, o in paths if not o]
-    # else:
-    #     paths, optionals = zip(*paths)
-    # paths = sorted(paths, key=len)
-    # paths = [p for p in paths if len(p) == len(paths[0])]
-    # print('final list')
+    nodes = Redrock, Survey
+    paths = graph.find_paths(*nodes)
     for path in paths:
         print('-'.join(n.__name__ for n in path))
