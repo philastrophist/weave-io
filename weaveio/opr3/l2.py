@@ -99,8 +99,9 @@ class RedshiftArray(ArrayHolder):
 
 
 class Template(Fit):
-    parents = [OneOf(RedshiftArray, one2one=True), Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
+    parents = [Multiple(ModelSpectrum, 1, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True)]
     factors = ['chi2_array', 'name']
+    children = [OneOf(RedshiftArray, one2one=True)]
     identifier_builder = ['model_spectra', 'combined_model_spectrum', 'name']
 
 

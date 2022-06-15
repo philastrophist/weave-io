@@ -1,6 +1,6 @@
 import math
 from itertools import zip_longest
-from typing import Type, Union, Set, List
+from typing import Type, Union, Set, List, Tuple
 import networkx as nx
 from networkx.classes.filters import no_filter
 
@@ -242,7 +242,16 @@ class HierarchyGraph(nx.DiGraph):
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
 
-    def find_paths(self, a, b):
+    def find_paths(self, a, b) -> Set[Tuple[Type[Hierarchy]]]:
+        """
+        Returns a set of paths from a to b
+        Not all paths are guaranteed to be valid, for example:
+            l2superstack.ob yields paths of which `L2superstack-...-L1Single-...-ob` is one.
+            This path is invalid, but it is included anyway because it is one of a set
+            (through single,stack,superstack,supertarget).
+            When queried, invalid paths will yield 0 results so it is not a problem.
+
+        """
         G = self.parents_and_inheritance.reverse()
         sorted_nodes = self.sort_deepest(*nodes)
         _paths = find_forking_path(G, *sorted_nodes, 'weight')
@@ -271,7 +280,7 @@ if __name__ == '__main__':
 
 
     # G = graph.ancestor_subgraph(L2StackFile).copy().parents_and_inheritance
-    nodes = Redrock, Survey
+    nodes = L2Product, RedshiftArray
     paths = graph.find_paths(*nodes)
     for path in paths:
         print('-'.join(n.__name__ for n in path))
