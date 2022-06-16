@@ -273,7 +273,7 @@ class L2File(File):
         collect(nrow)  # collect to avoid duplication of effort later
 
     @classmethod
-    def make_redrock_fit(cls, specs, zs, row, nl1specs, replacements):
+    def make_redrock_fit(cls, l1spectra, specs, zs, row, nl1specs, replacements):
         templates = {}
         unrolled = [specs.individual_models[i] for i in range(nl1specs)]
         for template_name in Redrock.template_names:
@@ -281,15 +281,15 @@ class L2File(File):
             template = Template(model_spectra=unrolled, combined_model_spectrum=specs.combined_model,
                                 redshift_array=zs[template_name], name=template_name, chi2_array=chi2s)
             templates[template_name] = template
-        return Redrock(model_spectra=unrolled, combined_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements, **templates)
+        return Redrock(l1spectra=l1spectra, model_spectra=unrolled, combined_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements, **templates)
 
     @classmethod
-    def make_gandalf_structure(cls, specs, row, this_fname, nrow, replacements):
+    def make_gandalf_structure(cls, l1spectra, specs, row, this_fname, nrow, replacements):
         model, ingested = specs.combined_model, specs.combined
         emission = GandalfEmissionModelSpectrum(gandalf_model_spectrum=model)
         clean_model = GandalfCleanModelSpectrum(gandalf_model_spectrum=model)
         clean_ingested = GandalfCleanIngestedSpectrum(combined_ingested_spectrum=ingested)
-        gandalf = Gandalf(gandalf_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements)
+        gandalf = Gandalf(l1spectra=l1spectra, gandalf_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements)
         return gandalf, GandalfSpecs(model=model, ingested=ingested, emission=emission, clean_model=clean_model,
                                      clean_ingested=clean_ingested, nrow=specs.nrow)
 
@@ -314,7 +314,7 @@ class L2File(File):
             colour_code = ArmConfig.find(anonymous_children=[l1spectrum])['colour_code']
             if uses_disjoint_spectra:
                 individual = IngestedSpectrumClass(l1_spectrum=l1spectrum, aps=aps)
-                individual_model = ModelSpectrumClass(ingested_spectrum=individual)
+                individual_model = ModelSpectrumClass(uncombined_ingested_spectrum=individual)
         # now collect spec and models relative to the fibretarget
         if uses_disjoint_spectra:
             l1files, l1spectra, fibretargets, colour_codes, individuals, individual_models = collect(l1file, l1spectrum, fibretarget,
@@ -340,7 +340,7 @@ class L2File(File):
                                                           IvarCombinedIngestedSpectrum,
                                                           ModelSpectrum, CombinedModelSpectrum,
                                                           True, None, 'RR', aps)
-            redrock = cls.make_redrock_fit(specs, zs, row, len(parent_l1filenames), replacements)
+            redrock = cls.make_redrock_fit(l1spectra, specs, zs, row, len(parent_l1filenames), replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), aps=aps, fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(redrock=redrock)
         l2, redrocks, *r = collect(l2, redrock, *specs)
@@ -357,7 +357,7 @@ class L2File(File):
                                                       CombinedIngestedSpectrum,
                                                       ModelSpectrum, CombinedModelSpectrum,
                                                       True, None, 'RVS', aps)
-            rvspecfit = RVSpecfit(model_spectra=[rvs_specs.individual_models[i] for i in range(len(parent_l1filenames))],
+            rvspecfit = RVSpecfit(l1spectra=l1spectra, model_spectra=[rvs_specs.individual_models[i] for i in range(len(parent_l1filenames))],
                                   combined_model_spectrum=rvs_specs.combined_model, tables=row, tables_replace=replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), aps=aps, fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(rvspecfit=rvspecfit)
@@ -375,7 +375,7 @@ class L2File(File):
                                                         CombinedIngestedSpectrum,
                                                         ModelSpectrum, CombinedModelSpectrum,
                                                         True, None, 'FR', aps)
-            ferre = Ferre(model_spectra=[ferre_specs.individual_models[i] for i in range(len(parent_l1filenames))],
+            ferre = Ferre(l1spectra=l1spectra, model_spectra=[ferre_specs.individual_models[i] for i in range(len(parent_l1filenames))],
                           combined_model_spectrum=ferre_specs.combined_model, tables=row, tables_replace=replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), aps=aps, fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(ferre=ferre)
@@ -393,7 +393,7 @@ class L2File(File):
                                                          MaskedCombinedIngestedSpectrum,
                                                          None, CombinedModelSpectrum,
                                                          False, True, 'PPXF', aps)
-            ppxf = PPXF(combined_model_spectrum=ppxf_specs.combined_model, tables=row, tables_replace=replacements)
+            ppxf = PPXF(l1spectra=l1spectra, combined_model_spectrum=ppxf_specs.combined_model, tables=row, tables_replace=replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), aps=aps, fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(ppxf=ppxf)
         l2, ppxfs, *r = collect(l2, ppxf, *ppxf_specs)
@@ -412,7 +412,7 @@ class L2File(File):
                                                                               MaskedCombinedIngestedSpectrum,
                                                                               None, GandalfModelSpectrum,
                                                                               False, True, 'GAND', aps)
-            gandalf, gandalf_extra_specs = cls.make_gandalf_structure(gandalf_specs, row, this_fname, nrow, replacements)
+            gandalf, gandalf_extra_specs = cls.make_gandalf_structure(l1spectra, gandalf_specs, row, this_fname, nrow, replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), aps=aps, fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(gandalf=gandalf)
         l2, gandalfs, *r = collect(l2, gandalf, *gandalf_specs, *gandalf_extra_specs)

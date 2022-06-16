@@ -100,6 +100,38 @@ def find_forking_path(graph, top, bottom, weight=None):
     return done
 
 
+def find_paths(graph, a, b) -> Set[Tuple[Type[Hierarchy]]]:
+    """
+    Returns a set of paths from a to b
+    Not all paths are guaranteed to be valid, for example:
+        l2superstack.ob yields paths of which `L2superstack-...-L1Single-...-ob` is one.
+        This path is invalid, but it is included anyway because it is one of a set
+        (through single,stack,superstack,supertarget).
+        When queried, invalid paths will yield 0 results so it is not a problem.
+    """
+    G = graph.parents_and_inheritance.reverse()
+    sorted_nodes = graph.sort_deepest(a, b)
+    _paths = find_forking_path(G, *sorted_nodes, 'weight')
+    # put in requested order (a-->b)
+    if sorted_nodes != (a, b):
+        _paths = [path[::-1] for path in _paths]
+    # now remove chains of is_a
+    # so x-l1spectrum-l1stacked-l1stack becomes x-l1stack
+    reduced_paths = set()
+    for ip, path in enumerate(_paths):
+        reduced_path = []
+        for ic, current in enumerate(path[1:-1], 1):
+            left = path[ic - 1]
+            if left in current.__bases__:
+                reduced_path.append(current)
+            elif current in left.__bases__:
+                pass
+            else:
+                reduced_path.append(current)
+        reduced_paths.add((path[0], *reduced_path, path[-1]))
+    return reduced_paths
+
+
 class HierarchyGraph(nx.DiGraph):
     def initialise(self):
         hiers = get_all_subclasses(Hierarchy)
@@ -217,6 +249,10 @@ class HierarchyGraph(nx.DiGraph):
     def children_and_inheritance(self):
         return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_child_of' or 'is_a' == self.edges[e]['type']).copy()
 
+    @property
+    def nonoptional(self):
+        return self.subgraph_view(filter_edge=lambda *e: not self.edges[e]['optional']).copy()
+
     def shortest_unidirectional_paths(self, a, b, weight=None):
         """Returns a generator of unidirectional paths between a and b where a and b can both be source or target"""
         ab = shortest_simple_paths(self.parents_and_inheritance, a, b, weight)
@@ -242,7 +278,7 @@ class HierarchyGraph(nx.DiGraph):
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
 
-    def find_paths(self, a, b) -> Set[Tuple[Type[Hierarchy]]]:
+    def find_paths(self, a, b):
         """
         Returns a set of paths from a to b
         Not all paths are guaranteed to be valid, for example:
@@ -250,26 +286,11 @@ class HierarchyGraph(nx.DiGraph):
             This path is invalid, but it is included anyway because it is one of a set
             (through single,stack,superstack,supertarget).
             When queried, invalid paths will yield 0 results so it is not a problem.
-
         """
-        G = self.parents_and_inheritance.reverse()
-        sorted_nodes = self.sort_deepest(*nodes)
-        _paths = find_forking_path(G, *sorted_nodes, 'weight')
-        # put in requested order (a-->b)
-        if sorted_nodes != (a, b):
-            _paths = [path[::-1] for path in _paths]
-        # now remove chains of is_a
-        # so x-l1spectrum-l1stacked-l1stack becomes x-l1stack
-        reduced_paths = set()
-        for ip, path in enumerate(_paths):
-            reduced_path = []
-            for ic, current in enumerate(path[1:-1], 1):
-                right = path[ic + 1]
-                if not (issubclass(current, right) or issubclass(right, current)):
-                    reduced_path.append(current)
-            reduced_paths.add((path[0], *reduced_path, path[-1]))
-        return reduced_paths
-
+        try:
+            return find_paths(self.nonoptional, a, b)
+        except nx.NetworkXNoPath:
+            return find_paths(self, a, b)
 
 if __name__ == '__main__':
     graph = HierarchyGraph()
@@ -280,7 +301,12 @@ if __name__ == '__main__':
 
 
     # G = graph.ancestor_subgraph(L2StackFile).copy().parents_and_inheritance
-    nodes = L2Product, RedshiftArray
+    # nodes = Run, WeaveTarget
+
+    # perhaps need to reverse `notreal`
+    # cannot have a-`is_a`->b and a-`is_parent_of`->b at the same time because digraph...
+    #
+    nodes = Redrock, OB
     paths = graph.find_paths(*nodes)
     for path in paths:
         print('-'.join(n.__name__ for n in path))
