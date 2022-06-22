@@ -66,11 +66,17 @@ def shortest_simple_paths(G, source, target, weight):
 
 def pick_shortest_multiedge(G, a, b, weight=None):
     edges = set(G.out_edges(a, keys=True)) & set(G.in_edges(b, keys=True))
-    return min(edges, key=lambda e: nx.path_weight(G, *e, weight))
+    if weight is not None:
+        return min(edges, key=lambda e: G.edges[e][weight])
+    return edges.pop()
+
+def edges_from_path(G, path, weight=None):
+    return list(map(lambda e: pick_shortest_multiedge(G, *e, weight=weight), zip(path[:-1], path[1:])))
 
 def find_forking_path(graph, top, bottom, weight=None):
     done = set()
     parents = nx.subgraph_view(graph, filter_edge=lambda *e: graph.edges[e]['type'] != 'is_a')
+    is_a_graph = nx.subgraph_view(graph, filter_edge=lambda *e: graph.edges[e]['type'] == 'is_a')
     gen = nx.all_shortest_paths(graph, bottom, top, weight)
     try:
         todo = [next(gen)]
@@ -78,7 +84,7 @@ def find_forking_path(graph, top, bottom, weight=None):
         return []
     while todo:
         _path = todo.pop()
-        edges = list(map(lambda *e: pick_shortest_multiedge(graph, *e, weight=weight), zip(_path[:-1], _path[1:])))
+        edges = edges_from_path(graph, _path, weight)
         types = [graph.edges[edge]['type'] for edge in edges]
         path = [_path[0]]
         for i, (edge, typ) in enumerate(zip(edges, types)):
@@ -91,11 +97,13 @@ def find_forking_path(graph, top, bottom, weight=None):
                 else:  # otherwise expand all classes
                     subclasses = [i for i in get_all_subclasses(edge[0]) if not i.is_template]
                     if top in subclasses:
-                        done.add((*path, top))
+                        inheritance_path = nx.shortest_path(is_a_graph, edge[0], top)
+                        done.add((*path, *inheritance_path[1:]))
                     else:
                         for subclass in subclasses:
+                            inheritance_path = nx.shortest_path(is_a_graph, edge[0], subclass)
                             for subpath in find_forking_path(graph, top, subclass, weight):
-                                done.add((*path, *subpath))
+                                done.add((*path, *inheritance_path[1:-1], *subpath))
                 break
             else:
                 path.append(edge[1])
@@ -104,7 +112,7 @@ def find_forking_path(graph, top, bottom, weight=None):
     return done
 
 
-def find_paths(graph, a, b) -> Set[Tuple[Type[Hierarchy]]]:
+def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
     """
     Returns a set of paths from a to b
     Not all paths are guaranteed to be valid, for example:
@@ -115,24 +123,17 @@ def find_paths(graph, a, b) -> Set[Tuple[Type[Hierarchy]]]:
     """
     sorted_nodes = graph.sort_deepest(a, b)
     G = graph.parents_and_inheritance.reverse()
-    _paths = find_forking_path(G, *sorted_nodes, 'weight')
+    _paths = find_forking_path(G, *sorted_nodes, weight)
     # put in requested order (a-->b)
-    if sorted_nodes != (a, b):
-        _paths = [path[::-1] for path in _paths]
     # now remove chains of is_a
     # so x-l1spectrum-l1stacked-l1stack becomes x-l1stack
     reduced_paths = set()
     for ip, path in enumerate(_paths):
-        reduced_path = []
-        for ic, current in enumerate(path[1:-1], 1):
-            left = path[ic - 1]
-            if left in current.__bases__:
-                reduced_path.append(current)
-            elif current in left.__bases__:
-                pass
-            else:
-                reduced_path.append(current)
-        reduced_paths.add((path[0], *reduced_path, path[-1]))
+        edges = edges_from_path(G, path, weight)
+        reduced_path = [edge[0] for edge in edges if graph.edges[edge]['type'] not in ['is_a', 'subclassed_by']]
+        reduced_paths.add((*reduced_path, path[-1]))
+    if sorted_nodes != (a, b):
+        reduced_paths = {path[::-1] for path in reduced_paths}
     return reduced_paths
 
 
