@@ -64,17 +64,21 @@ def shortest_simple_paths(G, source, target, weight):
     except nx.NetworkXNoPath:
         return None
 
+def pick_shortest_multiedge(G, a, b, weight=None):
+    edges = set(G.out_edges(a, keys=True)) & set(G.in_edges(b, keys=True))
+    return min(edges, key=lambda e: nx.path_weight(G, *e, weight))
+
 def find_forking_path(graph, top, bottom, weight=None):
     done = set()
     parents = nx.subgraph_view(graph, filter_edge=lambda *e: graph.edges[e]['type'] != 'is_a')
-    gen = nx.shortest_simple_paths(graph, bottom, top, weight)
+    gen = nx.all_shortest_paths(graph, bottom, top, weight)
     try:
         todo = [next(gen)]
     except nx.NetworkXNoPath:
         return []
     while todo:
         _path = todo.pop()
-        edges = list(zip(_path[:-1], _path[1:]))
+        edges = list(map(lambda *e: pick_shortest_multiedge(graph, *e, weight=weight), zip(_path[:-1], _path[1:])))
         types = [graph.edges[edge]['type'] for edge in edges]
         path = [_path[0]]
         for i, (edge, typ) in enumerate(zip(edges, types)):
@@ -109,8 +113,8 @@ def find_paths(graph, a, b) -> Set[Tuple[Type[Hierarchy]]]:
         (through single,stack,superstack,supertarget).
         When queried, invalid paths will yield 0 results so it is not a problem.
     """
-    G = graph.parents_and_inheritance.reverse()
     sorted_nodes = graph.sort_deepest(a, b)
+    G = graph.parents_and_inheritance.reverse()
     _paths = find_forking_path(G, *sorted_nodes, 'weight')
     # put in requested order (a-->b)
     if sorted_nodes != (a, b):
@@ -132,13 +136,44 @@ def find_paths(graph, a, b) -> Set[Tuple[Type[Hierarchy]]]:
     return reduced_paths
 
 
-class HierarchyGraph(nx.DiGraph):
+class HierarchyGraph(nx.MultiDiGraph):
+    """
+    A multidigraph where edges have keys
+    """
     def initialise(self):
         hiers = get_all_subclasses(Hierarchy)
         for h in hiers:
             self._add_hierarchy(h)
         self.remove_node(Hierarchy)
         self._assign_edge_weights()
+
+    def add_edge(self, u_for_edge, v_for_edge, idname=None, **attr):
+        """
+        Create an edge if the edge (uniquely identified by attributes) doesn't exist
+        the edge key will be an unused integer or the idname of the relation
+        if idname is given, it will be used and attr is not checked for uniqueness (only ever 1 edge)
+        if idname is not given, attr is checked for uniqueness and key is the number of the same edges
+        """
+        if not attr:
+            return super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, idname)
+        hsh = hash(tuple(attr.items()))
+        if idname is not None:
+            # use idname as unique key
+            key = super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, idname, hsh=hsh, **attr)
+            # and make a "general" link as well
+            if (u_for_edge, v_for_edge, '*') in self.edges:
+                self.edges[u_for_edge, v_for_edge, '*']['singular'] = False
+                self.edges[u_for_edge, v_for_edge, '*']['actual_number'] += attr['actual_number']
+            else:
+                super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, '*', hsh=hsh, **attr)
+            return key
+        if u_for_edge in self and v_for_edge in self:
+            edges = set(self.out_edges(u_for_edge, keys=True)) & set(self.in_edges(v_for_edge, keys=True))
+        else:
+            edges = set()
+        if hsh not in (self.edges[e]['hsh'] for e in edges):
+            # use an incremented integer as a unique key only if the edge is unique in attr and (u,v)
+            return super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, hsh=hsh, **attr)
 
     def surrounding_nodes(self, n):
         return list(self.parents.successors(n)) + list(self.parents.predecessors(n)) + [n]
@@ -172,13 +207,13 @@ class HierarchyGraph(nx.DiGraph):
         self.add_edge(h, h, singular=relation.maxnumber == 1, optional=relation.minnumber == 0,
                       one2one=relation.one2one, style=relstyle, actual_number=relation.maxnumber, type='is_parent_of')
 
-
     def _add_inheritance(self, hierarchy, base):
-        self.add_edge(base, hierarchy, type='subclassed_by', style='dotted', optional=False, one2one=False)
-        self.add_edge(hierarchy, base, type='is_a', style='dotted', optional=False, one2one=False)
+        self.add_edge(base, hierarchy, type='subclassed_by', actual_number=math.inf, style='dotted', optional=False,
+                      one2one=False)
+        self.add_edge(hierarchy, base, type='is_a', actual_number=0, style='dotted', optional=False, one2one=False)
 
     def _assign_edge_weights(self):
-        for u, v, d in self.edges(data=True):
+        for u, v, k, d in self.edges(data=True, keys=True):
             if d['type'] == 'is_a':
                 weight = 0
             elif d['type'] == 'subclassed_by':
@@ -187,7 +222,7 @@ class HierarchyGraph(nx.DiGraph):
                 weight = 0
             else:
                 weight = d['actual_number']
-            self.edges[u, v]['weight'] = weight
+            self.edges[u, v, k]['weight'] = weight
 
     def _add_hierarchy(self, hierarchy: Type[Hierarchy]):
         """
@@ -293,11 +328,11 @@ class HierarchyGraph(nx.DiGraph):
             return find_paths(self, a, b)
 
 if __name__ == '__main__':
-    graph = HierarchyGraph()
-    graph.initialise()
     from weaveio.opr3.hierarchy import *
     from weaveio.opr3.l1files import *
     from weaveio.opr3.l2files import *
+    graph = HierarchyGraph()
+    graph.initialise()
 
 
     # G = graph.ancestor_subgraph(L2StackFile).copy().parents_and_inheritance
