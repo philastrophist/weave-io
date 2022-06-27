@@ -343,7 +343,7 @@ if __name__ == '__main__':
     # perhaps need to reverse `notreal`
     # cannot have a-`is_a`->b and a-`is_parent_of`->b at the same time because digraph...
     #
-    nodes = Fit, UncombinedIngestedSpectrum
+    nodes = Fit, WeaveTarget
     paths = graph.find_paths(*nodes)
     for path in paths:
         print('-'.join(n.__name__ for n in path))

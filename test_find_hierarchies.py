@@ -127,3 +127,11 @@ class TestL1SpectrumTemplate(_TestTemplate):
 class TestRunWeaveTarget(_TestTemplate):
     a, b = Run, WeaveTarget
     expected = {'Run-Exposure-OB-OBSpec-FibreTarget-SurveyTarget-WeaveTarget'}
+
+class TestWeaveTargetL1SingleSpectrum(_TestTemplate):
+    a, b = L1SingleSpectrum, WeaveTarget
+    expected = {'L1SingleSpectrum-FibreTarget-SurveyTarget-WeaveTarget'}
+
+class TestWeaveTargetL1StackSpectrum(_TestTemplate):
+    a, b = L1StackSpectrum, WeaveTarget
+    expected = {'L1StackSpectrum-FibreTarget-SurveyTarget-WeaveTarget'}
