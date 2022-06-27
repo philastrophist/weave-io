@@ -6,6 +6,7 @@ from networkx.classes.filters import no_filter
 
 from weaveio.data import get_all_class_bases, plot_graph
 from weaveio.hierarchy import Multiple, OneOf, Hierarchy
+from weaveio.opr3.l2 import UncombinedIngestedSpectrum
 
 
 def normalise_relation(h):
@@ -132,7 +133,7 @@ def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
         edges = edges_from_path(G, path, weight)
         reduced_path = [edge[0] for edge in edges if graph.edges[edge]['type'] not in ['is_a', 'subclassed_by']]
         reduced_paths.add((*reduced_path, path[-1]))
-    if sorted_nodes != (a, b):
+    if sorted_nodes == (a, b):
         reduced_paths = {path[::-1] for path in reduced_paths}
     return reduced_paths
 
@@ -342,7 +343,7 @@ if __name__ == '__main__':
     # perhaps need to reverse `notreal`
     # cannot have a-`is_a`->b and a-`is_parent_of`->b at the same time because digraph...
     #
-    nodes = Redrock, OB
+    nodes = Fit, UncombinedIngestedSpectrum
     paths = graph.find_paths(*nodes)
     for path in paths:
         print('-'.join(n.__name__ for n in path))
