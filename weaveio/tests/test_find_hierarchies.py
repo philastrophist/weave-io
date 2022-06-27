@@ -1,8 +1,7 @@
 import networkx as nx
 import pytest
 
-from find_hierarchies_test import HierarchyGraph
-from weaveio.opr3.hierarchy import *
+from weaveio.path_finding import HierarchyGraph
 from weaveio.opr3.l1files import *
 from weaveio.opr3.l2files import *
 from weaveio.opr3.l1 import *
@@ -25,13 +24,6 @@ class _TestTemplate:
     a, b = None, None
     expected = None
 
-    def setup_class(self):
-        if self.expected is not None:
-            self.expected = set(self.expected)
-            self.expected_backwards = {'-'.join(path.split('-')[::-1]) for path in self.expected}
-        else:
-            self.expected_backwards = None
-
     def test_path(self, graph):
         if self.expected is None:
             with pytest.raises(nx.NetworkXNoPath):
@@ -40,36 +32,36 @@ class _TestTemplate:
             assert set(make_path_test(graph, self.a, self.b)) == self.expected
 
     def test_path_backwards(self, graph):
-        if self.expected_backwards is None:
+        if self.expected is None:
             with pytest.raises(nx.NetworkXNoPath):
                 make_path_test(graph, self.b, self.a)
         else:
-            assert set(make_path_test(graph, self.b, self.a)) == self.expected_backwards
+            assert set(make_path_test(graph, self.b, self.a)) == self.expected
 
 
 class TestGandalfSurvey(_TestTemplate):
     a, b = Gandalf, Survey
-    expected = {'Gandalf-L1Spectrum-FibreTarget-SurveyTarget-SurveyCatalogue-Subprogramme-Survey'}
+    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-Gandalf'}
 
 class TestRVSpecfitSurvey(_TestTemplate):
     a, b = RVSpecfit, Survey
-    expected = {'RVSpecfit-L1Spectrum-FibreTarget-SurveyTarget-SurveyCatalogue-Subprogramme-Survey'}
+    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-RVSpecfit'}
 
 class TestRedrockSurvey(_TestTemplate):
     a, b = Redrock, Survey
-    expected = {'Redrock-L1Spectrum-FibreTarget-SurveyTarget-SurveyCatalogue-Subprogramme-Survey'}
+    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-Redrock'}
 
 class TestFitSurvey(_TestTemplate):
     a, b = Fit, Survey
-    expected = {'Fit-L1Spectrum-FibreTarget-SurveyTarget-SurveyCatalogue-Subprogramme-Survey'}
+    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-Fit'}
 
 class TestFitIngestedSpectrum(_TestTemplate):
     a, b = Fit, IngestedSpectrum
-    expected = {'Fit-ModelSpectrum-IngestedSpectrum'}
+    expected = {'IngestedSpectrum-ModelSpectrum-Fit'}
 
 class TestFitUncombinedIngested(_TestTemplate):
     a, b = Fit, UncombinedIngestedSpectrum
-    expected = {'Fit-ModelSpectrum-UncombinedIngestedSpectrum'}
+    expected = {'UncombinedIngestedSpectrum-ModelSpectrum-Fit'}
     # TODO: this is actually ok for this database, but it feels wrong
 
 class TestOBRun(_TestTemplate):
@@ -78,7 +70,7 @@ class TestOBRun(_TestTemplate):
 
 class TestL1SpectrumSurvey(_TestTemplate):
     a, b = L1Spectrum, Survey
-    expected = {'L1Spectrum-FibreTarget-SurveyTarget-SurveyCatalogue-Subprogramme-Survey'}
+    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum'}
 
 
 class TestOBFit(_TestTemplate):
@@ -126,12 +118,12 @@ class TestL1SpectrumTemplate(_TestTemplate):
 
 class TestRunWeaveTarget(_TestTemplate):
     a, b = Run, WeaveTarget
-    expected = {'Run-Exposure-OB-OBSpec-FibreTarget-SurveyTarget-WeaveTarget'}
+    expected = {'WeaveTarget-SurveyTarget-FibreTarget-OBSpec-OB-Exposure-Run'}
 
 class TestWeaveTargetL1SingleSpectrum(_TestTemplate):
     a, b = L1SingleSpectrum, WeaveTarget
-    expected = {'L1SingleSpectrum-FibreTarget-SurveyTarget-WeaveTarget'}
+    expected = {'WeaveTarget-SurveyTarget-FibreTarget-L1SingleSpectrum'}
 
 class TestWeaveTargetL1StackSpectrum(_TestTemplate):
     a, b = L1StackSpectrum, WeaveTarget
-    expected = {'L1StackSpectrum-FibreTarget-SurveyTarget-WeaveTarget'}
+    expected = {'WeaveTarget-SurveyTarget-FibreTarget-L1StackSpectrum'}

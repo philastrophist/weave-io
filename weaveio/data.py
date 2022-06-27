@@ -22,7 +22,7 @@ from tqdm import tqdm
 from .file import File, HDU
 from .graph import Graph
 from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
-from .path_finding import find_path
+from .path_finding import HierarchyGraph
 from .readquery import Query
 from .readquery.exceptions import UserError, CardinalityError
 from .readquery.results import RowParser
@@ -255,10 +255,8 @@ class Data:
         self.query = Query(self)
         self.rowparser = RowParser(self.rootdir)
         self.filelists = {}
-        self.relation_graphs = []
-        for i, f in enumerate(self.filetypes):
-            hs = hierarchies_from_files(*self.filetypes[:i+1])
-            self.relation_graphs.append(make_relation_graph(hs))
+        self.hierarchy_graph = HierarchyGraph()
+        self.hierarchy_graph.initialise()
         if self.filetypes:
             self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
             self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
@@ -285,24 +283,6 @@ class Data:
                 self.relative_names[name][h.__name__] = relation
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
-        self.setup_cardinality()
-
-    def setup_cardinality(self):
-        multiples = [(a, b) for a, b, d in self.relation_graphs[-1].edges(data=True) if 'relation' in d]
-        forward_q = "MATCH (a:{})-[r:is_required_by]->(:{}) with a, count(r) as cnt with avg(cnt) as cnt RETURN CASE WHEN cnt is null THEN 0 ELSE cnt END"
-        backward_q = "MATCH (:{})-[r:is_required_by]->(a:{}) with a, count(r) as cnt with avg(cnt) as cnt RETURN CASE WHEN cnt is null THEN 0 ELSE cnt END"
-        for (a, b) in tqdm(multiples):
-            forward_n = self.graph.execute(forward_q.format(a.__name__, b.__name__)).evaluate()
-            backward_n = self.graph.execute(backward_q.format(a.__name__, b.__name__)).evaluate()
-            for g in self.relation_graphs:
-                try:
-                    g.edges[a, b]['actual_number'] = forward_n
-                    g.edges[b, a]['actual_number'] = backward_n
-                except KeyError:
-                    pass
-        for g in self.relation_graphs:
-            for edge in g.edges:
-                g.edges[edge]['weight'] = g.edges[edge]['actual_number'] if g.edges[edge]['actual_number'] > 1 else 1
 
     @property
     def verbose(self):
@@ -331,7 +311,7 @@ class Data:
                 expanded_dependencies.add(o)
         return {o.__name__ for o in parents if o in expanded_dependencies}
 
-    def _path_to_hierarchy(self, g:nx.DiGraph, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
+    def _path_to_hierarchy(self, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
         """
         When searching for a path, the target is either above or below the source in one direction only
         If the target is defined as a child by another, then the search is redefined as for the predecessors of that child
@@ -346,7 +326,16 @@ class Data:
             If more than one path is returned, throw an ambiguous path exception
 
         """
-        return find_path(g, from_obj, to_obj, singular)
+        paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj))
+        singulars = [nx.path_weight(self.hierarchy_graph, path, 'weight') for path in paths]
+        if singular:
+            paths, singulars = zip(*[(path, s) for path, s in zip(paths, singulars) if s <= 1])
+        if not paths:
+            if singular:
+                raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")
+            raise NetworkXNoPath(f"No path found between `{from_obj}` and `{to_obj}`")
+        return paths, singulars
+
 
     def parents_of_defined_child(self, potential_child: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
         parents = {h for h in self.hierarchies if potential_child in [c.node if isinstance(c, Multiple) else c for c in h.children]}
@@ -362,20 +351,12 @@ class Data:
     def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
         a, b = map(self.singular_name, [from_obj, to_obj])
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
-        for level, g in enumerate(self.relation_graphs):
-            if from_obj in g and to_obj in g:
-                break
-        else:
-            raise nx.NodeNotFound(f"One of {from_obj} or {to_obj} is not in the graph".format(from_obj, to_obj))
-        g = self.relation_graphs[-1]
         try:
-            path = self._path_to_hierarchy(g, from_obj, to_obj, singular)
-            singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
-            forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
-            arrows = make_arrows(path, [not f for f in forwards], descriptor)
+            path, singular = self._path_to_hierarchy(from_obj, to_obj, singular)
+            arrows = make_arrows(path, [True]*len(path), descriptor)
             if return_objs:
-                return arrows, singular, level, path
-            return arrows, singular, level
+                return arrows, singular, path
+            return arrows, singular
         except nx.NetworkXNoPath:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
@@ -476,7 +457,6 @@ class Data:
         if return_only_fname:
             return result
         return list(map(lambda x: self.rootdir / x, result))
-
 
     def raise_collisions(self):
         """

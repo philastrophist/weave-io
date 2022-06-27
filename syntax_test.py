@@ -5,7 +5,7 @@ from weaveio import *
 import logging
 
 from weaveio.data import find_children_of
-from weaveio.path_finding import find_singular_simple_hierarchy_path
+from weaveio.path_finding_old import find_singular_simple_hierarchy_path
 
 logging.basicConfig(level=logging.INFO)
 
