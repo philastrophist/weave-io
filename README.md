@@ -182,6 +182,34 @@ and survey names containing "WL"
 4. `l2s = l2s[l2s['ha_6562.80_flux'] > 0]` - Then we further filter the l2 products by required an halpha flux greater than 0 (fit by Gandalf).
 5. `l2s[['ha_6562.80_flux', 'z']]` - This designs a table with the halpha flux (from gandalf) and the redshift (from redrock)
 
+
+# 4. Join a local catalogue
+I have a FITS catalogue with two columns, CNAME and POI (parameter of interest) for let’s say 300 sources. I wish to see how POI relates to what’s in the L1 and L2 data products for any data with matching CNAMES. 
+1. Read in 3rd party FITS table
+2. Join by CNAME to matching CNAMEs in the database
+3. Print the dates on which those matched objects were observed, and the number of WEAVE visits to each CNAME (there could be more than one)
+4. Plot POI against L1 property (e.g. mean flux between 400-450nm would be a nice one to see)
+5. Plot POI against L2 property (e.g. redshift, displaying only those with ZWARN == 0)
+
+```python
+import matplotlib.pyplot as plt
+data = Data()
+# make a local table to test this example
+from astropy.table import Table, hstack
+table = Table({'id': ['WVE_20325171+6119448', 'WVE_20324198+6043170',
+                   'WVE_20334179+6129158', 'WVE_20333204+6107068',
+                   'WVE_20325378+6044165'], 'poi': [1,2,3,4,5]})
+targets = data.weave_targets[table['id'].data.tolist()] # weave_target is identified by cname TODO: `.data.tolist()` should be unnecessary
+nobs = count(targets.obs, wrt=targets)
+z = mean(targets.zs, wrt=targets)
+
+query = targets[[targets.cname, targets.obs.mjd, nobs, z]]
+joined = hstack([table, query()])
+joined.rename_columns(['count0', 'avg0'], ['number of obs', 'average l2 reshift'])  # TODO: give column names in the query
+```
+This query can be broken down into 
+
+
 ## Details
 
 ## If confused, ignore...
