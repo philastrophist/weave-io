@@ -4,8 +4,7 @@ from typing import Type, Union, Set, List, Tuple
 import networkx as nx
 from networkx.classes.filters import no_filter
 
-from weaveio.data import get_all_class_bases
-from weaveio.hierarchy import Multiple, Hierarchy, OneOf
+from weaveio.hierarchy import Multiple, Hierarchy, OneOf, Graphable
 
 
 def normalise_relation(h):
@@ -325,3 +324,13 @@ class HierarchyGraph(nx.MultiDiGraph):
             return find_paths(self.nonoptional, a, b)
         except nx.NetworkXNoPath:
             return find_paths(self, a, b)
+
+
+def get_all_class_bases(cls: Type[Graphable]) -> Set[Type[Graphable]]:
+    new = set()
+    for b in cls.__bases__:
+        if b is Graphable or not issubclass(b, Graphable):
+            continue
+        new.add(b)
+        new.update(get_all_class_bases(b))
+    return new

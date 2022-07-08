@@ -127,3 +127,16 @@ class TestWeaveTargetL1SingleSpectrum(_TestTemplate):
 class TestWeaveTargetL1StackSpectrum(_TestTemplate):
     a, b = L1StackSpectrum, WeaveTarget
     expected = {'WeaveTarget-SurveyTarget-FibreTarget-L1StackSpectrum'}
+
+class TestTemplate(_TestTemplate):
+    a, b = Run, L1Spectrum
+    expected = {
+        'Run-RawSpectrum-L1SingleSpectrum',
+        'Run-RawSpectrum-L1SingleSpectrum-L1StackSpectrum',
+        'Run-RawSpectrum-L1SingleSpectrum-L1SuperstackSpectrum',
+        'Run-RawSpectrum-L1SingleSpectrum-L1SupertargetSpectrum'
+    }
+
+class TestTemplate2Template(_TestTemplate):
+    a, b = L1Spectrum, L1StackedSpectrum
+    expected = set()

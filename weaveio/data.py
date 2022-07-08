@@ -16,13 +16,14 @@ import py2neo
 import textdistance
 from networkx import NetworkXNoPath, NodeNotFound
 from networkx.drawing.nx_pydot import to_pydot
+from operator import mul
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
 from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
-from .path_finding import HierarchyGraph
+from .path_finding import HierarchyGraph, get_all_class_bases
 from .readquery import Query
 from .readquery.exceptions import UserError, CardinalityError
 from .readquery.results import RowParser
@@ -32,14 +33,6 @@ from .writequery import Unwind
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
 
-def get_all_class_bases(cls: Type[Graphable]) -> Set[Type[Graphable]]:
-    new = set()
-    for b in cls.__bases__:
-        if b is Graphable or not issubclass(b, Graphable):
-            continue
-        new.add(b)
-        new.update(get_all_class_bases(b))
-    return new
 
 def process_neo4j_error(data: 'Data', file: File, msg):
     matches = CONSTRAINT_FAILURE.findall(msg)
@@ -259,7 +252,7 @@ class Data:
         self.hierarchy_graph.initialise()
         if self.filetypes:
             self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
-            self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
+            self.hierarchies.update({hh for h in self.hierarchies for hh in get_all_class_bases(h)})
         else:
             self.hierarchies = set()
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
@@ -327,7 +320,7 @@ class Data:
 
         """
         paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj))
-        singulars = [nx.path_weight(self.hierarchy_graph, path, 'weight') for path in paths]
+        singulars = [any((nx.shortest_path_length(self.hierarchy_graph, *e, 'weight') or 1) > 1 for e in nx.utils.pairwise(path)) for path in paths]
         if singular:
             paths, singulars = zip(*[(path, s) for path, s in zip(paths, singulars) if s <= 1])
         if not paths:
@@ -348,15 +341,15 @@ class Data:
         except KeyError:
             return False
 
-    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
+    def paths_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
         a, b = map(self.singular_name, [from_obj, to_obj])
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
         try:
-            path, singular = self._path_to_hierarchy(from_obj, to_obj, singular)
-            arrows = make_arrows(path, [True]*len(path), descriptor)
+            paths, singulars = self._path_to_hierarchy(from_obj, to_obj, singular)
+            arrows = [make_arrows(path, [True]*len(path), descriptor) for path in paths]
             if return_objs:
-                return arrows, singular, path
-            return arrows, singular
+                return arrows, singulars, paths
+            return arrows, singulars
         except nx.NetworkXNoPath:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
@@ -365,7 +358,7 @@ class Data:
             from_ = self.singular_name(a.lower())
             raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
                                 f"This may be because it doesn't make sense for `{from_}` to have {to}. "
-                                f"Try checking the cardinalty of your query.")
+                                f"Try checking the cardinality of your query.")
 
     def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
         hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
@@ -852,7 +845,7 @@ class Data:
             newsuggestions = []
             if relative_to is not None:
                 try:
-                    self.path_to_hierarchy(relative_to, h_singular_name, singular=True)
+                    self.paths_to_hierarchy(relative_to, h_singular_name, singular=True)
                 except NetworkXNoPath:
                     hier = h.singular_name
                     factors = h.products_and_factors

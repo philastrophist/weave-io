@@ -137,6 +137,10 @@ class BaseQuery:
             p        |  p      (i.e. ...-> run.l1specs.snrs) - cannot be inferred just from a name
             s        |  p      (i.e. run.obids -> run.ob.obids)
             p        |  s      (i.e. run.snr -> run.l1spec.snr) - is not allowed
+        flow:
+            1. return self if `maybe_attribute is in self
+            2. if there is exactly one singular hierarchy, choose it
+            3. otherwise, use all paths
          :return: obj, obj_is_singular, attr_is_singular
         """
         single_name = self._data.singular_name(maybe_attribute)
@@ -144,6 +148,7 @@ class BaseQuery:
         if self._obj in hs:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
         # find the objects that are linked to this one and sort them by the amount of data they require
+        paths, is_singulars = self._get_path_to_object(h, )
         new_hs = []
         for H in hs:
             for h in self._data.expand_template_object(H):
@@ -158,23 +163,14 @@ class BaseQuery:
             # if there is exactly one singular hierarchy, choose it
             obj = min(new_hs, key=lambda x: x[-1])[0]
         else:
-            # otherwise, filter to the least data required
-            lowest_level = min(levels)
-            hs = [h for h, _, l in new_hs if l == lowest_level]  # pick the objs with the smallest data requirement
-            if len(hs) > 1:
-                names = [self._data.singular_name(h) for h in hs]
-                raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
-                                         f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
-            try:
-                obj = hs[0]
-            except IndexError:
-                # there arent any
-                raise AttributeNameError(f"{self._obj} has no access to an attribute called {maybe_attribute}")
+
+
+
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
-        path, obj_is_singular, _ = self._data.path_to_hierarchy(self._obj, obj, False)
+        paths, obj_is_singulars, _ = self._get_path_to_object(obj, False)
         attr_is_singular = self._data.is_singular_name(maybe_attribute)
         if obj_is_singular and attr_is_singular:
             pass  # run.obid -> run.ob.obid
@@ -226,7 +222,7 @@ class BaseQuery:
         return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
     def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool, int]:
-        return self._data.path_to_hierarchy(self._obj, obj, want_single)
+        return self._data.paths_to_hierarchy(self._obj, obj, want_single)
 
     def _slice(self, slc):
         """
