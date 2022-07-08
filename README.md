@@ -2,11 +2,9 @@
 
 # Tutorial
 
-## Basics
-
 ## WEAVE objects
 
-* An OB holds all the information that purtains to making an observation: the targets, the conditions, the instrument configuration. You can locate specific OBs with their obid `data.obs[obid]`
+* An OB holds all the information that pertains to making an observation: the targets, the conditions, the instrument configuration. You can locate specific OBs with their obid `data.obs[obid]`
 
 * An Exposure is one integration of both arms of the spectrograph. You can locate Exposures like so:  `data.exposures[mjd]`
 
@@ -18,12 +16,16 @@
     * A single spectrum is the processed spectrum from the raw data
     * A stack spectrum is the spectrum resulting from stacking two or more single spectra in a single ob
     * A superstack spectrum results from stacking *between* OBs but with the same instrument configuration
-    * A supertarget spectrum results from stacking every single spectrum of a single WeaveTarget cname.
+    * A supertarget spectrum results from stacking every single spectrum of a single Weave_Target cname.
+  
+* An L2 product refers to analysis products performed by Redrock, Gandalf, PPXF, RVSpecFit, and Ferre.
+* Each one of these fits has a model spectrum and analysis output (such as line indices)
+* Each L2 product has at least 2 corresponding L1 products since the red and blue spectra are joined together for the analysis.
 
-* There are three types of `Target`
-    1. `WeaveTarget` is the unified target based on ra, dec. They have a unique CNAME
-    2. `SurveyTarget` is a target specified by a survey in a surveycatalogue (they reference a single WeaveTarget). These are unique to a catalogue.
-    3. `FibreTarget` is a result of assigning a spectrograph `Fibre` to a `SurveyTarget`. These are unique to an OBSpec.
+* There are three types of `target`
+    1. `weave_target` is the unified target based on ra, dec. They have a unique CNAME
+    2. `survey_target` is a target specified by a survey in a `survey_catalogue` (they reference a single `weave_target`). These are unique to a catalogue.
+    3. `fibre_target` is a result of assigning a spectrograph `fibre` to a `survey_target`. These are unique to an OBSpec.
     
 
 ### What is an attribute? What is an object? What is a product?
@@ -34,6 +36,153 @@
     2. Object - A object that references a concept in the WEAVE universe that has attributes (an OB object has an obid attribute, an exposure object has an attribute expmjd
     3. Attribute - A piece of data that belongs to some object
     4. Product - A special type of attribute which references binary data not stored in the database itself (e.g. spectrum flux). You cannot perform arithmetic/indexing on product attributes.
+
+
+### Running a query
+A query finds the locations of all the L1/L2/Raw products that you want. 
+It is analogous to an SQL query except that it is written in Python.
+
+* A query is constructed using python like so:
+
+    ```
+    from weaveio import *
+    data = Data(username, password)
+    
+    runs = data.obs[obid].runs
+    reds = runs[runs.colour == 'red']
+    spectra = reds.l1singlespectra
+    ```
+    `runs`, `reds`, `spectra` are all queries
+* Each part of this query can be run independently, using the parentheses:
+    * `runs.runids` is still a query 
+    * `runs.runids()` returns an actual list of numbers
+    * `reds()` will return a list of Run objects (containing all attributes of a run)
+
+# Examples of use:
+
+# 1. I want to return the number of sky spectra in a given run (runid=1002850)
+
+
+```python
+from weaveio import *
+data = Data() 
+runid = 1003453
+nsky = sum(data.runs[runid].targuses == 'S')
+print("number of sky targets = {}".format(nsky()))
+```
+output: `number of sky targets = 100`
+
+We can break this down into several steps:
+1. `from weaveio import *; data = Data()` - Import all the necessary `weaveio` functions and start the default lofar database link.
+2. `data.[...]` - Start building a query using the default database.
+3. `data.runs` - The query starts at all runs.
+4. `data.runs[runid]` - Filter the runs to those that have the id equal to `runid`. This is unique, so you can be sure that this query now contains one row.
+5. `data.runs[runid].targuses` - Each run has multiple L1 single spectra associated with it and each of those spectra have a `targuse` attribute. Therefore, each run has a `targuses` attribute. 
+6. `data.runs[runid].targuses == 'S'` - Make a boolean mask for where the targuse flag for each spectrum belonging to this run is set to `'S'` (this refers to "sky").
+7. `nsky = sum(data.runs[runid].targuses == 'S')` - Sum the entire boolean mask, thereby counting the number of sky fibres placed in this run. 
+The python function `sum` was overwritten with a `weaveio` version when we did our imports. `sum` is now compatible with `weaveio` but can also be used normally. 
+8. `nsky()` - Up til now, we have been building a query, much like we would write SQL, but nothing has executed on the database yet. 
+To run our query and fetch the result, we call it using the parentheses `()`.
+
+## 1b. I want to see how many sky targets each run has
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of sky targets with respect to their runs
+print(nsky())
+```
+output: `[100 299 299 100 100 200 160 ...]`
+This query is very similar to the previous one except that we are summing along an axis (to use a `numpy` phrase).
+The difference here is that we have missed out `data.runs[runid]` which means that our query references all `runs` in the database at once.
+1. `from weaveio import *; data = Data()` - Import all the necessary `weaveio` functions and start the default lofar database link.
+2. `data.runs` - The query starts at all runs.
+3. `data.runs.targuses == 'S` - Access all `targuse` attributes belonging to this run, which are *per l1 single spectrum*
+4. `nsky = sum(data.runs.targuses == 'S', wrt=data.runs)` - This time sum our boolean mask *with respect to (`wrt`)* `data.runs`. 
+This means each row in the resultant query, `nsky`, will refer to each row in `data.runs`. I.E. There is now a query row *per run*, whereas in the previous example there was only one row.
+
+## 1c. Put the above result into a table where I can see the runid
+```python
+from weaveio import *
+data = Data()
+nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
+query_table = data.runs[['id', nsky]]  # design a table by using the square brackets
+concrete_table = query_table()  # make it "real" by executing the query
+print(concrete_table)
+print(type(concrete_table))
+```
+output:
+```
+   id   sum0
+------- ----
+1003453  100
+1003440  299
+...      ...
+<class 'weaveio.readquery.results.Table'>  # although this is an astropy table really
+```
+Returning more than one attribute per row requires "designing" a table.
+To do this, we put a list of our required values in the square brackets `[['id', nsky]]`. 
+Any string referring to an attribute (e.g. `'id'`) can go here as well as any previously written query (e.g. `nsky`').
+However, any items that you put in the square brackets must align with the object outside:
+
+For example:
+* `data.runs[['id', nsky]]` is valid because each `run` has an `id` and the query `nsky` is based on `data.runs` (i.e. each `run` has an `nsky` calculated for it).
+
+
+
+# 2. I want to plot all single sky spectra from last night in the red arm
+
+```python
+from weaveio import *
+data = Data()
+yesterday = 57811  # state yesterday's date in MJD
+
+runs = data.runs
+is_red = runs.camera == 'red'
+is_yesterday = floor(runs.exposure.mjd) == yesterday  # round down to an integer, which is the day
+
+runs = runs[is_red & is_yesterday]  # filter the runs to red ones that were taken yesterday  
+spectra = runs.l1single_spectra  # get all the spectra per run
+sky_spectra = spectra[spectra.targuse == 'S']  # filter to the spectra which are sky 
+
+table = sky_spectra[['wvl', 'flux']]  # design a table of wavelength and flux
+
+import matplotlib.pyplot as plt
+# this may take a while to plot, there is a lot of data
+for row in table:  # you can iterate over a query with `for` as well as requesting the whole thing with `()` 
+    plt.plot(row.wvl, row.flux, 'k-', alpha=0.4)  # standard matplotlib line plot 
+plt.savefig('sky_spectra.png')
+```
+output:
+
+<img src="sky_spectra.png" height="200">
+
+
+
+# 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO spectra that were observed from all OBs observed in the past month. Use the stacked data
+
+```python
+import matplotlib.pyplot as plt
+data = Data()
+l2s = data.l2stacks
+l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]
+l2s = l2s[l2s['ha_6562.80_flux'] > 0]
+table = l2s[['ha_6562.80_flux', 'z']]()
+plt.scatter(table['z'], table['ha_6562.80_flux'], s=1)
+plt.yscale('log')
+plt.savefig('ha-z.png')
+```
+<img src="ha-z.png" height="200">
+
+Let's break down this query:
+
+1. `l2s = data.l2stacks` gets all l2stack products in the database. These are the data products which contain joined spectra and template fits.
+2. `l2s.fibre_target.surveys == '/WL.*/'` - This creates a boolean mask matching the survey name to 'WL.*' with regex. You can activate regex by using `/` at the start and end of a string.
+3. `l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]` - This filters to l2 products whose L1 observations were taken after 57780
+and survey names containing "WL"
+4. `l2s = l2s[l2s['ha_6562.80_flux'] > 0]` - Then we further filter the l2 products by required an halpha flux greater than 0 (fit by Gandalf).
+5. `l2s[['ha_6562.80_flux', 'z']]` - This designs a table with the halpha flux (from gandalf) and the redshift (from redrock)
+
+## Details
 
 ## If confused, ignore...
 
@@ -53,15 +202,15 @@ Because of this chain of parentage/relation, every object has access to all attr
 ### Traversal syntax 
 
 1. You can request any directly owned attribute of an object 
-    * An OB has an obid: `ob.obid`
+    * An OB has an id: `ob.id`
     * An obstemp has a maxseeing `obstemp.maxseeing` 
     
 1. You can request any attribute of objects that are further away in the hierarchy as if it were its own. This is useful because a priori you wouldn't be expected to know where any particular piece of data is stored, just that it exists.
     * `run.maxseeing` is identical to `run.exposure.ob.obspec.obstemp.maxseeing`
 
 1. Traversal works in any direction
-    * You can go down a hierarchy: `exposure.run.rawspectrum`
-    * You can go up as well: `rawspectrum.run.exposure`
+    * You can go down a hierarchy: `exposure.runs.raw_spectrum` (exposure has multiple runs)
+    * You can go up as well: `raw_spectrum.run.exposure` (raw_spectrum has one run)
 
 1. Traversal can be implicit like with the indirectly accessed attributes above
     * You can skip out stages: `run.obspec` is identical to `run.ob.obspec`
@@ -72,8 +221,8 @@ Because of this chain of parentage/relation, every object has access to all attr
     * weave.io is aware of plurality of the whole hierarchy, so it will shout at you if you are obviously wrong: `ob.run` will fail before you even execute the query.
 
 1. Traversal name plurality is relative
-    * A run has a single ob, which in turn has multiple runs: `run.ob.runs` will return all runs of the ob (including the one that was explicitly referenced at the start. 
-    * `ob.runs.weavetarget.obs` can be read as "**For each** of the runs, get its weavetarget, and then **for each** weavetarget get all OBs which assign a fibre to that target.
+    * A run has a single ob, which in turn has multiple runs: `run.ob.runs` will return all runs of the ob (including the one that was explicitly referenced at the start). 
+    * `ob.runs.weave_target.obs` can be read as "**For each** of the runs, get its weave_target, and then **for each** weave_target get all OBs which assign a fibre to that target."
 
 1. Traversal using dot syntax always increases/maintains the total number of rows returned at the end
     * A consequence of traversal is the building up of rows. This is useful to get properly aligned labels/indexes for things.
@@ -85,9 +234,9 @@ Because of this chain of parentage/relation, every object has access to all attr
 1. You can request a specific object if you know its id 
     * `one_ob = data.obs[obid]` 
     * `a_list_of_obs = data.obs[[obid1, obid2, obid3]]` 
-    * Plurality still applies here: `data.weavetargets.obs[obid]` will return one ob **for each** weavetarget
-        * `data.obs[obid].weavetargets` returns all weavetargets for this particular ob
-        * `data.weavetargets.obs[obid]` returns the ob with obid for each weavetarget (sometimes will be None)
+    * Plurality still applies here: `data.weave_targets.obs[obid]` will return one ob **for each** weave_target
+        * `data.obs[obid].weave_targets` returns all weave_targets for this particular ob
+        * `data.weave_targets.obs[obid]` returns the ob with obid for each weave_target (sometimes will be None)
 
 
 ### Exploration
@@ -103,9 +252,9 @@ You can use the `explain(obj)` function to see what information is available for
     A ob has a unique id called 'obid'
     one ob is linked to:
         - many exposures
-        - many l1stackfiles
-        - many l1stackspectra
-        - many l2stackfiles
+        - many l1stack_files
+        - many l1stack_spectra
+        - many l2stack_files
         - many l2stacks
         - 1 obspec
     a ob directly owns these attributes:
@@ -118,13 +267,13 @@ Likewise, use the `explain(attr)` function to see what information is available 
     runid is the unique id name of a run
 
     >>> explain('snr', data=data)
-    snrs are owned by multiple different objects (['l1singlespectrum', 'l1stackspectrum', 'l1supertargetspectrum', 'l1superstackspectrum']). 
+    snrs are owned by multiple different objects (['l1single_spectrum', 'l1stack_spectrum', 'l1supertarget_spectrum', 'l1superstack_spectrum']). 
     They could be entirely different things.
     You will need to specify the parent object for snr when querying.
-    snr is an attribute belonging to l1singlespectrum
-    snr is an attribute belonging to l1stackspectrum
-    snr is an attribute belonging to l1supertargetspectrum
-    snr is an attribute belonging to l1superstackspectrum
+    snr is an attribute belonging to l1single_spectrum
+    snr is an attribute belonging to l1stack_spectrum
+    snr is an attribute belonging to l1supertarget_spectrum
+    snr is an attribute belonging to l1superstack_spectrum
     ========================================
     
 Also, you can use the `explain(obj1, obj2)`function to see how two objects are related:
@@ -138,9 +287,9 @@ Also, you can use the `explain(obj1, obj2)`function to see how two objects are r
     A ob has a unique id called 'obid'
     one ob is linked to:
         - many exposures
-        - many l1stackfiles
-        - many l1stackspectra
-        - many l2stackfiles
+        - many l1stack_files
+        - many l1stack_spectra
+        - many l2stack_files
         - many l2stacks
         - 1 obspec
     a ob directly owns these attributes:
@@ -165,251 +314,9 @@ Also, you can use the `explain(obj1, obj2)`function to see how two objects are r
 
 When you make a mistake in plurality or a typo, weave-io will offer suggestions:
     
-    >>> data.singlespectra
+    >>> data.single_spectra
     AttributeError: `single_spectra` not understood, did you mean one of:
-    1. l1singlespectra
-    2. l1singlespectrum
-    3. galaxy_spectra. 
+    1. l1single_spectra
+    2. l1single_spectrum
+    3. model_spectra. 
     You can learn more about an object or attribute by using `explain(obj/attribute, ...)`
-
-### Running a query
-A query finds the locations of all the L1/L2/Raw products that you want. 
-It is analagous to an SQL query except that it is written in Python.
-
-* A query is constructed using python like so:
-
-    ```
-    from weaveio import *
-    data = Data(username, password)
-    
-    runs = data.obs[obid].runs
-    reds = runs[runs.colour == 'red']
-    spectra = reds.l1singlespectra
-    ```
-    `runs`, `reds`, `spectra` are all queries
-* Each part of this query can be run independently, using the parentheses:
-    * `runs.runids` is still a query 
-    * `runs.runids()` returns a actual list of numbers
-    * `reds()` will return a list of Run objects (containing all attributes of a run)
-    * `spectra()` will return a spectra object (read from the fits file on herts.ac.uk) which contains the flux, wvls etc
-
-# Examples of use:
-
-# 1. I want to return the number of sky spectra in a given run (runid=1002850)
-
-
-```python
-from weaveio import *
-data = Data()
-runid = 1003453
-nsky = sum(data.runs[runid].targuses == 'S')
-print("number of sky targets = {}".format(nsky()))
-```
-output: `[100]`
-
-## 1b. I want to see how many sky targets each run has
-```python
-from weaveio import *
-data = Data()
-nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
-print(nsky())
-```
-output: `[100 299 299 100 100 200 160 ...]`
-
-## 1c. Put the above result into a table where I can see the runid
-```python
-from weaveio import *
-data = Data()
-nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
-query_table = data.runs[['id', nsky]]  # design a table by using the square brackets
-concrete_table = query_table()  # make it "real" by executing the query
-print(concrete_table)
-print(type(concrete_table))
-```
-output:
-```
-   id   sum0
-------- ----
-1003453  100
-1003440  299
-...      ...
-<class 'weaveio.readquery.results.Table'>  # although this is an astropy table really
-```
-
-# 2. I want to plot all single sky spectra from last night in the red arm
-
-```python
-from weaveio import *
-data = Data()
-yesterday = 57811
-
-runs = data.runs
-is_red = runs.camera == 'red'
-is_yesterday = floor(runs.exposure.mjd) == yesterday  # round to integer, which is the day
-
-runs = runs[is_red & is_yesterday]  # filter the runs first
-spectra = runs.l1single_spectra
-sky_spectra = spectra[spectra.targuse == 'S']
-
-table = sky_spectra[['wvl', 'flux']]
-
-import matplotlib.pyplot as plt
-for row in table:  # this may take a while to plot, there is a lot of data
-    plt.plot(row.wvl, row.flux, 'k-', alpha=0.4)
-plt.savefig('sky_spectra.png')
-```
-output:
-
-<img src="sky_spectra.png" height="200">
-
-
-# 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO targets that were observed  from all OBs observed in the past month. Use the stacked data
-
-
-```python
-import matplotlib.pyplot as plt
-data = Data()
-l2s = data.l2stacks
-l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]
-l2s = l2s[l2s['ha_6562.80_flux'] > 0]
-table = l2s[['ha_6562.80_flux', 'z']]()
-plt.scatter(table['z'], table['ha_6562.80_flux'], s=1)
-plt.yscale('log')
-plt.savefig('ha-z.png')
-```
-<img src="ha-z.png" height="200">
-
-# 4. Get the brightest g-band target in an OB and plot some spectra 
-a. I would like to identify the brightest (g band) WL spectrum observed in an OB with `obid=1234` (using the g band magnitude in the stacked spectrum). Plot the stack, in both red and blue arms (on same plot)
-
-b. Plot the individual spectra that went into making the stack. 
-
-d. I would like to search for any other OB that contains the same astronomical object. Overplot the single spectra that were observed in those OBs
-
-
-```python
-import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# % matplotlib 
-data = Data()
-
-####### < Part A
-ob = data.obs[1234]  # get the ob 
-
-# all L2 data that used stackedspectra.
-l2stack = ob.l2stack
-
-# return rows in the L2 dataset that correspond to a lofar target
-lofar_l2 = l2stack[any(l2stack.surveys == 'WL')]  # each target can belong to more than one survey
-l2row = lofar_l2[lofar_l2.mag_gs == max(lofar_l2.mag_gs)]  # get the one row that corresponds to the brightest lofar target
-
-# now we jump from L2 rows to the stack spectra
-brightest_red = l2row.l1stackspectra[l2row.l1stackspectra.camera == 'red']
-brightest_blue = l2row.l1stackspectra[l2row.l1stackspectra.camera == 'blue']
-
-# Now plot the actual data
-fig, (redax, blueax) = plt.subplots()
-redax.plot(brightest_red.wvls(), brightest_red.flux(), 'r-', label='brightest')
-blueax.plot(brightest_blue.wvls(), brightest_blue.flux(), 'b-', label='brightest')
-####### Part A />
-
-
-####### < Part B
-# now locate the indivdual single spectra that were stacked
-red_spectra = brightest_red.l1singlespectra
-blue_spectra = brightest_blue.l1singlespectra
-
-# matplotlib allows you to plot multiple lines with 2d arrays
-redax.plot(red_spectra.wvls(), red_spectra.flux(), 'r-', alpha=0.4, label='single for brightest')
-blueax.plot(blue_spectra.wvls(), blue_spectra.flux(), 'r-', alpha=0.4, label='single for brightest')
-####### Part B />
-
-
-####### < Part C
-# Now get all other stacked spectra that were observed for this target, no matter the OB
-brightest_target = l2row.weavetarget
-other_reds = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'red']
-other_blues = brightest_target.l1stackspectra[brightest_target.l1stackspectra.camera == 'blue']
-
-# overplot the other observations
-for wvl, flux in other_reds.wvls(), other_reds.flux():
-    redax.plot(wvl, flux, 'k:', alpha=0.2, label='from all obs')
-####### Part C />
-```
-
-# Demo
-
-## 6. I would like to identify all of the sky spectra in an OB used to create the sky model spectrum for that OB. I would then like to compare that list to the list of spectra denoted to be used as sky in the input OB to determine how many extra or fewer sky spectra were used in the combination. 
-
-
-```python
-
-```
-
-## Rohit's question
-
-I'm interested in getting the spectra for the AGN sample (specifically the LERGs) from the SV input, looking for sources between a redshift range, say 0.5 < z < 1 (or 1.4, whichever is the upper limit), and analysing their continuum. 
-
-I'm also interested in using emission line properties to perform source classifications
-
-1. select redshift 0.5 - 1
-1. get LERGs:
-    * $\log ([O III]/Hβ) - 1/3 \log ([N II]/Hα) + \log ([S II]/Hα) + \log ([O I]/Hα)$
-1. get stacked spectra
-
-* Need `FLUX_EL_W` and `ERR_FLUX_EL_W` columns from L2 data, where EL is the emission line and W its wavelength
-
-
-```python
-def excitation_index(oiii, hb, nii, sii, oi, ha):
-    return log(oiii/hb) - (log(nii/ha) / 3) + log(sii/ha) + log(oi/ha)
-
-data = Data()
-l2stack = data.l2stack
-redshift = l2stack.z
-EI = excitation_index(l2stack.flux_oiii_5007, l2stack.flux_hbeta, l2stack.flux_nii_6583, l2stack.flux_oi_6300, 
-                      l2stack.flux_sii_6716, l2stack.flux_halpha)
-
-in_redshift_range = (l2stack.zbest > 0.5) & (l2stack.zbest < 1.)
-is_lerg = EI < 0.95  
-
-spectra = l2stack[in_redshift_range & is_lerg].l1stackspectra
-reds = spectra[spectra.camera == 'red']
-blues = spectra[spectra.camera == 'blue']
-
-
-import matplotlib.pyplot as plt
-# uncomment the next line if you are using ipython so that you can see the plots interactively (don't forget to do ssh -XY lofar)
-# % matplotlib 
-plt.plot(reds.wvls(), reds.flux())
-plt.plot(blues.wvls(), blues.flux())
-```
-
-# Anniek's fluxes and other catalogues
-We can add any catalogue or file we like to the database, all that is required is a precise knowledge of what data was used to create the catalogue/file (so we can associate it correctly). 
-
-## Find all reprocessed Ha flux done by Anniek for a given OB
-
-
-```python
-data = Data()
-data.ob.anniek.flux_halpha
-```
-
-## Join your own catalogue based on cname
-
-
-```python
-data = Data()
-catalogue = read_my_nice_catalogue('...')   # has a cname column
-data.join(catalogue, 'cname', weavetarget.cname, name='my_catalogue')  # only exists for this session
-```
-
-## Join your own file that reprocessed data from a specific file (like Anniek's)
-
-
-```python
-data = Data()
-line_fluxes = read_line_fluxes('...')  # from the weave single spectra associated with run 100423 
-data.join(line_fluxes, 'index', data.runs[100423].singlespectra, name='line_fluxes')
-```
