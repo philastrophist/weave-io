@@ -347,6 +347,7 @@ class Data:
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
         try:
             paths, singulars, reversed = self._path_to_hierarchy(from_obj, to_obj, singular)
+            # TODO: make it so that path singularity is checked after reversal
             arrows = [make_arrows(path, [not r]*(len(path)-1), descriptor) for path, r in zip(paths, reversed)]
             if return_objs:
                 return arrows, singulars, paths
