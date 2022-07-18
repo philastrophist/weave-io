@@ -21,6 +21,21 @@ def get_all_subclasses(cls: Type) -> List[Type]:
         all_subclasses.extend(get_all_subclasses(subclass))
     return all_subclasses
 
+def collapse_classes_to_superclasses(graph, classes):
+    """
+    Given a list of classes, return the shortest list of classes possible by merging classes together.
+    A merge is only possible if they share a base class
+    class B(A) and class C(A) can be merged -> class A
+    In graph terms, this is equivalent to finding islands (connected components) and returning
+     the shallowest node that has a path to all leaves (the head(s))
+    """
+    G = nx.subgraph_view(graph, filter_node=lambda n: n != Hierarchy and n in classes,
+                         filter_edge=lambda *e: graph.edges[e]['type'] == 'subclassed_by')
+    for ns in nx.connected_components(G.to_undirected()):
+        subgraph = nx.subgraph(G, ns)
+        for n in subgraph.nodes:
+            if not subgraph.in_degree(n):
+                yield n
 
 def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None, templates=False) -> Set[Type[Hierarchy]]:
     if done is None:

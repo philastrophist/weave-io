@@ -299,10 +299,12 @@ class Spectrum1D(Spectrum):
     is_template = True
     parents = [WavelengthHolder]
     products = ['flux', 'ivar']
+    plural_name = 'spectra1d'
 
 
 class Spectrum2D(Spectrum):
     is_template = True
+    plural_name = 'spectra2d'
 
 
 class Run(Hierarchy):

@@ -212,9 +212,9 @@ def make_arrows(path, forwards: List[bool], descriptors=None):
     assert len(forwards) == len(path) - 1
     forward_arrow = '-[{name}{descriptor}]->'
     backward_arrow = '<-[{name}{descriptor}]-'
-    nodes = list(map('(:{})'.format, [p.__name__ for p in path]))
-    path_list = []
-    for i, (node, forward) in enumerate(zip(nodes[1:], forwards)):
+    nodes = list(map('(:{})'.format, [p.__name__ for p in path[1:]]))
+    path_list = ['({in_var})']
+    for i, (node, forward) in enumerate(zip(nodes, forwards)):
         arrow = forward_arrow if forward else backward_arrow
         if i == len(forwards) - 1:
             arrow = arrow.format(name='{name}', descriptor=descriptors[i])
@@ -222,7 +222,7 @@ def make_arrows(path, forwards: List[bool], descriptors=None):
             arrow = arrow.format(name="", descriptor=descriptors[i])
         path_list.append(arrow)
         path_list.append(node)
-    path_list = path_list[:-1]
+    path_list[-1] = path_list[-1].replace('(:', '({out_var}:')
     return ''.join(path_list)
 
 
@@ -346,7 +346,7 @@ class Data:
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
         try:
             paths, singulars = self._path_to_hierarchy(from_obj, to_obj, singular)
-            arrows = [make_arrows(path, [True]*len(path), descriptor) for path in paths]
+            arrows = [make_arrows(path, [True]*(len(path)-1), descriptor) for path in paths]
             if return_objs:
                 return arrows, singulars, paths
             return arrows, singulars

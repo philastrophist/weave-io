@@ -98,14 +98,15 @@ class ObjectQuery(GenericObjectQuery):
         plural = self._data.plural_name(obj)
         err_msg = f"There is no singular {obj} relative to {self._obj} try using its plural {plural}"
         try:
-            path, single, _ = self._get_path_to_object(obj, want_single)
+            paths, singles = self._get_path_to_object(obj, want_single)
+            single = len(singles) == 1 and singles[0]
         except NetworkXNoPath:
             if not want_single:
                 err_msg = f"There is no {obj} relative to {self._obj}"
             raise CardinalityError(err_msg)
         if not single and want_single:
             raise CardinalityError(err_msg)
-        n = self._G.add_traversal(self._node, path, obj, single)
+        n = self._G.add_traversal(self._node, paths, obj, single)
         return ObjectQuery._spawn(self, n, obj, single=want_single)
 
     def _traverse_by_object_index(self, obj, index):
@@ -117,7 +118,7 @@ class ObjectQuery(GenericObjectQuery):
         e.g. `obs[1234]` filters to the single ob with obid=1234
         """
         param = self._G.add_parameter(index)
-        path, single, _ = self._get_path_to_object(obj, False)
+        path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}')
@@ -126,7 +127,7 @@ class ObjectQuery(GenericObjectQuery):
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         param = self._G.add_parameter(indexes)
-        path, single, _ = self._get_path_to_object(obj, False)
+        path, single = self._get_path_to_object(obj, False)
         one_id = self._G.add_unwind_parameter(self._node, param)
         travel = self._G.add_traversal(self._node, path, obj, single, one_id)
         i = self._G.add_getitem(travel, 'id')
@@ -202,7 +203,7 @@ class ObjectQuery(GenericObjectQuery):
         """
         obj, obj_singular = self._normalise_object(obj)
         singular_name = self._data.singular_name(index)
-        path, single, _ = self._get_path_to_object(obj, False)
+        path, single = self._get_path_to_object(obj, False)
         if not single and singular_name == index:
             raise SyntaxError(f"Relative index `{index}` is plural relative to `{self._obj}`.")
         n = self._G.add_traversal(self._node, path, obj, False)
