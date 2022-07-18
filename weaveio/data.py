@@ -321,13 +321,14 @@ class Data:
         """
         paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj))
         singulars = [any((nx.shortest_path_length(self.hierarchy_graph, *e, 'weight') or 1) > 1 for e in nx.utils.pairwise(path)) for path in paths]
+        paths, reversed = zip(*[(path[::-1], True) if path[0] is to_obj else (path, False) for path in paths])
         if singular:
-            paths, singulars = zip(*[(path, s) for path, s in zip(paths, singulars) if s <= 1])
+            paths, singulars, reversed = zip(*[(path, s, r) for path, s, r in zip(paths, singulars, reversed) if s <= 1])
         if not paths:
             if singular:
                 raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")
             raise NetworkXNoPath(f"No path found between `{from_obj}` and `{to_obj}`")
-        return paths, singulars
+        return paths, singulars, reversed
 
 
     def parents_of_defined_child(self, potential_child: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
@@ -345,8 +346,8 @@ class Data:
         a, b = map(self.singular_name, [from_obj, to_obj])
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
         try:
-            paths, singulars = self._path_to_hierarchy(from_obj, to_obj, singular)
-            arrows = [make_arrows(path, [True]*(len(path)-1), descriptor) for path in paths]
+            paths, singulars, reversed = self._path_to_hierarchy(from_obj, to_obj, singular)
+            arrows = [make_arrows(path, [not r]*(len(path)-1), descriptor) for path, r in zip(paths, reversed)]
             if return_objs:
                 return arrows, singulars, paths
             return arrows, singulars
