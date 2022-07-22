@@ -144,7 +144,7 @@ def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
     reduced_paths = set()
     for ip, path in enumerate(_paths):
         edges = edges_from_path(G, path, weight)
-        reduced_path = [edge[0] for edge in edges if graph.edges[edge]['type'] not in ['is_a', 'subclassed_by']]
+        reduced_path = [edge[0] for edge in edges if G.edges[edge]['type'] not in ['is_a', 'subclassed_by']]
         reduced_paths.add((*reduced_path, path[-1]))
     return {path[::-1] for path in reduced_paths}
 
@@ -314,7 +314,7 @@ class HierarchyGraph(nx.MultiDiGraph):
                 raise nx.NetworkXNoPath(f"No unidirectional path between {a} and {b}")
 
     def sort_deepest(self, a, b):
-        """Returns a or b, whichever is the deepest in the graph"""
+        """Returns [a, b] or [b, a], in order of increasing depth in the graph"""
         if a not in self:
             raise nx.NodeNotFound(f"Node {a} not found in graph")
         if b not in self:
@@ -326,7 +326,7 @@ class HierarchyGraph(nx.MultiDiGraph):
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
 
-    def find_paths(self, a, b):
+    def find_paths(self, a, b, singular):
         """
         Returns a set of paths from a to b
         Not all paths are guaranteed to be valid, for example:
@@ -335,10 +335,20 @@ class HierarchyGraph(nx.MultiDiGraph):
             (through single,stack,superstack,supertarget).
             When queried, invalid paths will yield 0 results so it is not a problem.
         """
+        if singular:
+            G = self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] == 0)
+        else:
+            G = self
         try:
-            return find_paths(self.nonoptional, a, b)
+            return find_paths(G.nonoptional, a, b)
         except nx.NetworkXNoPath:
-            return find_paths(self, a, b)
+            return find_paths(G, a, b)
+
+    def edge_weights(self, path) -> List[int]:
+        return [nx.shortest_path_length(self, *e, 'weight') for e in nx.utils.pairwise(path)]
+
+    def path_is_singular(self, path) -> bool:
+        return not any(e > 0 for e in self.edge_weights(path))
 
 
 def get_all_class_bases(cls: Type[Graphable]) -> Set[Type[Graphable]]:

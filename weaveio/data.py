@@ -319,11 +319,9 @@ class Data:
             If more than one path is returned, throw an ambiguous path exception
 
         """
-        paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj))
-        singulars = [any((nx.shortest_path_length(self.hierarchy_graph, *e, 'weight') or 1) > 1 for e in nx.utils.pairwise(path)) for path in paths]
+        paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj, singular))
         paths, reversed = zip(*[(path[::-1], True) if path[0] is to_obj else (path, False) for path in paths])
-        if singular:
-            paths, singulars, reversed = zip(*[(path, s, r) for path, s, r in zip(paths, singulars, reversed) if s <= 1])
+        singulars = [self.hierarchy_graph.path_is_singular(path) for path in paths]
         if not paths:
             if singular:
                 raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")

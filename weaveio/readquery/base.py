@@ -149,19 +149,32 @@ class BaseQuery:
                 * any of those objects don't have the same inherited class - raise AmbiguousError
                 * only subclass objects and all subclass objects from a superclass contain the attribute - return the superclass
                 * only subclass objects and not all subclass objects from a superclass contain the attribute - return the superclass
+        If a singular path exists, use that
         :return: obj, obj_is_singular, attr_is_singular
         """
         single_name = self._data.singular_name(maybe_attribute)
-        hs = {h for h in self._data.factor_hierarchies[single_name]}
-        if self._obj in {h.__name__ for h in hs}:
+        if self._data.class_hierarchies[self._obj] in self._data.factor_hierarchies[single_name]:
             return self._obj, True, self._data.is_singular_name(maybe_attribute)
+        want_single = single_name == maybe_attribute
+        # try to get singular paths
+        hs = {h for h in self._data.factor_hierarchies[single_name] if self._has_path_to_object(h, True)}
+        if len(hs) == 0: # if no singular paths then get all paths
+            hs = {h for h in self._data.factor_hierarchies[single_name] if self._has_path_to_object(h, want_single)}
+        # elif len(hs) > 1:  # if more than one singular path, raise AmbiguousPathError
+        #     raise AmbiguousPathError(f"`{single_name}` is contained within more than one unrelated object {[h.__name__ for h in hs]}. Be specific.")
         hs = set(collapse_classes_to_superclasses(self._data.hierarchy_graph, hs))
-        if not hs:
-            raise KeyError(f"`{single_name}` not found in hierarchy graph")
+        # loop = [True] if want_single else [True, False]
+        # for single in loop:
+        #     hs = self._data.factor_hierarchies[single_name]
+        #     hs = {h for h in collapse_classes_to_superclasses(self._data.hierarchy_graph, hs) if self._has_path_to_object(h, single)}
+        #     if not hs:
+        #         raise KeyError(f"`{single_name}` not found in hierarchy graph")
         if len(hs) == 1:
             obj = hs.pop().__name__
+            # break
         else:
-            raise AmbiguousPathError(f"`{single_name}` is contained within more than one unrelated object {hs}. Be specific.")
+            raise AmbiguousPathError(f"`{single_name}` is contained within more than one unrelated object {[h.__name__ for h in hs]}. Be specific.")
+
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):
@@ -220,6 +233,12 @@ class BaseQuery:
 
     def _get_path_to_object(self, obj, want_single) -> Tuple[List[str], List[bool]]:
         return self._data.paths_to_hierarchy(self._obj, obj, want_single)
+
+    def _has_path_to_object(self, obj, want_single) -> bool:
+        try:
+            return len(self._get_path_to_object(obj, want_single)[0]) > 0
+        except NetworkXNoPath:
+            return False
 
     def _slice(self, slc):
         """
