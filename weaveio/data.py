@@ -320,12 +320,12 @@ class Data:
 
         """
         paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj, singular))
-        paths, reversed = zip(*[(path[::-1], True) if path[0] is to_obj else (path, False) for path in paths])
-        singulars = [self.hierarchy_graph.path_is_singular(path) for path in paths]
         if not paths:
             if singular:
                 raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")
             raise NetworkXNoPath(f"No path found between `{from_obj}` and `{to_obj}`")
+        paths, reversed = zip(*[(path[::-1], True) if path[0] is to_obj else (path, False) for path in paths])
+        singulars = [self.hierarchy_graph.path_is_singular(path) for path in paths]
         return paths, singulars, reversed
 
 

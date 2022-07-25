@@ -335,7 +335,7 @@ class Query(GenericObjectQuery):
         param = self._G.add_parameter(indexes)
         one_id = self._G.add_unwind_parameter(self._node, param)
         travel = self._G.add_start_node(obj, one_id)
-        i = self._G.add_getitem(travel, 'id')
+        i = self._G.add_getitem(travel, self._data.class_hierarchies[obj].idname)
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)

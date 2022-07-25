@@ -135,8 +135,8 @@ def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
         (through single,stack,superstack,supertarget).
         When queried, invalid paths will yield 0 results so it is not a problem.
     """
-    sorted_nodes = graph.sort_deepest(a, b)
-    G = graph.parents_and_inheritance.reverse()
+    *sorted_nodes, G, use_children = graph.sort_deepest(a, b)
+    G = G.reverse()
     _paths = find_forking_path(G, *sorted_nodes, weight)
     # put in requested order (a-->b)
     # now remove chains of is_a
@@ -146,7 +146,9 @@ def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
         edges = edges_from_path(G, path, weight)
         reduced_path = [edge[0] for edge in edges if G.edges[edge]['type'] not in ['is_a', 'subclassed_by']]
         reduced_paths.add((*reduced_path, path[-1]))
-    return {path[::-1] for path in reduced_paths}
+    if not use_children:
+        return {path[::-1] for path in reduced_paths}
+    return reduced_paths
 
 
 class HierarchyGraph(nx.MultiDiGraph):
@@ -243,12 +245,12 @@ class HierarchyGraph(nx.MultiDiGraph):
         """
         self.add_node(hierarchy)
         for parent in hierarchy.parents:
-            if hierarchy is parent:
+            if normalise_relation(hierarchy)[1] is parent:
                 self._add_self_reference(parent)
             else:
                 self._add_parent(hierarchy, parent)
         for child in hierarchy.children:
-            if hierarchy is child:
+            if normalise_relation(hierarchy)[1] is child:
                 self._add_self_reference(child)
             else:
                 self._add_child(hierarchy, child)
@@ -298,35 +300,24 @@ class HierarchyGraph(nx.MultiDiGraph):
         return self.subgraph_view(filter_edge=func)
 
     @property
-    def children_and_inheritance(self):
-        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_child_of' or 'is_a' == self.edges[e]['type']).copy()
-
-    @property
     def nonoptional(self):
         return self.subgraph_view(filter_edge=lambda *e: not self.edges[e]['optional']).copy()
 
-    def shortest_unidirectional_paths(self, a, b, weight=None):
-        """Returns a generator of unidirectional paths between a and b where a and b can both be source or target"""
-        ab = shortest_simple_paths(self.parents_and_inheritance, a, b, weight)
-        ba = shortest_simple_paths(self.children_and_inheritance, a, b, weight)
-        for x, y in zip_longest(ab, ba):
-            if x is not None:
-                yield x
-            if y is not None:
-                yield y
-            if x is None and y is None:
-                raise nx.NetworkXNoPath(f"No unidirectional path between {a} and {b}")
-
     def sort_deepest(self, a, b):
         """Returns [a, b] or [b, a], in order of increasing depth in the graph"""
+
         if a not in self:
-            raise nx.NodeNotFound(f"Node {a} not found in graph")
+            raise nx.NodeNotFound(f"Node {a} not found in graph {self}")
         if b not in self:
-            raise nx.NodeNotFound(f"Node {b} not found in graph")
+            raise nx.NodeNotFound(f"Node {b} not found in graph {self}")
         if b in nx.ancestors(self.parents_and_inheritance, a):
-            return b, a
+            return b, a, self.parents_and_inheritance, False
         elif a in nx.ancestors(self.parents_and_inheritance, b):
-            return a, b
+            return a, b, self.parents_and_inheritance, False
+        elif a in nx.ancestors(self.children_and_inheritance, b):
+            return a, b, self.children_and_inheritance, True
+        elif b in nx.ancestors(self.children_and_inheritance, a):
+            return b, a, self.children_and_inheritance, True
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
 
