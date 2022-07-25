@@ -286,6 +286,10 @@ class HierarchyGraph(nx.MultiDiGraph):
         return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_parent_of' or 'is_a' == self.edges[e]['type']).copy()
 
     @property
+    def children_and_inheritance(self):
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['type'] == 'is_child_of' or 'is_a' == self.edges[e]['type']).copy()
+
+    @property
     def traversal(self):
         def func(u, v):
             edge = self.edges[u, v]
@@ -325,6 +329,10 @@ class HierarchyGraph(nx.MultiDiGraph):
             return a, b
         else:
             raise nx.NetworkXNoPath(f"There is no path between {a} and {b}")
+
+    def short_edge(self, a, b, weight=None):
+        """return the shortest edge in the multidigraph for a given digraph edge """
+        return pick_shortest_multiedge(self, a, b, weight)
 
     def find_paths(self, a, b, singular):
         """
