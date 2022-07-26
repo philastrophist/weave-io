@@ -9,6 +9,7 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
+import collections
 from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
 
 from networkx import NetworkXNoPath
@@ -224,6 +225,7 @@ class ObjectQuery(GenericObjectQuery):
         raise NotImplementedError
 
     def _getitems(self, items, by_getitem):
+        # can be called with items signifying columns or where items are indexes, need to distinguish here
         if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
         if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in items):
@@ -237,8 +239,8 @@ class ObjectQuery(GenericObjectQuery):
         """
         item can be an id, a factor name, a list of those, a slice, or a boolean_mask
         """
-        if isinstance(item, (tuple, list)):
-            return self._getitems(item, by_getitem)
+        if isinstance(item, collections.Iterable) and not isinstance(item, (str, BaseQuery)):
+            return self._getitems(list(iter(item)), by_getitem)
         elif isinstance(item, slice):
             return self._slice(item)
         elif isinstance(item, AttributeQuery):
