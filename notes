@@ -1,0 +1,39 @@
+
+- There is an exposure with more than one OB
+
+- Counting avg number of relations between ingested-l1single yields more than 1 because combinedingested is a type of ingested
+- path finding doesnt take into account generic traversals (ingested<-l1single<-camera is not correct, it should be ingested<-l1spectrum<-camera)
+- you currently cannot do generics: l1single.ingested.l1spectrum
+- single->noss<-stack are still possible
+
+- why is `l2stack<-l1stack->ingested` allowed and `single->noss<-stack` is not?
+     because the first path is definite, whereas the second uses a template
+
+
+graph properties:
+    - no cycles apart from self-cycles
+    - real graph is DAG apart from self-cycles
+    - 
+
+
+
+
+principles:
+    * Use as few files as possible - solution=add files to graph one at a time and do path finding each time
+    * only allow unidirectional paths - solution=do two searches: up & down
+    * prefer non-optional relations - solution=look for non-optional paths, then allow optional paths
+    * shortest path in terms of weight
+    * Must use the most template node if available
+
+
+
+
+steps:
+    split ingested -> [singleingested, combinedingested]
+    add guidenumber to multiples?
+
+
+put templates into relation graph when they are used as a parent/child
+
+
+get all shortest paths by weight (where inheritance has 0 weight)

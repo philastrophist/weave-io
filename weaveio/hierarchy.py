@@ -6,6 +6,8 @@ from functools import wraps, partial, reduce
 from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
 from warnings import warn
 
+import networkx as nx
+
 from . import writequery
 from .writequery import CypherQuery, Unwind, Collection, CypherVariable
 from .context import ContextError
@@ -64,14 +66,17 @@ def all_subclasses(cls):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False):
+    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False, notreal=False):
         self.node = node
         self.minnumber = int_or_none(minnumber) or 0
+        if maxnumber is None:
+            warn(f"maxnumber is None for {node}", RuntimeWarning)
         self.maxnumber = int_or_none(maxnumber)
         self.constrain = [] if constrain is None else (constrain, ) if not isinstance(constrain, (list, tuple)) else tuple(constrain)
         self.relation_idname = idname
         self.one2one = one2one
         self._isself = self.node == 'self'
+        self.notreal = notreal
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
@@ -243,10 +248,6 @@ class GraphableMeta(type):
                         p = p.singular_name
                 if p in parentnames:
                     mn, mx = parentnames[p]
-                    # if mn == 0:
-                    #     raise RuleBreakingException(f"Cannot make an id from an optional (min=0) parent for {name}")
-                    # if mx != mn:
-                    #     raise RuleBreakingException(f"Cannot make an id from an unbound (max!=min) parent for {name}")
                 elif p in cls.factors:
                     pass
                 else:
@@ -284,6 +285,7 @@ class GraphableMeta(type):
             if isinstance(relative, Multiple):
                 if relative.relation_idname is not None:
                     cls.relative_names[relative.relation_idname] = relative
+
         super().__init__(name, bases, dct)
 
 
@@ -644,7 +646,7 @@ class Hierarchy(Graphable):
         # add any data held in a neo4j unwind table
         for k, v in self.specification.items():
             if k not in kwargs:
-                if isinstance(v, Multiple) and v.minnumber == 0:  # i.e. optional
+                if isinstance(v, Multiple) and (v.minnumber == 0 or v.notreal):  # i.e. optional
                     continue
                 if tables is not None:
                     kwargs[k] = tables.get(tables_replace.get(k, k), alias=False)
@@ -654,7 +656,7 @@ class Hierarchy(Graphable):
         successors = {}
         for name, nodetype in self.specification.items():
             if isinstance(nodetype, Multiple):
-                if nodetype.minnumber == 0 and name not in kwargs:
+                if (nodetype.minnumber == 0 or nodetype.notreal) and name not in kwargs:
                     continue
             if do_not_create:
                 value = kwargs.pop(name, None)

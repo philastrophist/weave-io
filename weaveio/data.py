@@ -16,13 +16,14 @@ import py2neo
 import textdistance
 from networkx import NetworkXNoPath, NodeNotFound
 from networkx.drawing.nx_pydot import to_pydot
+from operator import mul
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from .file import File, HDU
 from .graph import Graph
 from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
-from .path_finding import find_path
+from .path_finding import HierarchyGraph, get_all_class_bases
 from .readquery import Query
 from .readquery.exceptions import UserError, CardinalityError
 from .readquery.results import RowParser
@@ -32,14 +33,6 @@ from .writequery import Unwind
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
 
-def get_all_class_bases(cls: Type[Graphable]) -> Set[Type[Graphable]]:
-    new = set()
-    for b in cls.__bases__:
-        if b is Graphable or not issubclass(b, Graphable):
-            continue
-        new.add(b)
-        new.update(get_all_class_bases(b))
-    return new
 
 def process_neo4j_error(data: 'Data', file: File, msg):
     matches = CONSTRAINT_FAILURE.findall(msg)
@@ -219,9 +212,9 @@ def make_arrows(path, forwards: List[bool], descriptors=None):
     assert len(forwards) == len(path) - 1
     forward_arrow = '-[{name}{descriptor}]->'
     backward_arrow = '<-[{name}{descriptor}]-'
-    nodes = list(map('(:{})'.format, [p.__name__ for p in path]))
-    path_list = []
-    for i, (node, forward) in enumerate(zip(nodes[1:], forwards)):
+    nodes = list(map('(:{})'.format, [p.__name__ for p in path[1:]]))
+    path_list = ['({in_var})']
+    for i, (node, forward) in enumerate(zip(nodes, forwards)):
         arrow = forward_arrow if forward else backward_arrow
         if i == len(forwards) - 1:
             arrow = arrow.format(name='{name}', descriptor=descriptors[i])
@@ -229,7 +222,7 @@ def make_arrows(path, forwards: List[bool], descriptors=None):
             arrow = arrow.format(name="", descriptor=descriptors[i])
         path_list.append(arrow)
         path_list.append(node)
-    path_list = path_list[:-1]
+    path_list[-1] = path_list[-1].replace('(:', '({out_var}:')
     return ''.join(path_list)
 
 
@@ -255,13 +248,11 @@ class Data:
         self.query = Query(self)
         self.rowparser = RowParser(self.rootdir)
         self.filelists = {}
-        self.relation_graphs = []
-        for i, f in enumerate(self.filetypes):
-            hs = hierarchies_from_files(*self.filetypes[:i+1])
-            self.relation_graphs.append(make_relation_graph(hs))
+        self.hierarchy_graph = HierarchyGraph()
+        self.hierarchy_graph.initialise()
         if self.filetypes:
             self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
-            self.hierarchies.update({hh for h in self.hierarchies  for hh in get_all_class_bases(h)})
+            self.hierarchies.update({hh for h in self.hierarchies for hh in get_all_class_bases(h)})
         else:
             self.hierarchies = set()
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
@@ -285,24 +276,6 @@ class Data:
                 self.relative_names[name][h.__name__] = relation
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
-        self.setup_cardinality()
-
-    def setup_cardinality(self):
-        multiples = [(a, b) for a, b, d in self.relation_graphs[-1].edges(data=True) if 'relation' in d]
-        forward_q = "MATCH (a:{})-[r:is_required_by]->(:{}) with a, count(r) as cnt with avg(cnt) as cnt RETURN CASE WHEN cnt is null THEN 0 ELSE cnt END"
-        backward_q = "MATCH (:{})-[r:is_required_by]->(a:{}) with a, count(r) as cnt with avg(cnt) as cnt RETURN CASE WHEN cnt is null THEN 0 ELSE cnt END"
-        for (a, b) in tqdm(multiples):
-            forward_n = self.graph.execute(forward_q.format(a.__name__, b.__name__)).evaluate()
-            backward_n = self.graph.execute(backward_q.format(a.__name__, b.__name__)).evaluate()
-            for g in self.relation_graphs:
-                try:
-                    g.edges[a, b]['actual_number'] = forward_n
-                    g.edges[b, a]['actual_number'] = backward_n
-                except KeyError:
-                    pass
-        for g in self.relation_graphs:
-            for edge in g.edges:
-                g.edges[edge]['weight'] = g.edges[edge]['actual_number'] if g.edges[edge]['actual_number'] > 1 else 1
 
     @property
     def verbose(self):
@@ -331,7 +304,7 @@ class Data:
                 expanded_dependencies.add(o)
         return {o.__name__ for o in parents if o in expanded_dependencies}
 
-    def _path_to_hierarchy(self, g:nx.DiGraph, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
+    def _path_to_hierarchy(self, from_obj: Type[Hierarchy], to_obj:  Type[Hierarchy], singular: bool):
         """
         When searching for a path, the target is either above or below the source in one direction only
         If the target is defined as a child by another, then the search is redefined as for the predecessors of that child
@@ -346,7 +319,15 @@ class Data:
             If more than one path is returned, throw an ambiguous path exception
 
         """
-        return find_path(g, from_obj, to_obj, singular)
+        paths = list(self.hierarchy_graph.find_paths(from_obj, to_obj, singular))
+        if not paths:
+            if singular:
+                raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")
+            raise NetworkXNoPath(f"No path found between `{from_obj}` and `{to_obj}`")
+        paths, reversed = zip(*[(path[::-1], True) if path[0] is to_obj else (path, False) for path in paths])
+        singulars = [self.hierarchy_graph.path_is_singular(path) for path in paths]
+        return paths, singulars, reversed
+
 
     def parents_of_defined_child(self, potential_child: Type[Hierarchy]) -> Set[Type[Hierarchy]]:
         parents = {h for h in self.hierarchies if potential_child in [c.node if isinstance(c, Multiple) else c for c in h.children]}
@@ -359,22 +340,16 @@ class Data:
         except KeyError:
             return False
 
-    def path_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
+    def paths_to_hierarchy(self, from_obj: str, to_obj: str, singular: bool, descriptor=None, return_objs=False):
         a, b = map(self.singular_name, [from_obj, to_obj])
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
-        for level, g in enumerate(self.relation_graphs):
-            if from_obj in g and to_obj in g:
-                break
-        else:
-            raise nx.NodeNotFound(f"One of {from_obj} or {to_obj} is not in the graph".format(from_obj, to_obj))
         try:
-            path = self._path_to_hierarchy(g, from_obj, to_obj, singular)
-            singular = all(g.edges[(a, b)]['singular'] for a, b in zip(path[:-1], path[1:]))
-            forwards = ['relation' not in g.edges[edge] for edge in zip(path[:-1], path[1:])]
-            arrows = make_arrows(path, [not f for f in forwards], descriptor)
+            paths, singulars, reversed = self._path_to_hierarchy(from_obj, to_obj, singular)
+            # TODO: make it so that path singularity is checked after reversal
+            arrows = [make_arrows(path, [not r]*(len(path)-1), descriptor) for path, r in zip(paths, reversed)]
             if return_objs:
-                return arrows, singular, level, path
-            return arrows, singular, level
+                return arrows, singulars, paths
+            return arrows, singulars
         except nx.NetworkXNoPath:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
@@ -383,7 +358,7 @@ class Data:
             from_ = self.singular_name(a.lower())
             raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
                                 f"This may be because it doesn't make sense for `{from_}` to have {to}. "
-                                f"Try checking the cardinalty of your query.")
+                                f"Try checking the cardinality of your query.")
 
     def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
         hierarchy = self.class_hierarchies[self.class_name(hierarchy)]
@@ -475,7 +450,6 @@ class Data:
         if return_only_fname:
             return result
         return list(map(lambda x: self.rootdir / x, result))
-
 
     def raise_collisions(self):
         """
@@ -871,7 +845,7 @@ class Data:
             newsuggestions = []
             if relative_to is not None:
                 try:
-                    self.path_to_hierarchy(relative_to, h_singular_name, singular=True)
+                    self.paths_to_hierarchy(relative_to, h_singular_name, singular=True)
                 except NetworkXNoPath:
                     hier = h.singular_name
                     factors = h.products_and_factors

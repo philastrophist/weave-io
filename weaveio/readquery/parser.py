@@ -344,8 +344,8 @@ class QueryGraph:
         statement = StartingMatch(node_type, unwound, self)
         return add_traversal(self.G, parent_node, statement, unwound=unwound)
 
-    def add_traversal(self, parent_node, path: str, end_node_type: str, single=False, unwound=None):
-        statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, path, unwound, self)
+    def add_traversal(self, parent_node, paths: List[str], end_node_type: str, single=False, unwound=None):
+        statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, paths, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
     def add_union_traversal(self, parent_node, paths: Dict[str, str], end_node_type: str, single=False, unwound=None):

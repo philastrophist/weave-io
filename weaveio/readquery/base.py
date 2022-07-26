@@ -1,13 +1,17 @@
 import logging
 import time
+from collections import defaultdict
 from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 
+import networkx as nx
 from networkx import NetworkXNoPath, NodeNotFound
+from weaveio.hierarchy import Hierarchy
 
 from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
 from .parser import QueryGraph
 from .results import Table
+from ..path_finding import collapse_classes_to_superclasses
 
 if TYPE_CHECKING:
     from .objects import ObjectQuery, Query, AttributeQuery
@@ -131,50 +135,45 @@ class BaseQuery:
     def _get_object_of(self, maybe_attribute: str) -> Tuple[str, bool, bool]:
         """
         Given a str that might refer to an attribute, return the object that contains that attribute
-        and also whether the attribute and the object are singular
-        inferred obj | attr
-            s        |  s      (i.e. run.obid -> run.ob.obid)
-            p        |  p      (i.e. ...-> run.l1specs.snrs) - cannot be inferred just from a name
-            s        |  p      (i.e. run.obids -> run.ob.obids)
-            p        |  s      (i.e. run.snr -> run.l1spec.snr) - is not allowed
-         :return: obj, obj_is_singular, attr_is_singular
+        and also whether the attribute and the object are singular.
+        plurality table:
+            inferred obj | attr
+                s        |  s      (i.e. run.obid -> run.ob.obid)
+                p        |  p      (i.e. ...-> run.l1specs.snrs) - cannot be inferred just from a name
+                s        |  p      (i.e. run.obids -> run.ob.obids)
+                p        |  s      (i.e. run.snr -> run.l1spec.snr) - is not allowed
+        attribute storage scenarios:
+            * attribute is contained in this object - return self
+            * attribute is contained in exactly one object - return object
+            * attribute is contained in more than one object and ...
+                * any of those objects don't have the same inherited class - raise AmbiguousError
+                * only subclass objects and all subclass objects from a superclass contain the attribute - return the superclass
+                * only subclass objects and not all subclass objects from a superclass contain the attribute - return the superclass
+        If a singular path exists, use that
+        :return: obj, obj_is_singular, attr_is_singular
         """
         single_name = self._data.singular_name(maybe_attribute)
-        hs = {h.__name__ for h in self._data.factor_hierarchies[single_name]}
-        if self._obj in hs:
-            return self._obj, True, self._data.is_singular_name(maybe_attribute)
-        # find the objects that are linked to this one and sort them by the amount of data they require
-        new_hs = []
-        for H in hs:
-            for h in self._data.expand_template_object(H):
-                try:
-                    _, sing, level = self._get_path_to_object(h, False)
-                    new_hs.append((h, sing, level))
-                except (NetworkXNoPath, NodeNotFound):
-                    pass
-        _, singulars, levels = zip(*new_hs)
-        new_hs.sort(key=lambda x: x[-1])
-        if sum(singulars) == 1:
-            # if there is exactly one singular hierarchy, choose it
-            obj = min(new_hs, key=lambda x: x[-1])[0]
+        if self._obj is not None:
+            if self._data.class_hierarchies[self._obj] in self._data.factor_hierarchies[single_name]:
+                return self._obj, True, self._data.is_singular_name(maybe_attribute)
+        want_single = single_name == maybe_attribute
+        # try to get singular paths
+        hs = {h for h in self._data.factor_hierarchies[single_name] if self._has_path_to_object(h, True)}
+        if len(hs) == 0: # if no singular paths then get all paths
+            hs = {h for h in self._data.factor_hierarchies[single_name] if self._has_path_to_object(h, want_single)}
+        hs = set(collapse_classes_to_superclasses(self._data.hierarchy_graph, hs))
+        if len(hs) == 1:
+            obj = hs.pop().__name__
+        elif not hs:
+            raise AmbiguousPathError(f"There is no path to any object that contains `{single_name}`. {self._data.factor_hierarchies[single_name]} are not reachable")
         else:
-            # otherwise, filter to the least data required
-            lowest_level = min(levels)
-            hs = [h for h, _, l in new_hs if l == lowest_level]  # pick the objs with the smallest data requirement
-            if len(hs) > 1:
-                names = [self._data.singular_name(h) for h in hs]
-                raise AmbiguousPathError(f"There are multiple attributes called {maybe_attribute} with the following parent objects: {names}."
-                                         f" Please be specific e.g. `{names[0]}.{maybe_attribute}`")
-            try:
-                obj = hs[0]
-            except IndexError:
-                # there arent any
-                raise AttributeNameError(f"{self._obj} has no access to an attribute called {maybe_attribute}")
+            raise AmbiguousPathError(f"`{single_name}` is contained within more than one unrelated object {[h.__name__ for h in hs]}. Be specific.")
         if self._obj is None:
             return obj, True, False
         if not self._data.is_factor_name(maybe_attribute):
             raise ValueError(f"{maybe_attribute} is not a valid attribute name")
-        path, obj_is_singular, _ = self._data.path_to_hierarchy(self._obj, obj, False)
+        _, obj_is_singulars = self._get_path_to_object(obj, False)
+        obj_is_singular = len(obj_is_singulars) == 1 and obj_is_singulars[0]
         attr_is_singular = self._data.is_singular_name(maybe_attribute)
         if obj_is_singular and attr_is_singular:
             pass  # run.obid -> run.ob.obid
@@ -225,8 +224,16 @@ class BaseQuery:
     def _spawn(cls, parent: 'BaseQuery', node, obj=None, index_node=None, single=False, *args, **kwargs):
         return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
-    def _get_path_to_object(self, obj, want_single) -> Tuple[str, bool, int]:
-        return self._data.path_to_hierarchy(self._obj, obj, want_single)
+    def _get_path_to_object(self, obj, want_single) -> Tuple[List[str], List[bool]]:
+        return self._data.paths_to_hierarchy(self._obj, obj, want_single)
+
+    def _has_path_to_object(self, obj, want_single) -> bool:
+        if self._obj is None:
+            return True
+        try:
+            return len(self._get_path_to_object(obj, want_single)[0]) > 0
+        except NetworkXNoPath:
+            return False
 
     def _slice(self, slc):
         """
