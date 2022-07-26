@@ -1,8 +1,20 @@
+from weaveio import *
 from weaveio.opr3 import Data
+from astropy.table import Table
 
 data = Data()
-# paths, singulars = data.paths_to_hierarchy('Run',  'L1SingleSpectrum', True)
-# for p, s in zip(paths, singulars):
-#     print(p, s)
-q = data.runs.l1_spectra.wvl
-print('\n'.join(q._precompile()._to_cypher()[0]))
+
+
+table = Table.read('my_table.ascii', format='ascii')
+targets = data.runs.weave_targets[table['cname']]
+
+
+# mjds = spectra.exposure.mjd
+# print(targets[['cname', count(mjds, wrt=targets), mjds]]())
+# for w, f in zip(spectra[['wvl', 'flux']], table['modelMag_i']):
+
+q = targets[['run.id', 'cname']]
+
+cypher, params = q._precompile()._to_cypher()
+print('\n'.join(cypher))
+print(q())

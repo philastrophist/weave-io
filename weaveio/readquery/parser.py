@@ -348,12 +348,6 @@ class QueryGraph:
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, paths, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
-    def add_union_traversal(self, parent_node, paths: Dict[str, str], end_node_type: str, single=False, unwound=None):
-        if len(paths) == 1:
-            return self.add_traversal(parent_node, paths[list(paths.keys())[0]], end_node_type, single=single, unwound=unwound)
-        statement = UnionTraversal(self.G.nodes[parent_node]['variables'][0], paths, end_node_type, unwound, self)
-        return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
-
     def fold_to_cardinal(self, parent_node):
         """
         Adds a fake aggregation such that a node can be used as a dependency later.

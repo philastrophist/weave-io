@@ -73,9 +73,11 @@ class Traversal(Statement):
         self.string_paths = '.'.join(paths)
         self.to_node = self.make_variable(to_node_type)
         self.using_edge = self.make_variable('edge')
-        self.unwound = unwound
+        self.unwound = unwound  # this is only here to record dependency, the statement doesnt actually use it
 
     def make_cypher(self, ordering: list) -> str:
+        if not self.string_paths:
+            return f'OPTIONAL MATCH ({self.to_node}:{self.to_node_type})'
         paths = [path.format(in_var=self.from_variable, out_var=self.to_node, name=self.using_edge) for path in self.paths]
         statements = [f'OPTIONAL MATCH {path}' for path in paths]
         if len(statements) == 1:
