@@ -7,15 +7,17 @@ from weaveio.readquery.uploads import join
 data = Data()
 
 
-table = Table.read('my_table.ascii', format='ascii')
+table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
 
 rows, targets = join(table, 'cname', data.weave_targets, 'cname', join_type='left')
-# targets = targets[~isnull(rows.cname)]
-# q = targets[['cname', rows['type']]]
-# find parent, unwind
+# # targets = targets[~isnull(rows.cname)]
+# # q = targets[['cname', rows['type']]]
+# # find parent, unwind
 spectra = targets.l1single_spectra#[targets.l1single_spectra.mag_i > rows['modelMag_i']]
 spectra = spectra[rows['modelMag_i'] > spectra.snr]
-q = spectra[['cname', 'camera', 'exposure.mjd', rows['modelMag_i'], spectra.snr]]
+q = targets[['cname', count(spectra[spectra.camera == 'blue'], wrt=targets), rows['modelMag_i']]]
+# q = spectra[['cname', 'camera', 'exposure.mjd', rows['modelMag_i'], spectra.snr]]
+
 
 
 # mjds = spectra.exposure.mjd

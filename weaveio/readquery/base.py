@@ -10,7 +10,7 @@ from weaveio.hierarchy import Hierarchy
 
 from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
 from .parser import QueryGraph
-from .results import Table
+from .results import Table, AstropyTable
 from ..path_finding import collapse_classes_to_superclasses
 
 if TYPE_CHECKING:
@@ -42,11 +42,25 @@ class BaseQuery:
     def _precompile(self) -> 'BaseQuery':
         return self
 
+    def _prepare_parameters(self, lines):
+        params = {}
+        aliases = self._G.get_unwind_variables(self._node)
+        for k, v in self._G.parameters.items():
+            if any(k in l for l in lines):
+                if isinstance(v, AstropyTable):
+                    cols = [c for c in v.colnames if any(f"{aliases[k]}.`{c}`" in l for l in lines)]
+                    assert len(cols), "No columns are used, but table is used. This should not happen"
+                    params[k] = v[cols]
+                else:
+                    params[k] = v
+        return params
+
     def _to_cypher(self) -> Tuple[List[str], Dict[str, Any]]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
-        return self._G.cypher_lines(self._node), self._G.parameters
+        lines = self._G.cypher_lines(self._node)
+        return lines, self._prepare_parameters(lines)
 
     def _compile(self) -> Tuple['BaseQuery', Tuple[List[str], Dict[str, Any]]]:
         with logtime('compiling'):

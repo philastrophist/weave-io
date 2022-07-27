@@ -1,8 +1,11 @@
 from collections import defaultdict
 from typing import List, Tuple, Dict
+from pathlib import Path
+import warnings
 
 import networkx as nx
-from pathlib import Path
+import pandas as pd
+from astropy.table import Table
 
 from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
@@ -496,6 +499,14 @@ class QueryGraph:
         return add_return(self.G, self.start, column_nodes, statement)
 
     def add_parameter(self, value, name=None):
+        if isinstance(value, pd.DataFrame):
+            value = Table.from_pandas(value)
+        if isinstance(value, Table):
+            # limit column multidimensional sizes to 100
+            allowed_cols = [c for c in value.colnames if sum(value[c].shape) / len(value) <= 100]
+            if allowed_cols != value.colnames:
+                warnings.warn(f"Columns {set(value.colnames) - set(allowed_cols)} were dropped due to size limitations (>=100)")
+                value = value[allowed_cols]
         if value in self.parameters.values():
             return [k for k, v in self.parameters.items() if v == value][0]
         name = f'${name}' if name is not None else '$'
@@ -524,8 +535,6 @@ class QueryGraph:
         return verify_traversal(graph, ordering)
 
     def cypher_lines(self, result):
-        import time
-        start_time = time.perf_counter()
         ordering = self.traverse_query(result)
         self.verify_traversal(result, ordering)
         statements = []
@@ -536,8 +545,6 @@ class QueryGraph:
                     statements.append(statement)
             except KeyError:
                 pass
-        end_time = time.perf_counter()
-        timed = end_time - start_time
         return remove_successive_duplicate_lines(statements)
 
     def node_is_null_statement(self, node):
@@ -545,4 +552,5 @@ class QueryGraph:
             return any(isinstance(d['statement'], NullStatement) for _, _, d in self.G.in_edges(node, data=True))
         return False
 
-
+    def get_unwind_variables(self, until_node):
+        return {d['statement'].parameter: d['statement'].output for *e, d in self.restricted(until_node).edges(data=True) if isinstance(d.get('statement', None), Unwind)}
