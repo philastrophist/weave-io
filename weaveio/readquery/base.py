@@ -34,7 +34,10 @@ class BaseQuery:
         raise exception
 
     def __repr__(self):
-        return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
+        try:
+            return f'<{self.__class__.__name__}({self._previous._obj}-{self._obj})>'
+        except AttributeError:
+            return f'<{self.__class__.__name__}({self._obj})>'
 
     def _precompile(self) -> 'BaseQuery':
         return self
@@ -126,7 +129,8 @@ class BaseQuery:
         else:
             self._start = start
         if self._obj is not None:
-            self._obj = self._normalise_object(self._obj)[0]
+            if not self._obj.startswith('_'):  # system name for other purposes
+                self._obj = self._normalise_object(self._obj)[0]
         self._names = [] if names is None else names
         self._is_products = [False]*len(self._names) if is_products is None else is_products
         self.attrs = attrs
