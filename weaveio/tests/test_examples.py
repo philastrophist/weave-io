@@ -49,3 +49,5 @@ def test_example3(data):
     assert table[0]['z'] == -0.0028588480571366923
     assert table[0]['ha_6562.80_flux'] == 150790646.85417017
 
+
+# def test_example4(data):

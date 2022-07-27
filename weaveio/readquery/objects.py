@@ -10,6 +10,7 @@ with waiting,
 it treats two chained expressions as one action
 """
 import collections
+from copy import copy
 from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
 
 from networkx import NetworkXNoPath
@@ -166,7 +167,7 @@ class ObjectQuery(GenericObjectQuery):
         r._index_node = self._node
         return r
 
-    def _make_table(self, *items):
+    def _make_table(self, items):
         """
         obj['factor_string', AttributeQuery]
         obj['factora', 'factorb']
@@ -175,6 +176,10 @@ class ObjectQuery(GenericObjectQuery):
         """
         attrs = []
         for item in items:
+            if isinstance(item, dict):
+                if len(item) > 2:
+                    raise ValueError(f"Can only have one key-value pair per item, got {item}")
+                name, item = copy(item).popitem()
             if isinstance(item, ObjectQuery):
                 item = item._precompile()
             if isinstance(item, AttributeQuery):
@@ -190,7 +195,7 @@ class ObjectQuery(GenericObjectQuery):
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
-        names = process_names([i if isinstance(i, str) else None for i in items], attrs)
+        names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
         return TableQuery._spawn(self, n, names=names, is_products=is_products, attrs=attrs)
 
     def _traverse_to_relative_object(self, obj, index):
@@ -228,11 +233,20 @@ class ObjectQuery(GenericObjectQuery):
 
     def _getitems(self, items, by_getitem):
         # can be called with items signifying columns or where items are indexes, need to distinguish here
-        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
+        # standardise item list
+        if isinstance(items, dict):
+            items = [{k: v} for k, v in items.items()]
+        else:
+            items = list(iter(items))
+        items = [[{k: v} for k, v in item.items()] if isinstance(item, dict) else [item] for item in items]
+        items = [i for item in items for i in item]
+        values = [list(i.values())[0] if isinstance(i, dict) else i for i in items]
+        # names = [list(i.keys())[0] if isinstance(i, dict) else i for i in items]
+        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in values):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in items):
-            return self._make_table(*items)
-        if any(self._data.is_valid_name(i) for i in items):
+        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in values):
+            return self._make_table(items)
+        if any(self._data.is_valid_name(i) for i in values):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
         # go back and be better
         return self._previous._traverse_by_object_indexes(self._obj, items)
@@ -242,7 +256,7 @@ class ObjectQuery(GenericObjectQuery):
         item can be an id, a factor name, a list of those, a slice, or a boolean_mask
         """
         if isinstance(item, collections.Iterable) and not isinstance(item, (str, BaseQuery)):
-            return self._getitems(list(iter(item)), by_getitem)
+            return self._getitems(item, by_getitem)
         elif isinstance(item, slice):
             return self._slice(item)
         elif isinstance(item, AttributeQuery):
@@ -351,9 +365,6 @@ class TableVariableQuery(ObjectQuery):
 
     def _select_or_traverse_to_attribute(self, attr):
         return self._select_attribute(attr, True)
-
-    def _make_table(self, *items):
-        return super()._make_table(*items)
 
     def _traverse_to_relative_object(self, obj, index):
         raise NotImplementedError

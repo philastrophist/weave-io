@@ -8,15 +8,14 @@ data = Data()
 
 
 table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
+rows, targets = join(table, 'cname', data.weave_targets)
+mjds = targets.exposures.mjd
+q = targets[{'mjds': mjds, 'count': count(mjds, wrt=targets), 'cname': 'cname'}]
 
-rows, targets = join(table, 'cname', data.weave_targets, 'cname', join_type='left')
-# # targets = targets[~isnull(rows.cname)]
-# # q = targets[['cname', rows['type']]]
-# # find parent, unwind
-spectra = targets.l1single_spectra#[targets.l1single_spectra.mag_i > rows['modelMag_i']]
-spectra = spectra[rows['modelMag_i'] > spectra.snr]
-q = targets[['cname', count(spectra[spectra.camera == 'blue'], wrt=targets), rows['modelMag_i']]]
-# q = spectra[['cname', 'camera', 'exposure.mjd', rows['modelMag_i'], spectra.snr]]
+# spectra = targets.l1single_spectra#[targets.l1single_spectra.mag_i > rows['modelMag_i']]
+# spectra = spectra[rows['modelMag_i'] > spectra.snr]
+# q = targets[['cname', count(spectra[spectra.camera == 'blue'], wrt=targets), rows['modelMag_i']]]
+# # q = spectra[['cname', 'camera', 'exposure.mjd', rows['modelMag_i'], spectra.snr]]
 
 
 
@@ -27,4 +26,6 @@ q = targets[['cname', count(spectra[spectra.camera == 'blue'], wrt=targets), row
 
 cypher, params = q._precompile()._to_cypher()  #
 print('\n'.join(cypher))
-print(q(limit=100))
+t = q(limit=100)
+print(t)
+print(len(t), t.colnames)
