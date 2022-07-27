@@ -89,6 +89,13 @@ def add_traversal(graph: HashedDiGraph, parent, statement, single=False, unwound
     return n
 
 
+def add_node_reference(graph: HashedDiGraph, statement, parent, *deps):
+    n = make_node(graph, parent, 'traversal', statement, single=True)
+    for d in deps:
+        graph.add_edge(d, n, type='dep', style='dotted')
+    return n
+
+
 def add_filter(graph: HashedDiGraph, parent, dependencies, statement):
     n = make_node(graph, parent, 'filter', statement, False)
     for d in dependencies:
