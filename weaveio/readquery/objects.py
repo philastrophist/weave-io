@@ -196,7 +196,7 @@ class ObjectQuery(GenericObjectQuery):
         is_products = [a._is_products[0] for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
         names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
-        return TableQuery._spawn(self, n, names=names, is_products=is_products, attrs=attrs)
+        return TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
 
     def _traverse_to_relative_object(self, obj, index):
         """
@@ -613,10 +613,13 @@ class TableQuery(BaseQuery):
                  single=False, attr_queries=None, names=None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, *args, **kwargs)
         self._attr_queries = attr_queries
+        self._lookup = {k: v for k, v in zip(self._names, self._attr_queries)}
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
         return self._previous._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
 
+    def __getitem__(self, item):
+        return self._lookup[item]
 
 class ListAttributeQuery(AttributeQuery):
     pass

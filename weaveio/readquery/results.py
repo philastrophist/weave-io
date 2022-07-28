@@ -5,11 +5,36 @@ from typing import List, Union, Tuple
 import numpy as np
 import py2neo
 from astropy.io import fits
-from astropy.table import Table as AstropyTable, Row as AstropyRow, Column, vstack as astropy_vstack, MaskedColumn
-import pandas as pd
+from astropy.table import Table as AstropyTable, Row as AstropyRow, MaskedColumn as AstropyMaskedColumn
 from py2neo.cypher import Cursor
-from tqdm import tqdm
 
+
+def ragged_array(data):
+    """
+    Given an object array of different length lists/arrays (indexed on the first axis) return a ragged array
+    where unaligned elements are filled with NaN.
+    e.g.:
+    >>> ragged_array([[1, 2, 3], [4, 5, 6, 7]])
+    np.mask.array([[1, 2, 3, --], [4, 5, 6, 7]], mask=[[False, False, False, True], [False, False, False, False]])
+    """
+    shapes = [np.ma.asarray(i).shape for i in data]
+    if len(set(shapes)) == 1:
+        return data
+    maxshape = np.max(shapes, axis=0)
+    array = np.ma.empty((len(data), *maxshape), dtype=np.asarray(data[0]).dtype)
+    array.mask = True
+    try:
+        array.fill_value = np.nan
+    except TypeError:
+        pass
+    slcs = [tuple(slice(0, s) for s in shape_tuple) for shape_tuple in shapes]
+    for i, (slc, d) in enumerate(zip(slcs, data)):
+        array.__setitem__((i, *slc), d)
+    return array
+
+
+def ragged_column(data, name):
+    return MaskedColumn(ragged_array(data), name=name)
 
 
 class ColnameParser:
@@ -34,9 +59,41 @@ class Row(DotHandlerMixin, AstropyRow):
     pass
 
 
+class MaskedColumn(AstropyMaskedColumn):
+    def apply(self, func, *args, **kwargs) -> 'MaskedColumn':
+        """
+        Apply a function to each row in the column. Returns nd array if possible otherwise an unstructured array.
+        :param func: Callable to apply to each row. Takes an array/scalar depending on the type of the column.
+        """
+        return ragged_column([func(d, *args, **kwargs) for d in self.data], func.__name__)
+
+    def masked(self, mask, inplace=False):
+        if inplace:
+            c = self
+        else:
+            c = self.copy()
+        c.mask |= mask
+        return c
+
+    def filtered(self, filt, inplace=False):
+        if inplace:
+            c = self
+        else:
+            c = self.copy()
+        c.mask |= ~filt
+        return c
+
+
 class Table(DotHandlerMixin, AstropyTable):  # allow using `.` to access columns
     Row = Row
+    Column = MaskedColumn
 
+    def apply(self, func, *args, **kwargs) -> 'MaskedColumn':
+        """
+        Apply a function to each row in the column. Returns nd array if possible otherwise an unstructured array.
+        :param func: Callable to apply to each row. Takes an array/scalar depending on the type of the column.
+        """
+        return ragged_column([func(row, *args, **kwargs) for row in self], func.__name__)
 
 class ArrayHolder:
     def __init__(self, array):
@@ -48,7 +105,7 @@ def vstack_rows(rows: List[Tuple[List, List[bool], List[str]]], *args, **kwargs)
     columns, names = zip(*rows)
     names = names[0]
     columns = list(zip(*columns))
-    return Table([MaskedColumn(c, name=n) for c, n in zip(columns, names)])
+    return Table([ragged_column(c, n) for c, n in zip(columns, names)])
 
 def int_or_slice(x: Union[int, float, slice, None]) -> Union[int, slice]:
     if isinstance(x, (int, float)):
@@ -140,12 +197,18 @@ class RowParser(FileHandler):
     def parse_to_table(self, cursor: Cursor, names: List[str], is_products: List[bool]):
         rows = list(self.iterate_cursor(cursor, names, is_products, False))
         if not rows:
-            return Table([Column([], name=name) for name in names])
+            return Table([MaskedColumn([], name=name) for name in names])
         return vstack_rows(rows)
 
 
-if __name__ == '__main__':
-    files = FileHandler(Path('/beegfs/car/weave/weaveio/'))
-    r1 = files.read('L1/20160908/single_1002213.fit', ext=-1, index=slice(0, 10), key='SNR')
-    r2 = files.read('L1/20160908/single_1002213.fit', ext=-1, index=slice(0, 6), key='SNR')
-    print(r1)
+def apply(obj, func, *args, **kwargs):
+    """Applies the function to a table or column"""
+    return getattr(obj, 'apply')(func, *args, **kwargs)
+
+def filtered(column, filt):
+    """Filters a masked column based on a boolean array where False means masked"""
+    return column.filtered(filt)
+
+def masked(column, mask):
+    """Masks a masked column based on a boolean array where True means masked"""
+    return column.masked(mask)

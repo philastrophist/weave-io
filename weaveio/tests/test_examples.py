@@ -37,6 +37,7 @@ def test_example2(data):
     sky_spectra = spectra[spectra.targuse == 'S']
     table = sky_spectra[['wvl', 'flux']]
     assert count(table)() == 690
+    assert not any(np.any(i.mask) for i in table(limit=2)['wvl'])
 
 
 def test_example3(data):

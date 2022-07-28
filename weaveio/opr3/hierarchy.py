@@ -297,7 +297,6 @@ class Spectrum(Hierarchy):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    # parents = [WavelengthHolder]
     children = [WavelengthHolder]
     products = ['flux', 'ivar']
     plural_name = 'spectra1d'
