@@ -1,7 +1,6 @@
 from astropy.table import Table
 from typing import Tuple, Union
 
-from weaveio import BaseQuery
 from weaveio.readquery.objects import ObjectQuery, AttributeQuery, TableVariableQuery
 
 
