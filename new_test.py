@@ -36,6 +36,7 @@ q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(m
 
 #
 # targets = targets[any(targets.redrocks.zwarn == 0, wrt=targets)]
+print(count(data.weave_targets[exists(data.weave_targets.redrocks, wrt=data.weave_targets)])())
 zs = targets.redrocks[targets.redrocks.zwarn == 0].z
 q = targets[['cname', {'redshifts': zs, 'mean_redshift': mean(zs, wrt=targets)}]]
 
