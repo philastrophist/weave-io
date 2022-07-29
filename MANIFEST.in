@@ -1,2 +1,3 @@
 recursive-include weaveio/ *.txt
 recursive-include weaveio/ *.csv
+recursive-include weaveio/ *.ascii

@@ -182,6 +182,105 @@ and survey names containing "WL"
 4. `l2s = l2s[l2s['ha_6562.80_flux'] > 0]` - Then we further filter the l2 products by required an halpha flux greater than 0 (fit by Gandalf).
 5. `l2s[['ha_6562.80_flux', 'z']]` - This designs a table with the halpha flux (from gandalf) and the redshift (from redrock)
 
+# 4a. Join on a 3rd party catalogue
+Given a catalogue of weave cnames, find those objects in the database and return the calendar dates on which those matched objects were observed, and the number of WEAVE visits to each CNAME (there could be more than one)
+
+To do this we need to use `join` which is imported from `weaveio`. 
+`join` takes at least 3 arguments: the first is the table to join on, the second is the column name in that table, and the third is the object in `weaveio` to join to.
+You may also specify a `join_query` which is a normal `weaveio` that results in the attribute to join to. If this is not specified, then it is assumed that the attribute should be the same as the column name in the table.
+```python
+def join(table: Table, index_column: str,
+         object_query: ObjectQuery, join_query: Union[AttributeQuery, str] = None,
+         join_type: str = 'left') -> Tuple[TableVariableQuery, ObjectQuery]:
+    ...
+```
+The output of `join` is the input table converted to a `weaveio` variable and a reduced version of the input `object_query`.
+The output table variable should now be treated as rows.
+
+```python
+from astropy.table import Table
+from weaveio import *
+data = Data()
+table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
+rows, targets = join(table, 'cname', data.weave_targets)
+mjds = targets.exposures.mjd  # get the mjd of the plate exposures for each target
+q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]
+print(q())
+```
+output:
+```
+       cname         modelMag_i          mjds [15]           nobservations
+-------------------- ---------- ---------------------------- -------------
+WVE_10461805+5755400   20.20535 57809.109711 .. 57811.075961             5
+WVE_10521675+5814292    21.2665 57809.109711 .. 57811.075961             5
+WVE_10521675+5814292    21.2665 57809.109711 .. 57811.075961             5
+WVE_02175674-0451074   21.38155             57640.1764 .. --             6
+WVE_02174727-0459587   21.81214             57640.1764 .. --             6
+WVE_02175411-0504122   22.28189             57640.1764 .. --             6
+WVE_02175687-0512209   21.79577             57640.1764 .. --             6
+WVE_02174991-0454427   21.65417             57640.1764 .. --             6
+WVE_02175370-0448267   19.63735             57640.1764 .. --             6
+WVE_02174862-0457336     22.181             57640.1764 .. --             6
+WVE_02175320-0508011   20.16733             57640.1764 .. --             6
+WVE_10461805+5755400   20.20535 57809.109711 .. 57811.075961             4
+WVE_10521675+5814292    21.2665 57809.109711 .. 57811.075961            10
+WVE_10521675+5814292    21.2665 57809.109711 .. 57811.075961            10
+WVE_10461805+5755400   20.20535 57809.109711 .. 57811.075961             6
+```
+Breaking down this query:
+1. `table = Table.read('weaveio/tests/my_table.ascii', format='ascii')` - This reads in a custom table from the file `my_table.ascii`. One of the column names is `cname`.
+2. `rows, targets = join(table, 'cname', data.weave_targets)` - This joins the `cname` column of the table to the `cname` attribute of the weave targets catalogue.
+`targets` will refer to all `weave_targets` that were matched by the `cname` column and `rows` will refer to the rows of the table.
+3. `mjds = targets.exposures.mjd ` - This gets the mjd of the plate exposures for each target (there may be more than 1) and each exposure will have 2 `l1single_spectra` (one for each arm), although we don't worry about that yet. 
+4. `q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]` - This creates a table using the 'modelMag_i' found in the fits file table. This can be done because we joined it earlier.
+Here we are also renaming columns to more human readable names using a dictionary. 
+
+### Ragged arrays
+The mjd result column is "ragged" array since there may be more than 1 exposure per target and that is not constant for each target.
+So that the user can aggregate easily we convert the mjd result column to a regular array and mask it.
+
+# 4b. Plot sdss modelMag_i from the fits file against mean flux between 400-450nm
+Continuing from 4a, we first traverse to the `l1single_spectra` and fetch their wavelengths and fluxes.
+Then we plot the modelMag_i from the fits file against the mean flux between 400-450nm.
+
+```python
+import matplotlib.pyplot as plt
+
+q = targets.l1single_spectra[['cname', rows['modelMag_g'], 'wvl', 'flux', 'sensfunc']]
+table = q()
+mean_fluxes = []
+for row in table:
+    filt = (row['wvl'] > 4000) & (row['wvl'] < 4500)  # angstroms
+    mean_fluxes.append(mean(row['flux'][filt]))
+table['mean_flux'] = mean_fluxes
+print(table['mean_flux'])
+plt.scatter(table['modelMag_g'], -2.5 * np.log10(table['mean_flux']))
+plt.show()
+```
+output:
+```
+      mean_flux      
+---------------------
+   1.6613570457103553
+   1.8225295509082666
+   1.6668027617324288
+                   --
+   1.8113559953805027
+                   --
+    1.685038564203977
+                  ...
+                   --
+ -0.07946323931008473
+                   --
+-0.012973852190988072
+ -0.13294200506014725
+                   --
+                   --
+Length = 90 rows
+```
+<img src="mean_flux_gband.png" height="200">
+
+
 ## Details
 
 ## If confused, ignore...

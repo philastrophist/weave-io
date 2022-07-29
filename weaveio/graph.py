@@ -19,6 +19,7 @@ convert_types = {int:  int, float: float, str: str, type(None): float, None: flo
                  list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
                  dict: dict, Table: Table,
                  np.int64: int, np.float64: float, np.float32: float, np.int32:int,
+                 np.str_: str, np.str: str,
                  Path: str}
 
 def is_null(x):

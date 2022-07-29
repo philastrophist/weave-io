@@ -9,6 +9,8 @@ with waiting,
     much better!
 it treats two chained expressions as one action
 """
+import collections
+from copy import copy
 from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
 
 from networkx import NetworkXNoPath
@@ -17,7 +19,8 @@ from .base import BaseQuery
 from .exceptions import CardinalityError, AttributeNameError, UserError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex, dtype_conversion, mask_infs
-from ..opr3.hierarchy import Exposure
+from astropy.table import Table
+
 
 if TYPE_CHECKING:
     from weaveio.data import Data
@@ -41,6 +44,7 @@ def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
             j = names[:i].count(n)
             names[i] = f"{n}{j}"
     return [a._factor_name for a in attrs]  # todo: this could be better
+
 
 class ObjectQuery(GenericObjectQuery):
     def _precompile(self) -> 'TableQuery':
@@ -98,14 +102,15 @@ class ObjectQuery(GenericObjectQuery):
         plural = self._data.plural_name(obj)
         err_msg = f"There is no singular {obj} relative to {self._obj} try using its plural {plural}"
         try:
-            path, single, _ = self._get_path_to_object(obj, want_single)
+            paths, singles = self._get_path_to_object(obj, want_single)
+            single = len(singles) == 1 and singles[0]
         except NetworkXNoPath:
             if not want_single:
                 err_msg = f"There is no {obj} relative to {self._obj}"
             raise CardinalityError(err_msg)
         if not single and want_single:
             raise CardinalityError(err_msg)
-        n = self._G.add_traversal(self._node, path, obj, single)
+        n = self._G.add_traversal(self._node, paths, obj, single)
         return ObjectQuery._spawn(self, n, obj, single=want_single)
 
     def _traverse_by_object_index(self, obj, index):
@@ -117,7 +122,7 @@ class ObjectQuery(GenericObjectQuery):
         e.g. `obs[1234]` filters to the single ob with obid=1234
         """
         param = self._G.add_parameter(index)
-        path, single, _ = self._get_path_to_object(obj, False)
+        path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}')
@@ -125,12 +130,12 @@ class ObjectQuery(GenericObjectQuery):
         return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
+        path, single = self._get_path_to_object(obj, False)
         param = self._G.add_parameter(indexes)
-        path, single, _ = self._get_path_to_object(obj, False)
         one_id = self._G.add_unwind_parameter(self._node, param)
         travel = self._G.add_traversal(self._node, path, obj, single, one_id)
         i = self._G.add_getitem(travel, 'id')
-        eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
+        eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id, wrt=travel)
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
@@ -162,7 +167,7 @@ class ObjectQuery(GenericObjectQuery):
         r._index_node = self._node
         return r
 
-    def _make_table(self, *items):
+    def _make_table(self, items):
         """
         obj['factor_string', AttributeQuery]
         obj['factora', 'factorb']
@@ -171,6 +176,10 @@ class ObjectQuery(GenericObjectQuery):
         """
         attrs = []
         for item in items:
+            if isinstance(item, dict):
+                if len(item) > 2:
+                    raise ValueError(f"Can only have one key-value pair per item, got {item}")
+                name, item = copy(item).popitem()
             if isinstance(item, ObjectQuery):
                 item = item._precompile()
             if isinstance(item, AttributeQuery):
@@ -186,8 +195,8 @@ class ObjectQuery(GenericObjectQuery):
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
         n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
-        names = process_names([i if isinstance(i, str) else None for i in items], attrs)
-        return TableQuery._spawn(self, n, names=names, is_products=is_products, attrs=attrs)
+        names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
+        return TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
 
     def _traverse_to_relative_object(self, obj, index):
         """
@@ -202,7 +211,7 @@ class ObjectQuery(GenericObjectQuery):
         """
         obj, obj_singular = self._normalise_object(obj)
         singular_name = self._data.singular_name(index)
-        path, single, _ = self._get_path_to_object(obj, False)
+        path, single = self._get_path_to_object(obj, False)
         if not single and singular_name == index:
             raise SyntaxError(f"Relative index `{index}` is plural relative to `{self._obj}`.")
         n = self._G.add_traversal(self._node, path, obj, False)
@@ -223,11 +232,21 @@ class ObjectQuery(GenericObjectQuery):
         raise NotImplementedError
 
     def _getitems(self, items, by_getitem):
-        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in items):
+        # can be called with items signifying columns or where items are indexes, need to distinguish here
+        # standardise item list
+        if isinstance(items, dict):
+            items = [{k: v} for k, v in items.items()]
+        else:
+            items = list(iter(items))
+        items = [[{k: v} for k, v in item.items()] if isinstance(item, dict) else [item] for item in items]
+        items = [i for item in items for i in item]
+        values = [list(i.values())[0] if isinstance(i, dict) else i for i in items]
+        # names = [list(i.keys())[0] if isinstance(i, dict) else i for i in items]
+        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in values):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in items):
-            return self._make_table(*items)
-        if any(self._data.is_valid_name(i) for i in items):
+        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in values):
+            return self._make_table(items)
+        if any(self._data.is_valid_name(i) for i in values):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
         # go back and be better
         return self._previous._traverse_by_object_indexes(self._obj, items)
@@ -236,7 +255,7 @@ class ObjectQuery(GenericObjectQuery):
         """
         item can be an id, a factor name, a list of those, a slice, or a boolean_mask
         """
-        if isinstance(item, (tuple, list)):
+        if isinstance(item, collections.Iterable) and not isinstance(item, (str, BaseQuery)):
             return self._getitems(item, by_getitem)
         elif isinstance(item, slice):
             return self._slice(item)
@@ -307,6 +326,56 @@ class ObjectQuery(GenericObjectQuery):
         return self._select_attribute(i, True).__eq__(other)
 
 
+class TableVariableQuery(ObjectQuery):
+    def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
+                 obj: str = None, start: 'Query' = None, index_node=None, single=False, names=None, is_products=None, attrs=None,
+                 dtype=None, table=None, *args, **kwargs) -> None:
+        super().__init__(data, G, node, previous, obj, start, index_node, single, names, is_products, attrs, dtype, *args, **kwargs)
+        self._table = table
+
+    def _precompile(self) -> 'TableVariableQuery':
+        return self
+
+    def _get_all_factors_table(self):
+        return self
+
+    def _select_all_attrs(self):
+        return self
+
+    def _traverse_to_generic_object(self):
+        raise NotImplementedError
+
+    def _traverse_to_specific_object(self, obj, want_single):
+        raise NotImplementedError
+
+    def _traverse_by_object_index(self, obj, index):
+        raise NotImplementedError
+
+    def _traverse_by_object_indexes(self, obj, indexes: List):
+        raise NotImplementedError
+
+    def _select_product(self, attr, want_single):
+        raise NotImplementedError
+
+    def _select_attribute(self, column_name, want_single):
+        if column_name not in self._table.colnames:
+            raise KeyError(f"`{column_name}` is not a column in the table `{self}`")
+        n = self._G.add_getitem(self._node, column_name)
+        return AttributeQuery._spawn(self, n, single=want_single, factor_name=column_name)
+
+    def _select_or_traverse_to_attribute(self, attr):
+        return self._select_attribute(attr, True)
+
+    def _traverse_to_relative_object(self, obj, index):
+        raise NotImplementedError
+
+    def _filter_by_relative_index(self):
+        raise NotImplementedError
+
+    def __eq__(self, other):
+        raise NotImplementedError
+
+
 class Query(GenericObjectQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
         super().__init__(data, G, node, previous, obj, start, 'start')
@@ -324,7 +393,10 @@ class Query(GenericObjectQuery):
     def _traverse_by_object_index(self, obj, index):
         obj, single = self._normalise_object(obj)
         name = self._G.add_parameter(index)
-        travel = self._G.add_start_node(obj)
+        if self._node == 0:
+            travel = self._G.add_start_node(obj)
+        else:
+            travel = self._G.add_traversal(self._node, [], obj, single)
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
         n = self._G.add_filter(travel, eq, direct=True)
@@ -333,8 +405,11 @@ class Query(GenericObjectQuery):
     def _traverse_by_object_indexes(self, obj, indexes: List):
         param = self._G.add_parameter(indexes)
         one_id = self._G.add_unwind_parameter(self._node, param)
-        travel = self._G.add_start_node(obj, one_id)
-        i = self._G.add_getitem(travel, 'id')
+        if self._node == 0:
+            travel = self._G.add_start_node(obj, one_id)
+        else:
+            travel = self._G.add_traversal(self._node, [], obj, False, one_id)
+        i = self._G.add_getitem(travel, self._data.class_hierarchies[obj].idname)
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id)
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
@@ -538,10 +613,13 @@ class TableQuery(BaseQuery):
                  single=False, attr_queries=None, names=None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, *args, **kwargs)
         self._attr_queries = attr_queries
+        self._lookup = {k: v for k, v in zip(self._names, self._attr_queries)}
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
         return self._previous._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
 
+    def __getitem__(self, item):
+        return self._lookup[item]
 
 class ListAttributeQuery(AttributeQuery):
     pass

@@ -7,7 +7,7 @@ from .base import BaseQuery
 if TYPE_CHECKING:
     pass
 
-__all__ = ['sum', 'max', 'min', 'mean', 'std', 'count', 'any', 'all']
+__all__ = ['sum', 'max', 'min', 'mean', 'std', 'count', 'any', 'all', 'exists']
 
 python_any = any
 python_all = all
@@ -39,6 +39,10 @@ def min(item, wrt=None, *args, **kwargs):
 
 def count(item, wrt=None, *args, **kwargs):
     return _template_aggregator('count', False, len, item, wrt, returns_dtype='number', args=args, kwargs=kwargs)
+
+
+def exists(item, wrt=None, *args, **kwargs):
+    return _template_aggregator('count', False, len, item, wrt, returns_dtype='number', args=args, kwargs=kwargs) > 1
 
 
 def std(item, wrt=None, *args, **kwargs):

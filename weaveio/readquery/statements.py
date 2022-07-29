@@ -63,20 +63,28 @@ class StartingMatch(Statement):
 
 
 class Traversal(Statement):
-    ids = ['to_node_type', 'path', 'from_variable', 'unwound']
+    ids = ['to_node_type', 'string_paths', 'from_variable', 'unwound']
 
-    def __init__(self, from_variable, to_node_type, path, unwound, graph):
+    def __init__(self, from_variable, to_node_type, paths, unwound, graph):
         super().__init__([from_variable], graph)
         self.from_variable = from_variable
         self.to_node_type = to_node_type
-        self.path = path
+        self.paths = paths
+        self.string_paths = '.'.join(paths)
         self.to_node = self.make_variable(to_node_type)
         self.using_edge = self.make_variable('edge')
-        self.unwound = unwound
+        self.unwound = unwound  # this is only here to record dependency, the statement doesnt actually use it
 
     def make_cypher(self, ordering: list) -> str:
-        path = self.path.format(name=self.using_edge)
-        return f'OPTIONAL MATCH ({self.from_variable}){path}({self.to_node}:{self.to_node_type})'
+        if not self.string_paths:
+            return f'OPTIONAL MATCH ({self.to_node}:{self.to_node_type})'
+        paths = [path.format(in_var=self.from_variable, out_var=self.to_node, name=self.using_edge) for path in self.paths]
+        statements = [f'OPTIONAL MATCH {path}' for path in paths]
+        if len(statements) == 1:
+            return statements[0]
+        # use `union all` not `union` since there should be no duplicates as each end-node will be a different type
+        statements = '\n\tUNION ALL\n'.join([f'\tWITH {self.from_variable}\n\t{s} RETURN {self.to_node}' for s in statements])
+        return f"CALL {{\n {statements}\n}}"
 
 
 class UnionTraversal(Statement):

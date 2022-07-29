@@ -168,9 +168,9 @@ class Fibre(Hierarchy):
 
 class Subprogramme(Hierarchy):
     """
-    A submitted programme of observation which was written by multiple surveys.
+    A submitted programme of observation which was written by a survey.
     """
-    parents = [Multiple(Survey)]
+    parents = [Survey]
     factors = ['name']
     idname = 'id'
 
@@ -252,8 +252,8 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [Obstemp, Progtemp, Multiple(FibreTarget, one2one=True),  # each OB has a defined number of fibre_targets
-               Multiple(SurveyCatalogue), Multiple(Subprogramme), Multiple(Survey)]
+    parents = [Obstemp, Progtemp, Multiple(FibreTarget, maxnumber=1000, one2one=True),  # each OB has a defined number of fibre_targets
+               Multiple(SurveyCatalogue, maxnumber=10), Multiple(Subprogramme, maxnumber=10), Multiple(Survey, maxnumber=5)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 
@@ -297,12 +297,14 @@ class Spectrum(Hierarchy):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    parents = [WavelengthHolder]
+    children = [WavelengthHolder]
     products = ['flux', 'ivar']
+    plural_name = 'spectra1d'
 
 
 class Spectrum2D(Spectrum):
     is_template = True
+    plural_name = 'spectra2d'
 
 
 class Run(Hierarchy):

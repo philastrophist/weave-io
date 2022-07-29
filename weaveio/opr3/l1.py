@@ -15,6 +15,7 @@ class L1Spectrum(Spectrum1D, L1):
     children = [Optional('self', idname='adjunct')]
     products = ['flux', 'ivar', 'sensfunc']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
+    parents = [FibreTarget]
 
 
 class NoSS(Spectrum1D):
@@ -45,7 +46,7 @@ class L1StackedSpectrum(L1Spectrum, Stacked):
     is_template = True
     singular_name = 'l1stacked_spectrum'
     plural_name = 'l1stacked_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, ArmConfig, ))] + L1Spectrum.parents
+    parents = [Multiple(L1SingleSpectrum, 2, 10, constrain=(FibreTarget, ArmConfig, ))] + L1Spectrum.parents
     identifier_builder = ['l1single_spectra']
 
 
@@ -55,7 +56,7 @@ class L1StackSpectrum(L1StackedSpectrum, Stack):
     """
     singular_name = 'l1stack_spectrum'
     plural_name = 'l1stack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OB, ArmConfig))] + L1Spectrum.parents
+    parents = [Multiple(L1SingleSpectrum, 2, 10, constrain=(FibreTarget, OB, ArmConfig))] + L1Spectrum.parents
 
 
 class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
@@ -64,7 +65,7 @@ class L1SuperstackSpectrum(L1StackedSpectrum, Superstack):
     """
     singular_name = 'l1superstack_spectrum'
     plural_name = 'l1superstack_spectra'
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(FibreTarget, OBSpec, ArmConfig))] + L1Spectrum.parents
+    parents = [Multiple(L1SingleSpectrum, 2, 10, constrain=(FibreTarget, OBSpec, ArmConfig))] + L1Spectrum.parents
 
 
 class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
@@ -76,7 +77,7 @@ class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
     singular_name = 'l1supertarget_spectrum'
     plural_name = 'l1supertarget_spectra'
     factors = ['id']
-    parents = [Multiple(L1SingleSpectrum, 2, constrain=(WeaveTarget, ArmConfig))] + L1Spectrum.parents
+    parents = [Multiple(L1SingleSpectrum, 2, 10, constrain=(WeaveTarget, ArmConfig))] + L1Spectrum.parents
     identifier_builder = ['l1single_spectra', 'id']
 
 

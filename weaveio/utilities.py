@@ -4,6 +4,7 @@ import inflect
 
 INFLECTOR = inflect.engine()
 PLURAL_DICT = {'spectrum': 'spectra', 'noss': 'nosses', 'use': 'uses'}
+exceptions = {'1_D': '1D', '2_D': '2D', '3_D': '3D'}
 
 def snakecase2camelcase(name):
     """
@@ -17,7 +18,10 @@ def camelcase2snakecase(name):
     Returns a string with underscores between words in camelcase name
     """
     s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+    name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1)
+    for a, b in exceptions.items():
+        name = name.replace(a, b)
+    return name.lower()
 
 def make_plural(name):
     if name.endswith('_group'):
