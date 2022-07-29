@@ -200,8 +200,10 @@ The output table variable should now be treated as rows.
 ```python
 from astropy.table import Table
 from weaveio import *
+import weaveio
+fname = Path(weaveio.__file__).parents[0] / 'tests/my_table.ascii'
 data = Data()
-table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
+table = Table.read(fname, format='ascii')
 rows, targets = join(table, 'cname', data.weave_targets)
 mjds = targets.exposures.mjd  # get the mjd of the plate exposures for each target
 q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]
