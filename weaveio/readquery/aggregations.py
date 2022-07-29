@@ -19,6 +19,9 @@ python_sum = sum
 def _template_aggregator(string_op, predicate, python_func: Callable, item: BaseQuery, wrt: BaseQuery = None,
                          remove_infs: bool = True, expected_dtype: str = None, returns_dtype:str = None,
                          args=None, kwargs=None):
+    from ..data import Data
+    if isinstance(wrt, Data):
+        wrt = None
     try:
         return item._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
     except AttributeError:
