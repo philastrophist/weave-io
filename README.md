@@ -73,11 +73,11 @@ print("number of sky targets = {}".format(nsky()))
 output: `number of sky targets = 100`
 
 We can break this down into several steps:
-1. `from weaveio import *; data = Data()` - Import all the necessary `weaveio` functions and start the default lofar database link.
-2. `data.[...]` - Start building a query using the default database.
-3. `data.runs` - The query starts at all runs.
-4. `data.runs[runid]` - Filter the runs to those that have the id equal to `runid`. This is unique, so you can be sure that this query now contains one row.
-5. `data.runs[runid].targuses` - Each run has multiple L1 single spectra associated with it and each of those spectra have a `targuse` attribute. Therefore, each run has a `targuses` attribute. 
+1. `from weaveio import *; data = Data()` - Import all the necessary `weaveio` functions and start the default lofar database link (the default is opr3 but this may change in the future).
+2. `data.` - Start building a query using data connection established above
+3. `data.runs` - Get all runs
+4. `data.runs[runid]` - Filter the runs to those that have their id equal to the variable `runid`. Each run has a unique runid, so you can be sure that this query now contains one row.
+5. `data.runs[runid].targuses` - Each run has multiple L1 single spectra associated with it and each of those spectra have a `targuse` attribute. Therefore, each run has multiple `targuse` attributes, therefore you must write `targuses`. 
 6. `data.runs[runid].targuses == 'S'` - Make a boolean mask for where the targuse flag for each spectrum belonging to this run is set to `'S'` (this refers to "sky").
 7. `nsky = sum(data.runs[runid].targuses == 'S')` - Sum the entire boolean mask, thereby counting the number of sky fibres placed in this run. 
 The python function `sum` was overwritten with a `weaveio` version when we did our imports. `sum` is now compatible with `weaveio` but can also be used normally. 
