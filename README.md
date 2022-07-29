@@ -92,11 +92,12 @@ nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of sky ta
 print(nsky())
 ```
 output: `[100 299 299 100 100 200 160 ...]`
-This query is very similar to the previous one except that we are summing along an axis (to use a `numpy` phrase).
+
+This query is very similar to the previous one except that we are summing over the fibres of each run, not just 1 run as before.
 The difference here is that we have missed out `data.runs[runid]` which means that our query references all `runs` in the database at once.
 1. `from weaveio import *; data = Data()` - Import all the necessary `weaveio` functions and start the default lofar database link.
-2. `data.runs` - The query starts at all runs.
-3. `data.runs.targuses == 'S` - Access all `targuse` attributes belonging to this run, which are *per l1 single spectrum*
+2. `data.runs` - Get all runs.
+3. `data.runs.targuses == 'S` - Access all `targuse` attributes belonging to each run. Read this statement as "for each run in data, for each targuse in run, do `==S`.
 4. `nsky = sum(data.runs.targuses == 'S', wrt=data.runs)` - This time sum our boolean mask *with respect to (`wrt`)* `data.runs`. 
 This means each row in the resultant query, `nsky`, will refer to each row in `data.runs`. I.E. There is now a query row *per run*, whereas in the previous example there was only one row.
 
