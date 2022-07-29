@@ -277,6 +277,15 @@ class Data:
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
+    def __dir__(self) -> List[str]:
+        neighbors = [i.plural_name for i in self.hierarchies]
+        neighbors += [i.lower() for h in self.hierarchies for i in h.products_and_factors]
+        neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
+        return neighbors
+
+    def _ipython_key_completions_(self):
+        return [i.strip('"') for i in self.__dir__()]
+
     @property
     def verbose(self):
         return self._verbose

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 class GenericObjectQuery(BaseQuery):
     def _ipython_key_completions_(self):
-        return self.__dir__()
+        return [i.strip('"') for i in self.__dir__()]
 
 
 def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
@@ -50,10 +50,14 @@ def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
 class ObjectQuery(GenericObjectQuery):
     def __dir__(self) -> List[str]:
         h = self._data.class_hierarchies[self._obj]
-        neighbors = [i.singular_name for i in self._data.hierarchy_graph.neighbors(h)]
+        singulars = set(self._data.hierarchy_graph.singular.neighbors(h))
+        all_ = set(self._data.hierarchy_graph.neighbors(h))
+        neighbors = [i.singular_name for i in singulars]
+        neighbors += [i.plural_name for i in all_ - singulars]
         neighbors += list(h.relative_names.keys())
         neighbors += h.products_and_factors
-        return neighbors
+        neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
+        return [i.lower() for i in neighbors]
 
     def _precompile(self) -> 'TableQuery':
         """
