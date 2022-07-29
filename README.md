@@ -188,7 +188,7 @@ Given a catalogue of weave cnames, find those objects in the database and return
 
 To do this we need to use `join` which is imported from `weaveio`. 
 `join` takes at least 3 arguments: the first is the table to join on, the second is the column name in that table, and the third is the object in `weaveio` to join to.
-You may also specify a `join_query` which is a normal `weaveio` that results in the attribute to join to. If this is not specified, then it is assumed that the attribute should be the same as the column name in the table.
+You may also specify a `join_query` which is another `weaveio` query that results in the attribute to join to. If this is not specified, then it is assumed that the attribute should be the same as the column name in the table.
 ```python
 def join(table: Table, index_column: str,
          object_query: ObjectQuery, join_query: Union[AttributeQuery, str] = None,
