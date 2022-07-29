@@ -11,7 +11,7 @@ it treats two chained expressions as one action
 """
 import collections
 from copy import copy
-from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
+from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any, Iterable
 
 from networkx import NetworkXNoPath
 
@@ -27,7 +27,8 @@ if TYPE_CHECKING:
 
 
 class GenericObjectQuery(BaseQuery):
-    pass
+    def _ipython_key_completions_(self):
+        return self.__dir__()
 
 
 def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
@@ -47,6 +48,13 @@ def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
 
 
 class ObjectQuery(GenericObjectQuery):
+    def __dir__(self) -> List[str]:
+        h = self._data.class_hierarchies[self._obj]
+        neighbors = [i.singular_name for i in self._data.hierarchy_graph.neighbors(h)]
+        neighbors += list(h.relative_names.keys())
+        neighbors += h.products_and_factors
+        return neighbors
+
     def _precompile(self) -> 'TableQuery':
         """
         If the object contains only one factor/product and defines no parents/children, return that
@@ -327,6 +335,9 @@ class ObjectQuery(GenericObjectQuery):
 
 
 class TableVariableQuery(ObjectQuery):
+    def __dir__(self) -> List[str]:
+        return self._names
+
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node=None, single=False, names=None, is_products=None, attrs=None,
                  dtype=None, table=None, *args, **kwargs) -> None:
@@ -620,6 +631,7 @@ class TableQuery(BaseQuery):
 
     def __getitem__(self, item):
         return self._lookup[item]
+
 
 class ListAttributeQuery(AttributeQuery):
     pass
