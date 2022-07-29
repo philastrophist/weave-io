@@ -20,8 +20,11 @@ def _template_aggregator(string_op, predicate, python_func: Callable, item: Base
                          remove_infs: bool = True, expected_dtype: str = None, returns_dtype:str = None,
                          args=None, kwargs=None):
     from ..data import Data
+    from .objects import AttributeQuery
     if isinstance(wrt, Data):
         wrt = None
+    elif isinstance(wrt, AttributeQuery):
+        raise TypeError(f"Cannot aggregate {item} with respect to an attribute {wrt}. You can only aggregate with respect to an object.")
     try:
         return item._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
     except AttributeError:
