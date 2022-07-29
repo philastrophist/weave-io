@@ -1,8 +1,12 @@
+import sys
+
 from weaveio import *
 from weaveio.opr3 import Data
 from astropy.table import Table
 
 data = Data()
+print(data.redrocks[['cname', 'targra', 'targdec']](limit=50))
+sys.exit(0)
 
 table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
 rows, targets = join(table, 'cname', data.weave_targets)
@@ -36,7 +40,8 @@ q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(m
 
 #
 # targets = targets[any(targets.redrocks.zwarn == 0, wrt=targets)]
-print(count(data.weave_targets[exists(data.weave_targets.redrocks, wrt=data.weave_targets)])())
+# print(count(data.weave_targets[exists(data.weave_targets.redrocks, wrt=data.weave_targets)])())
+
 zs = targets.redrocks[targets.redrocks.zwarn == 0].z
 q = targets[['cname', {'redshifts': zs, 'mean_redshift': mean(zs, wrt=targets)}]]
 

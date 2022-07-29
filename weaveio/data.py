@@ -258,12 +258,12 @@ class Data:
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
-        self.factor_hierarchies = defaultdict(list)
+        self.factor_hierarchies = defaultdict(set)
         for h in self.hierarchies:
             for f in getattr(h, 'products_and_factors', []):
-                self.factor_hierarchies[f.lower()].append(h)
+                self.factor_hierarchies[f.lower()].add(h)
             if h.idname is not None:
-                self.factor_hierarchies[h.idname].append(h)
+                self.factor_hierarchies[h.idname].add(h)
         self.factor_hierarchies = dict(self.factor_hierarchies)  # make sure we always get keyerrors when necessary!
         self.factors = set(self.factor_hierarchies.keys())
         self.plural_factors =  {make_plural(f.lower()): f.lower() for f in self.factors}
