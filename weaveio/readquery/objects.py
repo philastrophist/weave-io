@@ -319,9 +319,15 @@ class ObjectQuery(GenericObjectQuery):
             self._data.autosuggest(item, self._obj, e)
 
     def __getattr__(self, item):
+        if isinstance(item, str):
+            if item.startswith('_'):
+                raise super(ObjectQuery, self).__getattribute__(item)
         return self._getitem_handled(item, False)
 
     def __getitem__(self, item):
+        if isinstance(item, str):
+            if item.startswith('_'):
+                raise KeyError
         return self._getitem_handled(item, True)
 
     def __eq__(self, other):
