@@ -4,10 +4,11 @@ from weaveio import *
 from weaveio.opr3 import Data
 from astropy.table import Table
 
+
 data = Data()
 # print(data.redrocks[['cname', 'targra', 'targdec']](limit=50))
 # sys.exit(0)
-explain(data.l1single_spectra)
+objects(data.l1single_spectra)
 
 # table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
 # rows, targets = join(table, 'cname', data.weave_targets)
