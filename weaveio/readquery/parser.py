@@ -256,6 +256,8 @@ class QueryGraph:
         return {d['statement']: (a, b) for a, b, d in self.G.edges(data=True) if 'statement' in d}
 
     def latest_shared_ancestor(self, *nodes):
+        if all(n == nodes[0] for n in nodes):
+            return nodes[0]
         return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
 
     def latest_object_node(self, a, b):
@@ -535,17 +537,22 @@ class QueryGraph:
         return verify_traversal(graph, ordering)
 
     def cypher_lines(self, result):
-        ordering = self.traverse_query(result)
-        self.verify_traversal(result, ordering)
-        statements = []
-        for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
-            try:
-                statement = self.G.edges[e]['statement'].make_cypher(ordering[:i+1])
-                if statement is not None:
-                    statements.append(statement)
-            except KeyError:
-                pass
-        return remove_successive_duplicate_lines(statements)
+        try:
+            cypher = self.G.nodes[result]['cypher']
+        except KeyError:
+            ordering = self.traverse_query(result)
+            self.verify_traversal(result, ordering)
+            statements = []
+            for i, e in enumerate(zip(ordering[:-1], ordering[1:])):
+                try:
+                    statement = self.G.edges[e]['statement'].make_cypher(ordering[:i+1])
+                    if statement is not None:
+                        statements.append(statement)
+                except KeyError:
+                    pass
+            cypher = remove_successive_duplicate_lines(statements)
+            self.G.nodes[result]['cypher'] = cypher
+        return cypher
 
     def node_is_null_statement(self, node):
         if self.node_holds_type(node, 'aggr'):

@@ -228,6 +228,7 @@ class Aggregate(Statement):
     def make_cypher(self, ordering) -> str:
         conserve = {i for i in self.conserve if i in ordering}
         conserve = {self.graph.G.nodes[c]['variables'][0] for c in conserve if self.graph.G.nodes[c]['variables']}
+        conserve = {c for c in conserve if c != self.output}
         variables = ', '.join(conserve) + ', ' if conserve else ''
         agg_string = self.agg_func.format(self.input)
         return f"WITH {variables}{agg_string} as {self.output}"
