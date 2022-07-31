@@ -6,7 +6,7 @@ from weaveio.readquery.objects import ObjectQuery, AttributeQuery, TableVariable
 
 def join(table: Table, index_column: str,
          object_query: ObjectQuery, join_query: Union[AttributeQuery, str] = None,
-        ) -> Tuple[TableVariableQuery, ObjectQuery]:
+         join_on='table') -> Tuple[TableVariableQuery, ObjectQuery]:
     """
     Add each row of an astropy table to a query object.
     The columns of each row will be accessible to all subsequent queries that fork from `object_query`.
@@ -54,9 +54,14 @@ def join(table: Table, index_column: str,
     applied_var = G.G.nodes[applied]['variables'][0]
     row = G.add_unwind_parameter(object_query._node, applied_var, applied)
 
-    not_null = G.add_scalar_operation(row, '{0} is not null', 'not-null')[0]
     ref = G.add_previous_reference(row, object_query._node)
-    obj_node = G.add_filter(ref, not_null, False)
+    if join_on == 'table':
+        not_null = G.add_scalar_operation(row, '{0} is not null', 'not-null')[0]
+        obj_node = G.add_filter(ref, not_null, False)
+    elif join_on == 'object':
+        obj_node = ref
+    else:
+        raise ValueError(f"join_on must be either the input table `table` or the input object `object_query`, not {join_on}")
     single = False
     return TableVariableQuery._spawn(object_query, row, '_row', single=True, table=table),\
            ObjectQuery._spawn(object_query, obj_node, object_query._obj, single=single)
