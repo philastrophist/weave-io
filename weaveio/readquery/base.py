@@ -29,6 +29,11 @@ class BaseQuery:
     one_row = False
     one_column = False
 
+    def _debug_output(self):
+        n = self._precompile()
+        c = n._to_cypher()
+        return '\n'.join(c[0]), c[1]
+
     def raise_error_with_suggestions(self, obj, exception: Exception):
         self._data.autosuggest(obj, self._obj, exception)
         raise exception
@@ -44,11 +49,11 @@ class BaseQuery:
 
     def _prepare_parameters(self, lines):
         params = {}
-        aliases = self._G.get_unwind_variables(self._node)
+        # aliases = self._G.get_unwind_variables(self._node)
         for k, v in self._G.parameters.items():
             if any(k in l for l in lines):
                 if isinstance(v, AstropyTable):
-                    cols = [c for c in v.colnames if any(f"{aliases[k]}.`{c}`" in l for l in lines)]
+                    cols = [c for c in v.colnames if any(c in l for l in lines)]
                     assert len(cols), "No columns are used, but table is used. This should not happen"
                     params[k] = v[cols]
                 else:

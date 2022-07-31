@@ -253,6 +253,23 @@ class Return(Statement):
         return f"RETURN {cols}"
 
 
+class ApplyToList(Operation):
+    def __init__(self, input_variable, dependency_variables, apply_function, filter_function,
+                 graph: 'QueryGraph', put_null_in_empty=False):
+        Statement.__init__(self, [input_variable, *dependency_variables], graph)
+        self.x = graph.get_variable_name('x')
+        self.op_name = 'list-apply'
+        apply = apply_function.format(self.x, *self.inputs[1:])
+        filt = filter_function.format(self.x, *self.inputs[1:])
+        op_string = f"[{self.x} in {input_variable} WHERE {filt} | {apply}]"
+        if put_null_in_empty:
+            op_string = f"CASE WHEN SIZE({op_string}) = 0 THEN [null] ELSE {op_string} END"
+        self.op_string = op_string
+        self.op = op_string
+        self.output_variables.append(self.op)
+
+
+
 class Unwind(Statement):
     ids = ['parameter']
 

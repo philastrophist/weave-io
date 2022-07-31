@@ -346,7 +346,7 @@ class ObjectQuery(GenericObjectQuery):
 
 class TableVariableQuery(ObjectQuery):
     def __dir__(self) -> List[str]:
-        return self._names
+        return self._table.colnames
 
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node=None, single=False, names=None, is_products=None, attrs=None,
@@ -354,14 +354,14 @@ class TableVariableQuery(ObjectQuery):
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, is_products, attrs, dtype, *args, **kwargs)
         self._table = table
 
-    def _precompile(self) -> 'TableVariableQuery':
-        return self
+    def _precompile(self) -> 'TableQuery':
+        return self._get_all_factors_table()
 
-    def _get_all_factors_table(self):
-        return self
+    def _get_all_factors_table(self) -> 'TableQuery':
+        return self._make_table(self._table.colnames)
 
-    def _select_all_attrs(self):
-        return self
+    def _select_all_attrs(self) -> 'TableQuery':
+        return self._get_all_factors_table()
 
     def _traverse_to_generic_object(self):
         raise NotImplementedError

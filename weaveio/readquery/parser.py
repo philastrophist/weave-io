@@ -9,7 +9,7 @@ from astropy.table import Table
 
 from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
-from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, UnionTraversal
+from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, UnionTraversal, ApplyToList
 
 
 class ParserError(Exception):
@@ -446,9 +446,14 @@ class QueryGraph:
         statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
         return add_filter(self.G, parent_node, [predicate_node], statement)
 
-    def add_unwind_parameter(self, wrt_node, to_unwind):
-        statement = Unwind(wrt_node, to_unwind, 'unwound_'+to_unwind.replace('$', ''), self)
-        return add_unwind(self.G, wrt_node, statement)
+    def add_apply_to_list(self, parent_node, list_variable, apply_function, filter_function, *dependencies, put_null_in_empty=False):
+        dependencies = [self.fold_to_cardinal(d) for d in dependencies]
+        statement = ApplyToList(list_variable, [self.G.nodes[d]['variables'][0] for d in dependencies], apply_function, filter_function, self, put_null_in_empty)
+        return add_operation(self.G, parent_node, dependencies, statement), statement.output_variables[0]
+
+    def add_unwind_parameter(self, wrt_node, to_unwind, *dependencies):
+        statement = Unwind(wrt_node, to_unwind, 'unwound', self)
+        return add_unwind(self.G, wrt_node, statement, *dependencies)
 
     def collect_or_not(self, index_node, other_node, force_plural):
         """
@@ -560,4 +565,5 @@ class QueryGraph:
         return False
 
     def get_unwind_variables(self, until_node):
-        return {d['statement'].parameter: d['statement'].output for *e, d in self.restricted(until_node).edges(data=True) if isinstance(d.get('statement', None), Unwind)}
+        variables = {d['statement'].parameter: d['statement'].output for *e, d in self.restricted(until_node).edges(data=True) if isinstance(d.get('statement', None), Unwind)}
+        return {p: v for k, v in variables.items() for p in sorted(self.parameters.keys(), key=len, reverse=True) if p in k}

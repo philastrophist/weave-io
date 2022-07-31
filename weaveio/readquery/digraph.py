@@ -123,8 +123,11 @@ def add_return(graph: HashedDiGraph, index, columns, statement):
     return n
 
 
-def add_unwind(graph: HashedDiGraph, parent, statement):
-    return make_node(graph, parent, 'traversal', statement, single=False)
+def add_unwind(graph: HashedDiGraph, parent, statement, *dependencies):
+    n = make_node(graph, parent, 'traversal', statement, single=False)
+    for d in dependencies:
+        graph.add_edge(d, n, type='dep', style='dotted')
+    return n
 
 
 def subgraph_view(graph: HashedDiGraph, excluded_edge_type=None, only_edge_type=None,
