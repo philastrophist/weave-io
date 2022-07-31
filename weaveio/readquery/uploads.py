@@ -20,7 +20,7 @@ def join(table: Table, index_column: str,
     :param join_query: Query object that will be used to join the table to the query object.
                        This can be any attribute query as long as it is singular wrt to `object_query`
                        Leave as None if you want to join the table to the query object using the index_column name as the attribute.
-    :param join_type: Type of join to use. "left" is per row in table, "right" is per object in query.
+    :param join_on: Type of join to use. "table" is per row in table, "object" is per object in query.
     :return: A tuple of the table variable query and the query object
 
     Examples:
