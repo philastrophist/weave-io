@@ -448,14 +448,14 @@ class Graphable(metaclass=GraphableMeta):
             type = 'is_required_by'
             if isinstance(child_list, Collection):
                 with unwind(child_list, enumerated=True) as (child, i):
-                    merge_relationship(child, self.node, type,
+                    merge_relationship(self.node, child, type,
                                        {}, {'relation_id': k, 'order': i},
                                        collision_manager=collision_manager)
                 collect(child)
             else:
                 for child in child_list:
                     props =  {'relation_id': k, 'order': 0}
-                    merge_relationship(child, self.node, type, {},
+                    merge_relationship(self.node, child, type, {},
                                        props, collision_manager=collision_manager)
 
 
