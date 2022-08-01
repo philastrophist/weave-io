@@ -32,6 +32,7 @@ class HeaderFibinfoFile(File):
         fibinfo_hdu = hdus['FIBTABLE']
         fibinfo = AstropyTable(fibinfo_hdu.data).to_pandas()
         fibinfo.columns = [i.lower() for i in fibinfo.columns]
+        fibinfo.rename(columns=lambda x: f'{x[1:]}_error' if x.startswith('emag') else x, inplace=True)
         if 'nspec' in fibinfo.columns:
             fibinfo['spec_index'] = fibinfo['nspec'] - 1
         slc = slice(None) if slc is None else slc
@@ -123,6 +124,7 @@ class HeaderFibinfoFile(File):
         srvyinfo = cls.read_surveyinfo(fibinfo)
         fibretarget_collection, fibrows = cls.read_fibretargets(srvyinfo, fibinfo)
         hiers = cls.read_hierarchy(header, srvyinfo, fibretarget_collection)
+        # return
         return hiers, header, fibinfo, fibretarget_collection, fibrows
 
     @classmethod
@@ -171,8 +173,8 @@ class L1File(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
             'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
-    children = [Optional('self', idname='adjunct')]
-    parents = [WavelengthHolder, Multiple(L1Spectrum, maxnumber=1000), CASU]
+    children = [Optional('self', idname='adjunct'), WavelengthHolder]
+    parents = [Multiple(L1Spectrum, maxnumber=1000, one2one=True), CASU]
     produces = [CASU, NoSS]  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
@@ -197,8 +199,8 @@ class L1File(HeaderFibinfoFile):
 class L1SingleFile(L1File):
     singular_name = 'l1single_file'
     match_pattern = 'single_\d+\.fit'
-    parents = [CASU, OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000), WavelengthHolder]
-    children = [Optional('self', idname='adjunct')]
+    parents = [CASU, OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000, one2one=True)]
+    children = [Optional('self', idname='adjunct'), WavelengthHolder]
     version_on = ['raw_file']
 
     @classmethod
@@ -210,7 +212,9 @@ class L1SingleFile(L1File):
         fname = Path(fname)
         directory = Path(directory)
         absolute_path = directory / fname
-        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
+        # hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
+        cls.read_schema(absolute_path, slc)
+        return
         casu = hiers['casu']
         inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
         matched_files = list(directory.rglob(inferred_raw_fname.name))
@@ -322,8 +326,8 @@ class L1StackFile(L1StackedFile):
     singular_name = 'l1stack_file'
     match_pattern = 'stack_[0-9]+\.fit'
     parents = [CASU, Multiple(L1SingleFile, maxnumber=10, constrain=(OB, ArmConfig)),
-               Multiple(L1StackSpectrum, maxnumber=1000), WavelengthHolder]
-    children = [Optional('self', idname='adjunct')]
+               Multiple(L1StackSpectrum, maxnumber=1000, one2one=True)]
+    children = [Optional('self', idname='adjunct'), WavelengthHolder]
     SpectrumType =  L1StackSpectrum
 
     @classmethod
@@ -337,8 +341,8 @@ class L1SuperstackFile(L1StackedFile):
     singular_name = 'l1superstack_file'
     match_pattern = 'superstack_[0-9]+\.fit'
     parents = [Multiple(L1SingleFile, maxnumber=5, constrain=(OBSpec, ArmConfig)), CASU,
-               Multiple(L1SuperstackSpectrum, maxnumber=1000), WavelengthHolder]
-    children = [Optional('self', idname='adjunct')]
+               Multiple(L1SuperstackSpectrum, maxnumber=1000, one2one=True)]
+    children = [Optional('self', idname='adjunct'), WavelengthHolder]
     SpectrumType = L1SuperstackSpectrum
 
     @classmethod
@@ -356,8 +360,8 @@ class L1SupertargetFile(L1StackedFile):
     singular_name = 'l1supertarget_file'
     match_pattern = 'WVE_.+\.fit'
     parents = [Multiple(L1SingleFile, maxnumber=10, constrain=(WeaveTarget, ArmConfig)), CASU,
-               L1SupertargetSpectrum, WavelengthHolder]
-    children = [Optional('self', idname='adjunct')]
+               OneOf(L1SupertargetSpectrum, one2one=True)]
+    children = [Optional('self', idname='adjunct'), WavelengthHolder]
     SpectrumType = L1SupertargetSpectrum
     recommended_batchsize = None
 
