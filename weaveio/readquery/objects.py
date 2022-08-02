@@ -285,7 +285,7 @@ class ObjectQuery(GenericObjectQuery):
             try:
                 return self._select_or_traverse_to_attribute(item)
             except (KeyError, ValueError):
-                if '.' in item:  # split the parts and parse
+                if '.' in item and not (item.endswith('.fit') or item.endswith('.fits')):  # split the parts and parse
                     try:
                         obj, attr = item.split('.')
                         return self.__getitem__(obj).__getitem__(attr)

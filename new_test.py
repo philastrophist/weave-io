@@ -8,7 +8,7 @@ from astropy.table import Table
 data = Data()
 # print(data.redrocks[['cname', 'targra', 'targdec']](limit=50))
 # sys.exit(0)
-objects(data.l1single_spectra)
+
 
 # table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
 # rows, targets = join(table, 'cname', data.weave_targets)
@@ -16,7 +16,9 @@ objects(data.l1single_spectra)
 # q = targets.cname
 # mjds = targets.exposures.mjd
 # q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]
-# exposures = q()
+# print(q())
+print(count(data.l1files['single_1002266.fit'].l1single_spectra)())
+print(data.l1files['single_1002266.fit'].l1single_spectra[['cname', 'l1file.fname']](limit=10))
 # print(exposures)
 
 # q = targets.l1single_spectra[['cname', rows['modelMag_g'], 'wvl', {'adu': 'flux'}, 'sensfunc']]

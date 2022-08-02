@@ -124,7 +124,6 @@ class HeaderFibinfoFile(File):
         srvyinfo = cls.read_surveyinfo(fibinfo)
         fibretarget_collection, fibrows = cls.read_fibretargets(srvyinfo, fibinfo)
         hiers = cls.read_hierarchy(header, srvyinfo, fibretarget_collection)
-        # return
         return hiers, header, fibinfo, fibretarget_collection, fibrows
 
     @classmethod
@@ -212,9 +211,7 @@ class L1SingleFile(L1File):
         fname = Path(fname)
         directory = Path(directory)
         absolute_path = directory / fname
-        # hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
-        cls.read_schema(absolute_path, slc)
-        return
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
         casu = hiers['casu']
         inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
         matched_files = list(directory.rglob(inferred_raw_fname.name))
