@@ -5,7 +5,7 @@ if which conda; then
 else
         echo "installing anaconda"
         wget -nc -P /tmp https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-        bash /tmp/Anaconda3-2022.05-Linux-x86_64.sh
+        bash /tmp/Miniconda3-latest-Linux-x86_64.sh
         echo "creating "
 fi
 if [[ -z "$(conda env list | grep weaveio)" ]]; then
