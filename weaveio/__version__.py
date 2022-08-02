@@ -1,2 +1,2 @@
-__version__ = "2022.1.1"
-__changes__ = 'removed need to cache things at the start added joining of tables'
+__version__ = "2022.1.2"
+__changes__ = 'minor bugfixes and improvements'
