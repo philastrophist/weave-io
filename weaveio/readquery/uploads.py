@@ -6,7 +6,7 @@ from weaveio.readquery.objects import ObjectQuery, AttributeQuery, TableVariable
 
 def join(table: Table, index_column: str,
          object_query: ObjectQuery, join_query: Union[AttributeQuery, str] = None,
-         join_type: str = 'left') -> Tuple[TableVariableQuery, ObjectQuery]:
+         join_on='table') -> Tuple[TableVariableQuery, ObjectQuery]:
     """
     Add each row of an astropy table to a query object.
     The columns of each row will be accessible to all subsequent queries that fork from `object_query`.
@@ -20,7 +20,7 @@ def join(table: Table, index_column: str,
     :param join_query: Query object that will be used to join the table to the query object.
                        This can be any attribute query as long as it is singular wrt to `object_query`
                        Leave as None if you want to join the table to the query object using the index_column name as the attribute.
-    :param join_type: Type of join to use. "left" is per row in table, "right" is per object in query.
+    :param join_on: Type of join to use. "table" is per row in table, "object" is per object in query.
     :return: A tuple of the table variable query and the query object
 
     Examples:
@@ -48,16 +48,20 @@ def join(table: Table, index_column: str,
         raise TypeError(f"join_query must be an AttributeQuery or str, not {type(join_query)}")
     G = object_query._G
     param = G.add_parameter(table)
-    row = G.add_unwind_parameter(object_query._node, param)
-    index = G.add_getitem(row, index_column)
-    eq, _ = G.add_combining_operation('{0} = {1}', 'ids', index, join_query._node)
-    if join_type == 'left':  # per row in table, keep table, filter object
-        reference = G.add_previous_reference(row, object_query._node)
-        obj_node = G.add_filter(reference, eq, direct=False)
-    elif join_type == 'right':  # per object in query, keep object, filter table
-        row = G.add_filter(row, eq, direct=False)
-        obj_node = G.add_previous_reference(row, object_query._node)
+    # filter the input table to only include rows that match the join_query
+    applied, applied_var = G.add_apply_to_list(object_query._node, param, '{0}', f'{{0}}.`{index_column}` = {{1}}', join_query._node, put_null_in_empty=True)
+    applied = G.fold_to_cardinal(applied)
+    applied_var = G.G.nodes[applied]['variables'][0]
+    row = G.add_unwind_parameter(object_query._node, applied_var, applied)
+
+    ref = G.add_previous_reference(row, object_query._node)
+    if join_on == 'table':
+        not_null = G.add_scalar_operation(row, '{0} is not null', 'not-null')[0]
+        obj_node = G.add_filter(ref, not_null, False)
+    elif join_on == 'object':
+        obj_node = ref
     else:
-        raise ValueError(f"join_type must be 'left' or 'right', not {join_type}")
+        raise ValueError(f"join_on must be either the input table `table` or the input object `object_query`, not {join_on}")
+    single = False
     return TableVariableQuery._spawn(object_query, row, '_row', single=True, table=table),\
-           ObjectQuery._spawn(object_query, obj_node, object_query._obj, single=True)
+           ObjectQuery._spawn(object_query, obj_node, object_query._obj, single=single)

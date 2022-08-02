@@ -11,7 +11,7 @@ it treats two chained expressions as one action
 """
 import collections
 from copy import copy
-from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any
+from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any, Iterable
 
 from networkx import NetworkXNoPath
 
@@ -27,7 +27,8 @@ if TYPE_CHECKING:
 
 
 class GenericObjectQuery(BaseQuery):
-    pass
+    def _ipython_key_completions_(self):
+        return [i.strip('"') for i in self.__dir__()]
 
 
 def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
@@ -47,6 +48,17 @@ def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
 
 
 class ObjectQuery(GenericObjectQuery):
+    def __dir__(self) -> List[str]:
+        h = self._data.class_hierarchies[self._obj]
+        singulars = set(self._data.hierarchy_graph.singular.neighbors(h))
+        all_ = set(self._data.hierarchy_graph.neighbors(h))
+        neighbors = [i.singular_name for i in singulars]
+        neighbors += [i.plural_name for i in all_ - singulars]
+        neighbors += list(h.relative_names.keys())
+        neighbors += h.products_and_factors
+        neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
+        return [i.lower() for i in neighbors]
+
     def _precompile(self) -> 'TableQuery':
         """
         If the object contains only one factor/product and defines no parents/children, return that
@@ -273,7 +285,7 @@ class ObjectQuery(GenericObjectQuery):
             try:
                 return self._select_or_traverse_to_attribute(item)
             except (KeyError, ValueError):
-                if '.' in item:  # split the parts and parse
+                if '.' in item and not (item.endswith('.fit') or item.endswith('.fits')):  # split the parts and parse
                     try:
                         obj, attr = item.split('.')
                         return self.__getitem__(obj).__getitem__(attr)
@@ -307,9 +319,15 @@ class ObjectQuery(GenericObjectQuery):
             self._data.autosuggest(item, self._obj, e)
 
     def __getattr__(self, item):
+        if isinstance(item, str):
+            if item.startswith('_'):
+                raise super(ObjectQuery, self).__getattribute__(item)
         return self._getitem_handled(item, False)
 
     def __getitem__(self, item):
+        if isinstance(item, str):
+            if item.startswith('_'):
+                raise KeyError
         return self._getitem_handled(item, True)
 
     def __eq__(self, other):
@@ -327,20 +345,23 @@ class ObjectQuery(GenericObjectQuery):
 
 
 class TableVariableQuery(ObjectQuery):
+    def __dir__(self) -> List[str]:
+        return self._table.colnames
+
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: Union['Query', 'AttributeQuery', 'ObjectQuery'] = None,
                  obj: str = None, start: 'Query' = None, index_node=None, single=False, names=None, is_products=None, attrs=None,
                  dtype=None, table=None, *args, **kwargs) -> None:
         super().__init__(data, G, node, previous, obj, start, index_node, single, names, is_products, attrs, dtype, *args, **kwargs)
         self._table = table
 
-    def _precompile(self) -> 'TableVariableQuery':
-        return self
+    def _precompile(self) -> 'TableQuery':
+        return self._get_all_factors_table()
 
-    def _get_all_factors_table(self):
-        return self
+    def _get_all_factors_table(self) -> 'TableQuery':
+        return self._make_table(self._table.colnames)
 
-    def _select_all_attrs(self):
-        return self
+    def _select_all_attrs(self) -> 'TableQuery':
+        return self._get_all_factors_table()
 
     def _traverse_to_generic_object(self):
         raise NotImplementedError
@@ -620,6 +641,7 @@ class TableQuery(BaseQuery):
 
     def __getitem__(self, item):
         return self._lookup[item]
+
 
 class ListAttributeQuery(AttributeQuery):
     pass

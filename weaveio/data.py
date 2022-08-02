@@ -277,6 +277,15 @@ class Data:
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
 
+    def __dir__(self) -> List[str]:
+        neighbors = [i.plural_name for i in self.hierarchies]
+        neighbors += [i.lower() for h in self.hierarchies for i in h.products_and_factors]
+        neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
+        return neighbors
+
+    def _ipython_key_completions_(self):
+        return [i.strip('"') for i in self.__dir__()]
+
     @property
     def verbose(self):
         return self._verbose
@@ -475,7 +484,7 @@ class Data:
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
-                    dryrun=False, do_not_apply_constraints=False, test_one=False,
+                    dryrun=False, do_not_apply_constraints=False, test_one=False, infile_slc: slice = None,
                     debug=False, debug_time=False) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
@@ -497,7 +506,7 @@ class Data:
                 raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
             filetype = matches[0]
             filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
-            slices = filetype.get_batches(path, filetype_batch_size, parts)
+            slices = filetype.get_batches(path, filetype_batch_size, parts, infile_slc)
             batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
@@ -551,7 +560,8 @@ class Data:
                                         f"Adjust your `.read` method and query to allow for empty tables/data")
                     timestamps.append(timestamp)
                 else:
-                    self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
+                    continue
+                    # self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
                 elapsed_times.append(time.time() - start)
                 if debug or debug_time:
                     with open('debug-timestamp.log', 'a') as f:
@@ -569,10 +579,13 @@ class Data:
             df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
             df['part'] = parts
         elif dryrun:
-            df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end', 'part'])
-            df['elapsed_time'] = elapsed_times
+            pass
+            # df = pd.DataFrame(columns=['elapsed_time', 'fname', 'batch_start', 'batch_end', 'part'])
+            # df['elapsed_time'] = elapsed_times
         else:
             df = pd.DataFrame(columns=['timestamp', 'elapsed_time', 'fname', 'batch_start', 'batch_end'])
+        if dryrun:
+            return
         return df.set_index(['fname', 'batch_start', 'batch_end', 'part'])
 
     def find_files(self, *filetype_names, skip_extant_files=True):

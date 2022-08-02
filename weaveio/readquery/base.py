@@ -3,6 +3,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
+from warnings import warn
 
 import networkx as nx
 from networkx import NetworkXNoPath, NodeNotFound
@@ -29,6 +30,11 @@ class BaseQuery:
     one_row = False
     one_column = False
 
+    def _debug_output(self):
+        n = self._precompile()
+        c = n._to_cypher()
+        return '\n'.join(c[0]), c[1]
+
     def raise_error_with_suggestions(self, obj, exception: Exception):
         self._data.autosuggest(obj, self._obj, exception)
         raise exception
@@ -44,11 +50,11 @@ class BaseQuery:
 
     def _prepare_parameters(self, lines):
         params = {}
-        aliases = self._G.get_unwind_variables(self._node)
+        # aliases = self._G.get_unwind_variables(self._node)
         for k, v in self._G.parameters.items():
             if any(k in l for l in lines):
                 if isinstance(v, AstropyTable):
-                    cols = [c for c in v.colnames if any(f"{aliases[k]}.`{c}`" in l for l in lines)]
+                    cols = [c for c in v.colnames if any(c in l for l in lines)]
                     assert len(cols), "No columns are used, but table is used. This should not happen"
                     params[k] = v[cols]
                 else:
@@ -70,19 +76,25 @@ class BaseQuery:
     def _execute(self, skip=0, limit=None):
         with logtime('executing'):
             new, (lines, params) = self._compile()
+            cypher = '\n'.join(lines)
             if skip > 0:
-                lines.append(f"SKIP {skip}")
+                cypher += f"\nSKIP {skip}"
             if limit is not None:
-                lines.append(f"LIMIT {limit}")
-            cursor = new._data.graph.execute('\n'.join(lines), **{k.replace('$', ''): v for k,v in params.items()})
+                cypher += f"\nLIMIT {limit}"
+            cursor = new._data.graph.execute(cypher, **{k.replace('$', ''): v for k,v in params.items()})
             return cursor, new
 
     def _iterate(self, skip=0, limit=None):
         cursor, new = self._execute(skip, limit)
         rows = new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products, True)
         with logtime('total streaming (by iteration)'):
-            for row in rows:
+            for i, row in enumerate(rows):
                 yield new._post_process_row(row)
+        if limit == i:
+            warn(f"This query has been capped to {limit} rows but the result is larger than that. "
+                 f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
+                 f"the full result (although this is not recommended).")
+
 
     def __iter__(self):
         yield from self._iterate()
@@ -104,11 +116,18 @@ class BaseQuery:
             return row[row.colnames[0]]
         return row
 
-    def __call__(self, skip=0, limit=None, **kwargs):
+    def __call__(self, skip=0, limit=1000, **kwargs):
         tbl, new = self._to_table(skip, limit)
         tbl = new._post_process_table(tbl)
         if limit == 1:
             return tbl[0]
+        try:
+            if limit == len(tbl):
+                warn(f"This query has been capped to {limit} rows but the result is larger than that. "
+                     f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
+                     f"the full result (although this is not recommended).")
+        except TypeError:
+            pass
         return tbl
 
 

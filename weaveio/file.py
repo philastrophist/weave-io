@@ -38,13 +38,15 @@ class File(Hierarchy):
         super().__init__(tables=None, **kwargs)
 
     @classmethod
-    def get_batches(cls, path, batch_size, parts: List[Union[str, None]] = None):
+    def get_batches(cls, path, batch_size, parts: List[Union[str, None]] = None, slc: slice = None):
         if parts is None:
             parts = cls.parts
         parts = {p for p in parts if p in cls.parts}
+        if slc is None:
+            slc = slice(None, None)
         if batch_size is None:
-            return ((slice(None, None), part) for part in parts)
-        return ((slice(i, i + batch_size), part) for part in parts for i in range(0, cls.length(path, part), batch_size))
+            return ((slc, part) for part in parts)
+        return ((slice(i, i + batch_size), part) for part in parts for i in range(0, cls.length(path, part), batch_size)[slc])
 
     @classmethod
     def match_file(cls, directory: Union[Path, str], fname: Union[Path, str], graph: Graph):
@@ -59,7 +61,11 @@ class File(Hierarchy):
 
     @classmethod
     def check_mos(cls, path):
-        return 'IFU' not in fits.open(path)[0].header['OBSMODE']
+        header = fits.open(path)[0].header
+        try:
+            return 'IFU' not in header['OBSMODE'] and header['OBSTYPE'] == 'TARGET'
+        except KeyError as e:
+            raise KeyError(f"File {path} does not contain OBSTYPE keyword") from e
 
     @classmethod
     def read(cls, directory: Union[Path, str], fname: Union[Path, str], slc: slice = None, part=None) -> 'File':

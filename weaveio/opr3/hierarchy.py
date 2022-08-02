@@ -36,6 +36,7 @@ import numpy as np
 from weaveio.config_tables import progtemp_config
 from weaveio.hierarchy import Hierarchy, Multiple, OneOf, Optional
 
+
 class ArrayHolder(Hierarchy):
     is_template = True
 
@@ -170,7 +171,7 @@ class Subprogramme(Hierarchy):
     """
     A submitted programme of observation which was written by a survey.
     """
-    parents = [Survey]
+    parents = [Multiple(Survey, maxnumber=5)]
     factors = ['name']
     idname = 'id'
 
@@ -248,7 +249,7 @@ class OBSpec(Hierarchy):
     """
     When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
     the information about when and how to observe.
-    When actually observing them, an "OB" is create with its own unique obid.
+    When actually observing them, an "OB" is created with its own unique obid.
     """
     singular_name = 'obspec'
     factors = ['title']
@@ -297,7 +298,7 @@ class Spectrum(Hierarchy):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    children = [WavelengthHolder]
+    children = [OneOf(WavelengthHolder, one2one=True)]
     products = ['flux', 'ivar']
     plural_name = 'spectra1d'
 

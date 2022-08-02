@@ -136,7 +136,16 @@ class MatchPatternNode(Statement):
             extras = f',{extras}'
         if len(wheres):
             wheres = f' WHERE {wheres}'
-        return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
+        call_vars = [v for v in self.input_variables if not isinstance(v, CypherData)]
+        if not len(call_vars):
+            return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
+        return f"""CALL {{WITH {','.join(map(str, call_vars))}
+         MATCH {match}{extras}{wheres}
+         WITH collect({self.out}) as {self.out}
+         RETURN CASE WHEN SIZE({self.out})=0 THEN [null] ELSE {self.out} END as _{self.out}
+         }}
+         UNWIND _{self.out} as {self.out}
+        """
 
 class MatchBranchNode(Statement):
     def __init__(self, *nodes_or_labels):
@@ -407,6 +416,7 @@ class MergeDependentNode(CollisionManager):
         optional_match = f'OPTIONAL MATCH {test_relations[0]}'
         matches = '\n'.join([f'MATCH {t}' for t in test_relations])
         rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
+        # include the optional match?
         collection = f'CALL {{ WITH {", ".join(map(str, variables))}\n' \
                      f'{optional_match}\n' \
                      f'{matches}\n' \

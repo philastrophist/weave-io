@@ -4,16 +4,21 @@ from weaveio import *
 from weaveio.opr3 import Data
 from astropy.table import Table
 
-data = Data()
-print(data.redrocks[['cname', 'targra', 'targdec']](limit=50))
-sys.exit(0)
 
-table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
-rows, targets = join(table, 'cname', data.weave_targets)
-q = targets.cname
-mjds = targets.exposures.mjd
-q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]
-# exposures = q()
+data = Data()
+# print(data.redrocks[['cname', 'targra', 'targdec']](limit=50))
+# sys.exit(0)
+
+
+# table = Table.read('weaveio/tests/my_table.ascii', format='ascii')
+# rows, targets = join(table, 'cname', data.weave_targets)
+# print(mean(targets.l1single_spectra.snr, wrt=data)())
+# q = targets.cname
+# mjds = targets.exposures.mjd
+# q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]
+# print(q())
+print(count(data.l1files['single_1002266.fit'].l1single_spectra)())
+print(data.l1files['single_1002266.fit'].l1single_spectra[['cname', 'l1file.fname']](limit=10))
 # print(exposures)
 
 # q = targets.l1single_spectra[['cname', rows['modelMag_g'], 'wvl', {'adu': 'flux'}, 'sensfunc']]
@@ -42,11 +47,11 @@ q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(m
 # targets = targets[any(targets.redrocks.zwarn == 0, wrt=targets)]
 # print(count(data.weave_targets[exists(data.weave_targets.redrocks, wrt=data.weave_targets)])())
 
-zs = targets.redrocks[targets.redrocks.zwarn == 0].z
-q = targets[['cname', {'redshifts': zs, 'mean_redshift': mean(zs, wrt=targets)}]]
-
-cypher, params = q._precompile()._to_cypher()
-print('\n'.join(cypher))
-t = q(limit=100)
-print(t)
+# zs = targets.redrocks[targets.redrocks.zwarn == 0].z
+# q = targets[['cname', {'redshifts': zs, 'mean_redshift': mean(zs, wrt=targets)}]]
+#
+# cypher, params = q._precompile()._to_cypher()
+# print('\n'.join(cypher))
+# t = q(limit=100)
+# print(t)
 # print(len(t), t.colnames)

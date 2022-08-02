@@ -228,6 +228,7 @@ class Aggregate(Statement):
     def make_cypher(self, ordering) -> str:
         conserve = {i for i in self.conserve if i in ordering}
         conserve = {self.graph.G.nodes[c]['variables'][0] for c in conserve if self.graph.G.nodes[c]['variables']}
+        conserve = {c for c in conserve if c != self.output}
         variables = ', '.join(conserve) + ', ' if conserve else ''
         agg_string = self.agg_func.format(self.input)
         return f"WITH {variables}{agg_string} as {self.output}"
@@ -250,6 +251,23 @@ class Return(Statement):
         if self.dropna is not None:
             return f"WITH * WHERE {self.dropna} is not null RETURN {cols}"
         return f"RETURN {cols}"
+
+
+class ApplyToList(Operation):
+    def __init__(self, input_variable, dependency_variables, apply_function, filter_function,
+                 graph: 'QueryGraph', put_null_in_empty=False):
+        Statement.__init__(self, [input_variable, *dependency_variables], graph)
+        self.x = graph.get_variable_name('x')
+        self.op_name = 'list-apply'
+        apply = apply_function.format(self.x, *self.inputs[1:])
+        filt = filter_function.format(self.x, *self.inputs[1:])
+        op_string = f"[{self.x} in {input_variable} WHERE {filt} | {apply}]"
+        if put_null_in_empty:
+            op_string = f"CASE WHEN SIZE({op_string}) = 0 THEN [null] ELSE {op_string} END"
+        self.op_string = op_string
+        self.op = op_string
+        self.output_variables.append(self.op)
+
 
 
 class Unwind(Statement):

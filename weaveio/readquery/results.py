@@ -52,7 +52,7 @@ class DotHandlerMixin:
             return self[attr]
         if any(colname.startswith(attr) for colname in self.colnames if '.' in colname):
             return ColnameParser(self, attr)
-        return super(DotHandlerMixin, self).__getattr__(attr)
+        return super(DotHandlerMixin, self).__getattribute__(attr)
 
 
 class Row(DotHandlerMixin, AstropyRow):

@@ -325,6 +325,10 @@ class HierarchyGraph(nx.MultiDiGraph):
         """return the shortest edge in the multidigraph for a given digraph edge """
         return pick_shortest_multiedge(self, a, b, weight)
 
+    @property
+    def singular(self):
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] == 0)
+
     def find_paths(self, a, b, singular):
         """
         Returns a set of paths from a to b
@@ -335,7 +339,7 @@ class HierarchyGraph(nx.MultiDiGraph):
             When queried, invalid paths will yield 0 results so it is not a problem.
         """
         if singular:
-            G = self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] == 0)
+            G = self.singular
         else:
             G = self
         try:

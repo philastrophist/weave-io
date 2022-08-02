@@ -12,7 +12,7 @@ class L1(Hierarchy):
 
 class L1Spectrum(Spectrum1D, L1):
     is_template = True
-    children = [Optional('self', idname='adjunct')]
+    children = Spectrum1D.children + [Optional('self', idname='adjunct')]
     products = ['flux', 'ivar', 'sensfunc']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
     parents = [FibreTarget]
