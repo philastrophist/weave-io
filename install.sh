@@ -7,6 +7,7 @@ else
         wget -nc -P /tmp https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
         bash /tmp/Miniconda3-latest-Linux-x86_64.sh
         echo "creating "
+        source ~/.bashrc
 fi
 if [[ -z "$(conda env list | grep weaveio)" ]]; then
         echo "creating new environment and installing weaveio"
@@ -26,6 +27,7 @@ conda create --yes --name weaveio python=3.7 numpy scipy matplotlib ipython jupy
 conda activate weaveio 
 pip install graphviz weaveio --no-cache-dir
 python -c "from weaveio import *" # test installation
+ipython kernel install --name "weaveio" --user
 ipython="$(which ipython)"
 pycmd="print('from weaveio import *; data = Data()'); from weaveio import *; data = Data()"
 cmd="$ipython --matplotlib -c \\\"$pycmd\\\" -i"
