@@ -11,7 +11,7 @@ def attributes(query: BaseQuery) -> List[str]:
     from ..data import Data
     if isinstance(query, Data):
         return list(query.plural_factors.keys())
-    return query._data.class_hierarchies[query._obj].products_and_factors
+    return [i.lower() for i in query._data.class_hierarchies[query._obj].products_and_factors]
 
 def _objects(query: BaseQuery):
     h = query._data.class_hierarchies[query._obj]
@@ -26,12 +26,14 @@ def objects(query: BaseQuery) -> List[str]:
     if isinstance(query, Data):
         return list(query.plural_hierarchies.keys())
     ss, ps = _objects(query)
-    return [s.singular_name for s in ss] + [p.plural_name for p in ps]
+    return [s.singular_name.lower() for s in ss] + [p.plural_name.lower() for p in ps]
 
 def explain(query: BaseQuery) -> None:
     from ..data import Data
     if isinstance(query, Data):
         print(f"Database connection {query}")
+    if query._obj is None:
+        raise TypeError(f"{query} is not a ObjectQuery")
     print(f"{query._obj}:")
     print(f"\t {query._data.class_hierarchies[query._obj].__doc__.strip()}")
 
@@ -47,4 +49,4 @@ def find(query: BaseQuery, guess: str, n=10) -> List[str]:
     factors = [i for s in ss for i in s.products_and_factors] + [query._data.plural_name(i) for p in ps for i in p.products_and_factors]
     sources = objs + factors
     inorder = sorted(sources, key=lambda x: textdistance.jaro_winkler(guess, x), reverse=True)
-    return inorder[0:n]
+    return [i.lower() for i in inorder[0:n]]
