@@ -210,7 +210,7 @@ class ObjectQuery(GenericObjectQuery):
         names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
         return TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
 
-    def _traverse_to_relative_object(self, obj, index):
+    def _traverse_to_relative_object(self, obj, index, want_singular):
         """
         obj.relative_path
         traversal, expands
@@ -222,16 +222,18 @@ class ObjectQuery(GenericObjectQuery):
             (Run)<-[r]-()<--(Exposure)
         """
         obj, obj_singular = self._normalise_object(obj)
+        if obj_singular != want_singular:
+            if want_singular:
+                raise CardinalityError(f"{obj} is not singular relative to {self._obj}")
+            raise CardinalityError(f"{obj} is not plural relative to {self._obj}")
         singular_name = self._data.singular_name(index)
-        path, single = self._get_path_to_object(obj, False)
-        if not single and singular_name == index:
-            raise SyntaxError(f"Relative index `{index}` is plural relative to `{self._obj}`.")
-        n = self._G.add_traversal(self._node, path, obj, False)
+        paths, singles = self._get_path_to_object(obj, want_singular)
+        n = self._G.add_traversal(self._node, paths, obj, obj_singular)
         relation_id = self._G.add_getitem(n, 'relation_id', 1)
         name = self._G.add_parameter(singular_name)
         eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id')
         f = self._G.add_filter(n, eq, direct=True)
-        return ObjectQuery._spawn(self, f, obj, single=single)
+        return ObjectQuery._spawn(self, f, obj, single=want_singular)
 
     def _filter_by_relative_index(self):
         """
@@ -304,7 +306,7 @@ class ObjectQuery(GenericObjectQuery):
                             relation = self._data.relative_names[singular][self._obj]
                         except KeyError:
                             raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
-                        return self._traverse_to_relative_object(relation.node.__name__, item)
+                        return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
                     elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:

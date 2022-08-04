@@ -97,7 +97,8 @@ def add_node_reference(graph: HashedDiGraph, statement, parent, *deps):
 
 
 def add_filter(graph: HashedDiGraph, parent, dependencies, statement):
-    n = make_node(graph, parent, 'filter', statement, False)
+    single = graph.edges[list(graph.in_edges(parent))[0]].get('single', False)
+    n = make_node(graph, parent, 'filter', statement, single)
     for d in dependencies:
         graph.add_edge(d, n, type='dep', style='dotted')
     return n
