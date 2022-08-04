@@ -59,11 +59,7 @@ class ObjectQuery(GenericObjectQuery):
         neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
         return [i.lower() for i in neighbors]
 
-    def _precompile(self) -> 'TableQuery':
-        """
-        If the object contains only one factor/product and defines no parents/children, return that
-        Otherwise, try to return just the id or error
-        """
+    def _get_default_attr(self):
         Obj = self._data.class_hierarchies[self._obj]
         if Obj.idname is not None:
             attr = Obj.idname
@@ -74,7 +70,14 @@ class ObjectQuery(GenericObjectQuery):
         else:
             raise SyntaxError(f"{self._obj} cannot be returned/identified since it doesn't define any unique idname. "
                               f"If you want to return all singular data for {self._obj} use ...['*']")
-        return self.__getitem__(attr)._precompile()
+        return self.__getitem__(attr)
+
+    def _precompile(self) -> 'TableQuery':
+        """
+        If the object contains only one factor/product and defines no parents/children, return that
+        Otherwise, try to return just the id or error
+        """
+        return self._get_default_attr()._precompile()
 
     def _get_all_factors_table(self):
         """
@@ -193,13 +196,13 @@ class ObjectQuery(GenericObjectQuery):
                     raise ValueError(f"Can only have one key-value pair per item, got {item}")
                 name, item = copy(item).popitem()
             if isinstance(item, ObjectQuery):
-                item = item._precompile()
+                item = item._get_default_attr()
             if isinstance(item, AttributeQuery):
                 attrs.append(item)
             else:
                 new = self.__getitem__(item)
                 if isinstance(new, ObjectQuery):
-                    new = new._precompile()
+                    new = new._get_default_attr()
                 if isinstance(new, list):
                     for a in new:
                         attrs.append(a)
@@ -302,11 +305,18 @@ class ObjectQuery(GenericObjectQuery):
                     singular = self._data.singular_name(item)
                     if singular in self._data.relative_names:  # if it's a relative id
                         # l1singlespectrum.adjunct gets the adjunct spectrum of a spectrum
-                        try:
-                            relation = self._data.relative_names[singular][self._obj]
-                        except KeyError:
-                            raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
-                        return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
+                        if not by_getitem:
+                            try:
+                                relation = self._data.relative_names[singular][self._obj]
+                            except KeyError:
+                                raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
+                            return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
+                        else:
+                            try:
+                                relation = self._data.relative_names[singular][self._previous._obj]
+                            except KeyError:
+                                raise AttributeNameError(f"`{self._previous._obj}` has no relative relation called `{singular}`")
+                            return self._previous._traverse_to_relative_object(relation.node.__name__, item, singular == item)
                     elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:
