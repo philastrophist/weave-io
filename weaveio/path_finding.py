@@ -333,6 +333,10 @@ class HierarchyGraph(nx.MultiDiGraph):
     def singular(self):
         return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] == 0)
 
+    @property
+    def plural(self):
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] > 0)
+
     def find_paths(self, a, b, singular):
         """
         Returns a set of paths from a to b

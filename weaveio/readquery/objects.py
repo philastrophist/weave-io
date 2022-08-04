@@ -19,6 +19,7 @@ from .base import BaseQuery
 from .exceptions import CardinalityError, AttributeNameError, UserError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex, dtype_conversion, mask_infs
+from .helpers import attributes, objects, find, explain
 from astropy.table import Table
 
 
@@ -49,15 +50,13 @@ def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
 
 class ObjectQuery(GenericObjectQuery):
     def __dir__(self) -> List[str]:
-        h = self._data.class_hierarchies[self._obj]
-        singulars = set(self._data.hierarchy_graph.singular.neighbors(h))
-        all_ = set(self._data.hierarchy_graph.neighbors(h))
-        neighbors = [i.singular_name for i in singulars]
-        neighbors += [i.plural_name for i in all_ - singulars]
-        neighbors += list(h.relative_names.keys())
-        neighbors += h.products_and_factors
-        neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
-        return [i.lower() for i in neighbors]
+        """For autocomplete, only return neighbours and directly owned things"""
+        attrs = attributes(self, directly_owned_only=True)
+        sing_objs = objects(self, plural=False)
+        plur_objs = list(set(objects(self, plural=True)) - set(sing_objs))
+        things = sorted(attrs) + sorted(sing_objs) + sorted(plur_objs)
+        things = [i if '[' not in i else f'"{i}"' for i in things]
+        return [i.lower() for i in things]
 
     def _get_default_attr(self):
         Obj = self._data.class_hierarchies[self._obj]
