@@ -227,7 +227,6 @@ class ObjectQuery(GenericObjectQuery):
         if obj_singular != want_singular:
             if want_singular:
                 raise CardinalityError(f"{obj} is not singular relative to {self._obj}")
-            raise CardinalityError(f"{obj} is not plural relative to {self._obj}")
         singular_name = self._data.singular_name(index)
         paths, singles = self._get_path_to_object(obj, want_singular)
         n = self._G.add_traversal(self._node, paths, obj, obj_singular)
@@ -304,18 +303,18 @@ class ObjectQuery(GenericObjectQuery):
                     singular = self._data.singular_name(item)
                     if singular in self._data.relative_names:  # if it's a relative id
                         # l1singlespectrum.adjunct gets the adjunct spectrum of a spectrum
-                        if not by_getitem:
-                            try:
-                                relation = self._data.relative_names[singular][self._obj]
-                            except KeyError:
+                        try:
+                            relation = self._data.relative_names[singular][self._obj]
+                        except KeyError as e:
+                            d = self._data.relative_names[singular]
+                            if len(d) > 1:
+                                k, v = copy(d).popitem()
+                                raise AttributeNameError(f"`{item}` is ambiguous. Choose a specific attribute like `.{self._data.plural_name(k)}.{item}`.")
+                            elif not d:
                                 raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
-                            return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
-                        else:
-                            try:
-                                relation = self._data.relative_names[singular][self._previous._obj]
-                            except KeyError:
-                                raise AttributeNameError(f"`{self._previous._obj}` has no relative relation called `{singular}`")
-                            return self._previous._traverse_to_relative_object(relation.node.__name__, item, singular == item)
+                            k, relation = copy(d).popitem()
+                            return self._traverse_to_specific_object(k, singular == item).__getattr__(item)
+                        return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
                     elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:
@@ -457,7 +456,19 @@ class Query(GenericObjectQuery):
             obj = self._data.plural_name(obj)
             return self._traverse_to_specific_object(obj)._select_attribute(item, True)
         except (KeyError, ValueError):
-            return self._traverse_to_specific_object(item)
+            try:
+                return self._traverse_to_specific_object(item)
+            except KeyError as e:
+                singular = self._data.singular_name(item)
+                d = self._data.relative_names[singular]
+                if len(d) > 1:
+                    k, v = copy(d).popitem()
+                    raise AttributeNameError(f"`{item}` is ambiguous. Choose a specific attribute like `.{self._data.plural_name(k)}.{item}`.")
+                elif not d:
+                    raise e
+                k, relation = copy(d).popitem()
+                k = self._data.plural_name(k)
+                return self._traverse_to_specific_object(k)._traverse_to_relative_object(relation.node.__name__, singular, singular == item)
 
 
 class AttributeQuery(BaseQuery):
