@@ -353,27 +353,30 @@ class QueryGraph:
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, paths, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
-    def fold_to_cardinal(self, parent_node):
+    def fold_to_cardinal(self, parent_node, wrt=None):
         """
         Adds a fake aggregation such that a node can be used as a dependency later.
         For operation chains, you follow the traversal route backwards.
         If the node
         """
-        try:
-            next(self.backwards_G.successors(parent_node))  # if its already aggregated then do nothing
-            return parent_node
-        except StopIteration:
-            path = nx.shortest_path(self.traversal_G, self.start, parent_node)[::-1]
-            for b, a in zip(path[:-1], path[1:]):
-                if not self.G.edges[(a, b)]['single']:
-                    wrt = b
-                    break
+        agg = next(self.backwards_G.successors(parent_node), None)
+        if wrt is None:
+            if agg is not None:
+                return parent_node  # if its already aggregated then do nothing
             else:
-                raise ParserError
-            if wrt == parent_node:
-                return parent_node
-            statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
-            return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
+                path = nx.shortest_path(self.traversal_G, self.start, parent_node)[::-1]
+                for b, a in zip(path[:-1], path[1:]):
+                    if not self.G.edges[(a, b)]['single']:
+                        wrt = b
+                        break
+                else:
+                    raise ParserError
+        elif agg == wrt:
+            return parent_node
+        if wrt == parent_node:
+            return parent_node
+        statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
+        return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name) -> Tuple:
         """
@@ -435,7 +438,8 @@ class QueryGraph:
         return self.add_generic_aggregation(parent, wrt_node, op_format_string, op_name)
 
     def add_filter(self, parent_node, predicate_node, direct=False):
-        predicate_node = self.fold_to_cardinal(predicate_node)  # predicates can only come from before obvs...
+        wrt = self.latest_shared_ancestor(parent_node, predicate_node)
+        predicate_node = self.fold_to_cardinal(predicate_node, wrt)  # put everything back to most recent shared ancestor
         if not nx.has_path(self.G, predicate_node, parent_node):
             raise SyntaxError(f"{parent_node} cannot be filtered by {predicate_node} since there is no direct path between them")
         predicate = self.G.nodes[predicate_node]['variables'][0]
