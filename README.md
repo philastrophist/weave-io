@@ -157,6 +157,9 @@ output:
 
 <img src="sky_spectra.png" height="200">
 
+The only new thing in this query is `for row in table`. This implicitly calls the table (`table()`) and downloads one row at a time. 
+You will want to do this when the resulting query will be large. By using this "iterator" pattern, you can avoid loading it all into memory at once.
+
 
 
 # 3. I want to plot the H-alpha flux vs. L2 redshift distribution from all WL or W-QSO spectra that were observed from all OBs observed in the past month. Use the stacked data
