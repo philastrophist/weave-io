@@ -6,14 +6,14 @@ def version(args):
 
 def console(args):
     import IPython
-    # from traitlets.config import Config
-    # c = Config()
-    # c.InteractiveShellApp.exec_lines = [
-    #     '%matplotlib',
-    #     "from weaveio import *",
-    #     "data = Data()",
-    # ]
-    # IPython.start_ipython(config=c, user_ns=args)
+    from traitlets.config import Config
+    c = Config()
+    c.InteractiveShellApp.exec_lines = [
+        "from weaveio import *",
+        "data = Data()",
+    ]
+    IPython.start_ipython(config=c, user_ns=args.__dict__, matplotlib='auto', colors='Linux',
+                          header=f'WeaveIO console version {weaveio.__version__}')
 
 def jupyter(args):
     subprocess.run(['conda', 'activate', 'weaveio', '&&',
