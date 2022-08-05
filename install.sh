@@ -7,7 +7,7 @@ else
         wget -nc -P /tmp https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
         bash /tmp/Miniconda3-latest-Linux-x86_64.sh
         echo "creating "
-        source ~/.bashrc
+        source $HOME/.bashrc
 fi
 if [[ -z "$(conda env list | grep weaveio)" ]]; then
         echo "creating new environment and installing weaveio"
