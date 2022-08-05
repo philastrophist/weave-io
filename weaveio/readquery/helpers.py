@@ -53,7 +53,7 @@ def objects(query: 'BaseQuery', plural=True) -> List[str]:
     if not plural:
         ps = []
     rels = list(query._data.class_hierarchies[query._obj].relative_names.keys())
-    return sorted([s.singular_name.lower() for s in ss] + [p.plural_name.lower() for p in ps] + rels)
+    return sorted([s.singular_name.lower() for s in ss] + rels) + sorted([p.plural_name.lower() for p in ps])
 
 def explain(query: 'BaseQuery') -> None:
     from ..data import Data
