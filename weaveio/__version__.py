@@ -1,2 +1,2 @@
-__version__ = "2022.1.3"
-__changes__ = 'Can now access default attributes (i.e. redshift arrays); fixed random plurality; fixed uppercase attrs; add better attributes'
+__version__ = "2022.1.4"
+__changes__ = 'Bugfixes and improvements: filtering no longer sometimes results in undiagnosable errors.'
