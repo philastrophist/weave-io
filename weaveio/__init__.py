@@ -89,7 +89,7 @@ try:
             changes = self.render_changes()
             version = fore.GREY_53 + self.version + style.RESET
             latest = fore.LIGHT_GREEN + self.latest + style.RESET
-            command = fore.LIGHT_BLUE + 'pip3 install --user --upgrade ' + self.name + style.RESET
+            command = fore.LIGHT_BLUE + 'weaveio upgrade' + style.RESET
             nchanges = fore.LIGHT_GREEN + str(len(changes)) + style.RESET
             strings = [f'Update available {version} -> {latest} ({nchanges} new releases)' ,
                        f'Run {command} to update'] + [f'--- {c.strip()}' for c in changes]
