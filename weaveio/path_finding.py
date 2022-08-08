@@ -80,6 +80,8 @@ def shortest_simple_paths(G, source, target, weight):
 
 def pick_shortest_multiedge(G, a, b, weight=None):
     edges = set(G.out_edges(a, keys=True)) & set(G.in_edges(b, keys=True))
+    if not edges:
+        raise nx.NetworkXNoPath("No path found between %s and %s" % (a, b))
     if weight is not None:
         return min(edges, key=lambda e: G.edges[e][weight])
     return edges.pop()
@@ -138,6 +140,7 @@ def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
     *sorted_nodes, G, use_children = graph.sort_deepest(a, b)
     G = G.reverse()
     _paths = find_forking_path(G, *sorted_nodes, weight)
+    _paths = {(p[0], p[0]) if len(p) == 1 else p for p in _paths}
     # put in requested order (a-->b)
     # now remove chains of is_a
     # so x-l1spectrum-l1stacked-l1stack becomes x-l1stack
@@ -305,7 +308,8 @@ class HierarchyGraph(nx.MultiDiGraph):
 
     def sort_deepest(self, a, b):
         """Returns [a, b] or [b, a], in order of increasing depth in the graph"""
-
+        if a is b:
+            return a, b, self.parents_and_inheritance, False
         if a not in self:
             raise nx.NodeNotFound(f"Node {a} not found in graph {self}")
         if b not in self:
@@ -329,6 +333,10 @@ class HierarchyGraph(nx.MultiDiGraph):
     def singular(self):
         return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] == 0)
 
+    @property
+    def plural(self):
+        return self.subgraph_view(filter_edge=lambda *e: self.edges[e]['weight'] > 0)
+
     def find_paths(self, a, b, singular):
         """
         Returns a set of paths from a to b
@@ -342,6 +350,7 @@ class HierarchyGraph(nx.MultiDiGraph):
             G = self.singular
         else:
             G = self
+        # return find_paths(G, a, b)
         try:
             return find_paths(G.nonoptional, a, b)
         except nx.NetworkXNoPath:

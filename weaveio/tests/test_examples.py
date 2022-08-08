@@ -51,4 +51,23 @@ def test_example3(data):
     assert table[0]['ha_6562.80_flux'] == 150790646.85417017
 
 
-# def test_example4(data):
+def test_example4(data):
+    from astropy.table import Table
+    import weaveio
+    fname = Path(weaveio.__file__).parents[0] / 'tests/my_table.ascii'
+    table = Table.read(fname, format='ascii')
+    rows, targets = join(table, 'cname', data.weave_targets)
+    mjds = targets.exposures.mjd  # get the mjd of the plate exposures for each target
+    q = targets['cname', rows['modelMag_i'], {'mjds': mjds, 'nobservations': count(mjds, wrt=targets)}]
+    t = q()
+    assert len(t) == len(table)
+    assert np.all(np.sort(t['cname']) == np.sort(table['cname']))
+    assert np.all(t['nobservations'] >= 6)
+
+
+def test_adjunct(data):
+    t = data.l1single_spectra[data.l1single_spectra.camera == 'red']
+    t = t[['camera', 'adjunct.camera']](limit=5)
+    assert np.all(t['camera'] == 'red')
+    assert np.all(t['adjunct.camera'] == 'blue')
+

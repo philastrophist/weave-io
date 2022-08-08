@@ -1,5 +1,6 @@
 import logging
 import time
+import warnings
 from collections import defaultdict
 from contextlib import contextmanager
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
@@ -91,10 +92,10 @@ class BaseQuery:
             for i, row in enumerate(rows):
                 yield new._post_process_row(row)
         if limit == i:
+            warnings.simplefilter("always")
             warn(f"This query has been capped to {limit} rows but the result is larger than that. "
                  f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
                  f"the full result (although this is not recommended).")
-
 
     def __iter__(self):
         yield from self._iterate()
@@ -123,6 +124,7 @@ class BaseQuery:
             return tbl[0]
         try:
             if limit == len(tbl):
+                warnings.simplefilter("always")
                 warn(f"This query has been capped to {limit} rows but the result is larger than that. "
                      f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
                      f"the full result (although this is not recommended).")

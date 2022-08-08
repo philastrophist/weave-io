@@ -84,7 +84,7 @@ setup(
     #If your package is a single module, use this instead of 'packages':
     # py_modules=['mypackage'],
 
-    entry_points={},
+    entry_points={'console_scripts': ['weaveio=weaveio.command_line:main']},
     install_requires=REQUIRED,
     include_package_data=True,
     license='MIT',

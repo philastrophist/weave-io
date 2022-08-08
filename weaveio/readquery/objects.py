@@ -19,6 +19,7 @@ from .base import BaseQuery
 from .exceptions import CardinalityError, AttributeNameError, UserError
 from .parser import QueryGraph, ParserError
 from .utilities import is_regex, dtype_conversion, mask_infs
+from .helpers import attributes, objects, find, explain
 from astropy.table import Table
 
 
@@ -49,21 +50,15 @@ def process_names(given_names, attrs: List['AttributeQuery']) -> List[str]:
 
 class ObjectQuery(GenericObjectQuery):
     def __dir__(self) -> List[str]:
-        h = self._data.class_hierarchies[self._obj]
-        singulars = set(self._data.hierarchy_graph.singular.neighbors(h))
-        all_ = set(self._data.hierarchy_graph.neighbors(h))
-        neighbors = [i.singular_name for i in singulars]
-        neighbors += [i.plural_name for i in all_ - singulars]
-        neighbors += list(h.relative_names.keys())
-        neighbors += h.products_and_factors
-        neighbors = [i if '[' not in i else f'"{i}"' for i in neighbors]
-        return [i.lower() for i in neighbors]
+        """For autocomplete, only return neighbours and directly owned things"""
+        attrs = attributes(self, directly_owned_only=True)
+        sing_objs = objects(self, plural=False)
+        plur_objs = list(set(objects(self, plural=True)) - set(sing_objs))
+        things = sorted(attrs) + sorted(sing_objs) + sorted(plur_objs)
+        things = [i if '[' not in i else f'"{i}"' for i in things]
+        return [i.lower() for i in things]
 
-    def _precompile(self) -> 'TableQuery':
-        """
-        If the object contains only one factor/product and defines no parents/children, return that
-        Otherwise, try to return just the id or error
-        """
+    def _get_default_attr(self):
         Obj = self._data.class_hierarchies[self._obj]
         if Obj.idname is not None:
             attr = Obj.idname
@@ -74,7 +69,14 @@ class ObjectQuery(GenericObjectQuery):
         else:
             raise SyntaxError(f"{self._obj} cannot be returned/identified since it doesn't define any unique idname. "
                               f"If you want to return all singular data for {self._obj} use ...['*']")
-        return self.__getitem__(attr)._precompile()
+        return self.__getitem__(attr)
+
+    def _precompile(self) -> 'TableQuery':
+        """
+        If the object contains only one factor/product and defines no parents/children, return that
+        Otherwise, try to return just the id or error
+        """
+        return self._get_default_attr()._precompile()
 
     def _get_all_factors_table(self):
         """
@@ -193,13 +195,13 @@ class ObjectQuery(GenericObjectQuery):
                     raise ValueError(f"Can only have one key-value pair per item, got {item}")
                 name, item = copy(item).popitem()
             if isinstance(item, ObjectQuery):
-                item = item._precompile()
+                item = item._get_default_attr()
             if isinstance(item, AttributeQuery):
                 attrs.append(item)
             else:
                 new = self.__getitem__(item)
                 if isinstance(new, ObjectQuery):
-                    new = new._precompile()
+                    new = new._get_default_attr()
                 if isinstance(new, list):
                     for a in new:
                         attrs.append(a)
@@ -210,7 +212,7 @@ class ObjectQuery(GenericObjectQuery):
         names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
         return TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
 
-    def _traverse_to_relative_object(self, obj, index):
+    def _traverse_to_relative_object(self, obj, index, want_singular):
         """
         obj.relative_path
         traversal, expands
@@ -222,16 +224,17 @@ class ObjectQuery(GenericObjectQuery):
             (Run)<-[r]-()<--(Exposure)
         """
         obj, obj_singular = self._normalise_object(obj)
+        if obj_singular != want_singular:
+            if want_singular:
+                raise CardinalityError(f"{obj} is not singular relative to {self._obj}")
         singular_name = self._data.singular_name(index)
-        path, single = self._get_path_to_object(obj, False)
-        if not single and singular_name == index:
-            raise SyntaxError(f"Relative index `{index}` is plural relative to `{self._obj}`.")
-        n = self._G.add_traversal(self._node, path, obj, False)
+        paths, singles = self._get_path_to_object(obj, want_singular)
+        n = self._G.add_traversal(self._node, paths, obj, obj_singular)
         relation_id = self._G.add_getitem(n, 'relation_id', 1)
         name = self._G.add_parameter(singular_name)
         eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id')
         f = self._G.add_filter(n, eq, direct=True)
-        return ObjectQuery._spawn(self, f, obj, single=single)
+        return ObjectQuery._spawn(self, f, obj, single=want_singular)
 
     def _filter_by_relative_index(self):
         """
@@ -302,9 +305,16 @@ class ObjectQuery(GenericObjectQuery):
                         # l1singlespectrum.adjunct gets the adjunct spectrum of a spectrum
                         try:
                             relation = self._data.relative_names[singular][self._obj]
-                        except KeyError:
-                            raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
-                        return self._traverse_to_relative_object(relation.node.__name__, item)
+                        except KeyError as e:
+                            d = self._data.relative_names[singular]
+                            if len(d) > 1:
+                                k, v = copy(d).popitem()
+                                raise AttributeNameError(f"`{item}` is ambiguous. Choose a specific attribute like `.{self._data.plural_name(k)}.{item}`.")
+                            elif not d:
+                                raise AttributeNameError(f"`{self._obj}` has no relative relation called `{singular}`")
+                            k, relation = copy(d).popitem()
+                            return self._traverse_to_specific_object(k, singular == item).__getattr__(item)
+                        return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
                     elif by_getitem:  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:
@@ -446,7 +456,19 @@ class Query(GenericObjectQuery):
             obj = self._data.plural_name(obj)
             return self._traverse_to_specific_object(obj)._select_attribute(item, True)
         except (KeyError, ValueError):
-            return self._traverse_to_specific_object(item)
+            try:
+                return self._traverse_to_specific_object(item)
+            except KeyError as e:
+                singular = self._data.singular_name(item)
+                d = self._data.relative_names[singular]
+                if len(d) > 1:
+                    k, v = copy(d).popitem()
+                    raise AttributeNameError(f"`{item}` is ambiguous. Choose a specific attribute like `.{self._data.plural_name(k)}.{item}`.")
+                elif not d:
+                    raise e
+                k, relation = copy(d).popitem()
+                k = self._data.plural_name(k)
+                return self._traverse_to_specific_object(k)._traverse_to_relative_object(relation.node.__name__, singular, singular == item)
 
 
 class AttributeQuery(BaseQuery):
