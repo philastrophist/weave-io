@@ -1,5 +1,13 @@
 ![PyPI](https://img.shields.io/pypi/v/weaveio)
 
+# Installation
+Installation is done using `pip` with Python 3.7 or above. 
+The install script `install.sh` can be downloaded and run with `chmod +x install.sh && ./install.sh`. 
+This will place `weaveio` in its own environment - accessed using `conda activate weaveio`. 
+Upgrades are now handled by the `weaveio` command line application which will be installed along with weaveio.
+
+To enable ssh access for jupyter notebooks please refer to the section entitled "ssh access" below.
+
 # Tutorial
 
 ## WEAVE objects
@@ -340,3 +348,33 @@ Because of this chain of parentage/relation, every object has access to all attr
         * `data.weave_targets.obs[obid]` returns the ob with obid for each weave_target (sometimes will be None)
 
 
+
+# SSH access
+instructions to enable passwordless ssh access for jupyter weaveio:
+
+* open/create directories `~/.ssh/config`
+* add the following to that file
+```
+		Host lofar
+	        User <USERNAME>
+	        HostName lofar.herts.ac.uk
+	        LocalForward <PERSONALPORT> 127.0.0.1:<PERSONALPORT>
+	        LocalForward 7474 127.0.0.1:7474
+	        LocalForward 7687 127.0.0.1:7687
+	        ForwardX11 yes
+```
+
+* `ls -al ~/.ssh`
+* if no key files are listed there:
+	* `ssh-keygen -t ed25519 -C "<your_email@example.com>"`
+	* `eval "$(ssh-agent -s)"`
+	* `ssh-add ~/.ssh/id_ed25519`
+* open public key file (`~/.ssh/id_ed25519.pub`) and copy all contents to clipboard
+* `ssh lofar`
+* enter username and password
+* `bash`
+* `nano ~/.ssh/authorized_keys`
+* paste in your public key contents and save
+* `nano ~/.bashrc`
+	* append `export DISPLAY=localhost:0.0`
+* logout and login to verify
