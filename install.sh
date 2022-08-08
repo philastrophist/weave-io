@@ -27,12 +27,7 @@ conda create --yes --name weaveio python=3.7 numpy scipy matplotlib ipython jupy
 conda activate weaveio 
 pip install graphviz weaveio --no-cache-dir
 python -c "from weaveio import *" # test installation
-ipython kernel install --name "weaveio" --user
-ipython="$(which ipython)"
-pycmd="print('from weaveio import *; data = Data()'); from weaveio import *; data = Data()"
-cmd="$ipython --matplotlib -c \\\"$pycmd\\\" -i"
-tcshrc_cmd="$ipython --matplotlib -c \"$pycmd\" -i"
-echo "alias weaveio=\"$cmd\"" >> "$HOME/.bashrc"
-echo "alias weaveio $tcshrc_cmd" >> "$HOME/.tcshrc"
+
 echo "use the cmd \`weaveio\` to enter the weaveio ipython shell"
+echo "remove any aliases in your bashrc file to allow the new weaveio command to be used"
 echo "source your ~/.bashrc or ~/.tcshrc file now to complete installation"
