@@ -16,4 +16,5 @@ graphviz
 matplotlib==3.3.4
 jupyter
 notebook
+ipython
 scipy
