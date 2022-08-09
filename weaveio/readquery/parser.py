@@ -250,6 +250,7 @@ class QueryGraph:
         self.backwards_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] == 'wrt')  # type: nx.DiGraph
         self.traversal_G = nx.subgraph_view(self.G, filter_edge=lambda a, b: self.G.edges[(a, b)]['type'] != 'dep')  # type: nx.DiGraph
         self.parameters = {}
+        self.groupbys = {}
 
     @property
     def statements(self):
@@ -508,6 +509,11 @@ class QueryGraph:
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         statement = Return(deps, None, [], self)
         return add_return(self.G, self.start, column_nodes, statement)
+
+    def add_groupby(self, query):
+        name = self.add_parameter('<placeholder>', 'group')
+        self.groupbys[name] = query
+        return name
 
     def add_parameter(self, value, name=None):
         if isinstance(value, pd.DataFrame):

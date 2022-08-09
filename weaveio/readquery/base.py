@@ -1,13 +1,17 @@
+import itertools
 import logging
 import time
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
+from copy import copy
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 from warnings import warn
 
 import networkx as nx
 from networkx import NetworkXNoPath, NodeNotFound
+from py2neo.cypher import Cursor
+
 from weaveio.hierarchy import Hierarchy
 
 from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
@@ -31,9 +35,9 @@ class BaseQuery:
     one_row = False
     one_column = False
 
-    def _debug_output(self):
+    def _debug_output(self, skip=0, limit=None, distinct=False):
         n = self._precompile()
-        c = n._to_cypher()
+        c = n._to_cypher(skip, limit, distinct)
         return '\n'.join(c[0]), c[1]
 
     def raise_error_with_suggestions(self, obj, exception: Exception):
@@ -62,48 +66,85 @@ class BaseQuery:
                     params[k] = v
         return params
 
-    def _to_cypher(self) -> Tuple[List[str], Dict[str, Any]]:
+    def _to_cypher(self, skip, limit, distinct) -> Tuple[List[str], Dict[str, Any]]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
         lines = self._G.cypher_lines(self._node)
+        if distinct:
+            lines[-1] = 'RETURN DISTINCT'.join(lines[-1].rsplit('RETURN', 1))
+        if skip > 0:
+            lines.append(f"\nSKIP {skip}")
+        if limit is not None:
+            lines.append(f"\nLIMIT {limit}")
         return lines, self._prepare_parameters(lines)
 
-    def _compile(self) -> Tuple['BaseQuery', Tuple[List[str], Dict[str, Any]]]:
+    def _compile(self, skip, limit, distinct) -> Tuple['BaseQuery', Tuple[List[str], Dict[str, Any]]]:
         with logtime('compiling'):
             r = self._precompile()
-            return r, r._to_cypher()
+            return r, r._to_cypher(skip, limit, distinct)
 
-    def _execute(self, skip=0, limit=None):
+    def _execute_single_query(self, query, cypher, params):
+        return query._data.graph.execute(cypher, **{k.replace('$', ''): v for k, v in params.items()})
+
+    def _execute_groups(self, query, cypher, params):
+        groupids = []
+        names = []
+        for name, query in self._G.groupbys.items():
+            if name in params:
+                groupids.append(query._iterate(limit=None, skip=0, distinct=True, no_groups=True))
+                names.append(name)
+        if not groupids:
+            return self._execute_single_query(query, cypher, params)
+        for values in itertools.product(*groupids):
+            for name, value in zip(names, values):
+                params[name] = value
+            yield values, cypher, params
+
+    def _execute(self, skip=0, limit=None, distinct=False, no_groups=False):
+        """
+        returns a new query (using _precompile) and an iterator over cursors.
+        For queries that have not been `split`, this is a single cursor.
+        For queries that have been `split`, there will be multiple cursors.
+        """
         with logtime('executing'):
-            new, (lines, params) = self._compile()
+            if self._cached_group is not None:
+                return self._execute_single_query(self, *self._cached_group), self
+            new, (lines, params) = self._compile(skip, limit, distinct)
             cypher = '\n'.join(lines)
-            if skip > 0:
-                cypher += f"\nSKIP {skip}"
-            if limit is not None:
-                cypher += f"\nLIMIT {limit}"
-            cursor = new._data.graph.execute(cypher, **{k.replace('$', ''): v for k,v in params.items()})
-            return cursor, new
+            if no_groups:
+                return self._execute_single_query(new, cypher, params), new
+            gen = self._execute_groups(new, cypher, params)
+            return gen, new
 
-    def _iterate(self, skip=0, limit=None):
-        cursor, new = self._execute(skip, limit)
-        rows = new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products, True)
-        with logtime('total streaming (by iteration)'):
-            for i, row in enumerate(rows):
-                yield new._post_process_row(row)
-        if limit == i:
-            warnings.simplefilter("always")
-            warn(f"This query has been capped to {limit} rows but the result is larger than that. "
-                 f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
-                 f"the full result (although this is not recommended).")
+    def _iterate(self, skip=0, limit=None, distinct=False, no_groups=False):
+        cursor_or_gen, new = self._execute(skip, limit, distinct, no_groups)  # produces either a cursor or a generator of cursors
+        if not isinstance(cursor_or_gen, Cursor):
+            for groups, cypher, params in cursor_or_gen:
+                copied = copy(new)
+                copied._cached_group = (cypher, params)
+                yield groups, copied
+        else:
+            rows = new._data.rowparser.iterate_cursor(cursor_or_gen, new._names, new._is_products, True)
+            with logtime('total streaming (by iteration)'):
+                for i, row in enumerate(rows):
+                    yield new._post_process_row(row)
+            if limit == i:
+                warnings.simplefilter("always")
+                warn(f"This query has been capped to {limit} rows but the result is larger than that. "
+                     f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
+                     f"the full result (although this is not recommended).")
 
     def __iter__(self):
         yield from self._iterate()
 
-    def _to_table(self, skip=0, limit=None) -> Tuple[Table, 'BaseQuery']:
+    def _to_table(self, skip=0, limit=None, distinct=False) -> Tuple[Table, 'BaseQuery']:
         with logtime('total streaming'):
-            cursor, new = self._execute(skip, limit)
-            return new._data.rowparser.parse_to_table(cursor, new._names, new._is_products), new
+            cursor_or_gen, new = self._execute(skip, limit, distinct)  # produces either a cursor or a generator of cursors
+            if not isinstance(cursor_or_gen, Cursor):
+                raise NotImplementedError("This query has been split and cannot be converted to a table. "
+                                          "Iterate over the query instead to get the individual split queries.")
+            return new._data.rowparser.parse_to_table(cursor_or_gen, new._names, new._is_products), new
 
     def _post_process_table(self, result):
         if self.one_column:
@@ -117,8 +158,8 @@ class BaseQuery:
             return row[row.colnames[0]]
         return row
 
-    def __call__(self, skip=0, limit=1000, **kwargs):
-        tbl, new = self._to_table(skip, limit)
+    def __call__(self, skip=0, limit=1000, distinct=False, **kwargs):
+        tbl, new = self._to_table(skip, limit, distinct)
         tbl = new._post_process_table(tbl)
         if limit == 1:
             return tbl[0]
@@ -137,6 +178,7 @@ class BaseQuery:
                  obj: str = None, start: 'Query' = None, index_node = None,
                  single=False, names=None, is_products=None, attrs=None, dtype=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
+        self._cached_group = None
         self._single = single
         self._data = data
         if G is None:
