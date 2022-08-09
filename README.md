@@ -1,12 +1,28 @@
 ![PyPI](https://img.shields.io/pypi/v/weaveio)
 
 # Installation
-Installation is done using `pip` with Python 3.7 or above. 
+Installation is done using `pip` with Python 3.7 or above (python environment installation is handled in the install script).
 The install script `install.sh` can be downloaded and run with `chmod +x install.sh && ./install.sh`. 
 This will place `weaveio` in its own environment - accessed using `conda activate weaveio`. 
 Upgrades are now handled by the `weaveio` command line application which will be installed along with weaveio.
 
 To enable ssh access for jupyter notebooks please refer to the section entitled "ssh access" below.
+
+### Upgrading to `2022.1.5`
+If you are on a `weaveio` version older than `2022.1.5` then please run the following:
+1. `conda activate weaveio`
+2. `pip install weaveio --upgrade --no-cache-dir` 
+3. Remove old weaveio aliases in your `.bashrc` or `.tcshrc` files
+4. Add a new alias with `conda activate weaveio && echo "alias weaveio=$(dirname "$(which python)")/weaveio" >> ~/.bashrc`
+5. `source ~/.bashrc` or `source ~/.tcshrc`
+
+## `weaveio` command line
+In versions post `2022.1.5`, we will use the `weaveio` command line to run the following commands:
+* `console` - runs an ipython console with weaveio activated
+* `jupyter` - starts a jupyter notebook in the current directory in the `weaveio` environment (you can `list` active servers and also `stop` them).
+* `version` - Returns version info
+* `upgrade` - Uses pip to install the latest version of `weaveio`
+
 
 # Tutorial
 
