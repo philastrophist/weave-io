@@ -35,7 +35,7 @@ class SplitQuery:
     # add filter
 
 
-def split(query: BaseQuery, groupby: Union[AttributeQuery, str, ObjectQuery] = None):
+def split(query: BaseQuery, splitby: Union[AttributeQuery, str, ObjectQuery] = None):
     """
     Splits the given query into unique parts based on the given groupby attribute.
     Each part is treated like a new query and is executed independently.
@@ -47,7 +47,7 @@ def split(query: BaseQuery, groupby: Union[AttributeQuery, str, ObjectQuery] = N
     Queries that result in duplicates i.e. `data.runs.l1single_spectra.runs` will not be changed, duplications will persist.
 
     :param query: The query to split.
-    :param groupby: The name of the groupby attribute.
+    :param splitby: The name of the groupby attribute.
     :return: A SplitQuery object containing many queries that were split from the given query.
 
     Example:
@@ -75,18 +75,18 @@ def split(query: BaseQuery, groupby: Union[AttributeQuery, str, ObjectQuery] = N
             0.0 .. 0.0 4730.0 .. 5450.0
             0.0 .. 0.0 4730.0 .. 5450.0
     """
-    if groupby is None and isinstance(query, ObjectQuery):
+    if splitby is None and isinstance(query, ObjectQuery):
         try:
-            groupby = query._get_default_attr()
+            splitby = query._get_default_attr()
         except SyntaxError:
-            groupby = query._get_neo4j_id()
-    elif isinstance(groupby, str):
-        groupby = query[groupby]
-    elif isinstance(groupby, ObjectQuery):
-        groupby = groupby._get_default_attr()
-    elif not isinstance(groupby, AttributeQuery):
+            splitby = query._get_neo4j_id()
+    elif isinstance(splitby, str):
+        splitby = query[splitby]
+    elif isinstance(splitby, ObjectQuery):
+        splitby = splitby._get_default_attr()
+    elif not isinstance(splitby, AttributeQuery):
         raise TypeError('groupby must be an AttributeQuery, str, or ObjectQuery')
-    group_id = query._G.add_groupby(groupby)
-    group_eq = groupby._perform_arithmetic(f'{{0}} = {group_id}', '=', group_id, returns_dtype='boolean')
+    group_id = query._G.add_groupby(splitby)
+    group_eq = splitby._perform_arithmetic(f'{{0}} = {group_id}', '=', group_id, returns_dtype='boolean')
     grouped_query = query._filter_by_mask(group_eq, single=True, split_node=True)
     return grouped_query

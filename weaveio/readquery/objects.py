@@ -139,14 +139,14 @@ class ObjectQuery(GenericObjectQuery):
         path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
-        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}', parameters=[param])
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         path, single = self._get_path_to_object(obj, False)
         param = self._G.add_parameter(indexes)
-        one_id = self._G.add_unwind_parameter(self._node, param)
+        one_id = self._G.add_unwind_parameter(self._node, param, parameters=[param])
         travel = self._G.add_traversal(self._node, path, obj, single, one_id)
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id, wrt=travel)
@@ -234,7 +234,7 @@ class ObjectQuery(GenericObjectQuery):
         n = self._G.add_traversal(self._node, paths, obj, obj_singular)
         relation_id = self._G.add_getitem(n, 'relation_id', 1)
         name = self._G.add_parameter(singular_name)
-        eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id')
+        eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id', parameters=[name])
         f = self._G.add_filter(n, eq, direct=True)
         return ObjectQuery._spawn(self, f, obj, single=want_singular)
 
@@ -435,13 +435,13 @@ class Query(GenericObjectQuery):
         else:
             travel = self._G.add_traversal(self._node, [], obj, single)
         i = self._G.add_getitem(travel, 'id')
-        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}', parameters=[name])
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         param = self._G.add_parameter(indexes)
-        one_id = self._G.add_unwind_parameter(self._node, param)
+        one_id = self._G.add_unwind_parameter(self._node, param, parameters=[param])
         if self._node == 0:
             travel = self._G.add_start_node(obj, one_id)
         else:
@@ -537,9 +537,11 @@ class AttributeQuery(BaseQuery):
         if not isinstance(other, AttributeQuery):
             other = self._G.add_parameter(other, 'add')
             string_op = f'{other} {operator} {{0}}' if switch else f'{{0}} {operator} {other}'
+            ps = [other]
         else:
             string_op = f'{{1}} {operator} {{0}}' if switch else f'{{0}} {operator} {{1}}'
-        return self._perform_arithmetic(string_op, operator, other, returns_dtype=out_dtype)
+            ps = []
+        return self._perform_arithmetic(string_op, operator, other, returns_dtype=out_dtype, parameters=ps)
 
     def __and__(self, other):
         return self._basic_math_operator('and', other, out_dtype='boolean')

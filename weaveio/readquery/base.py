@@ -40,11 +40,11 @@ def get_groupids(graph, params):
             names.append(name)
     return groupids, names
 
-def _execute_groups(groupids, names, params, cypher):
+def _execute_groups(groupids, names, params):
     for values in itertools.product(*groupids):
         for name, value in zip(names, values):
             params[name] = value
-        yield values, cypher, params
+        yield values, params
 
 
 class BaseQuery:
@@ -82,11 +82,11 @@ class BaseQuery:
                     params[k] = v
         return params
 
-    def _to_cypher(self, skip, limit, distinct) -> Tuple[List[str], Dict[str, Any]]:
+    def _to_cypher(self, skip, limit, distinct, no_cache=False) -> Tuple[List[str], Dict[str, Any]]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
-        lines = self._G.cypher_lines(self._node)
+        lines = self._G.cypher_lines(self._node, no_cache)
         if distinct:
             lines[-1] = 'RETURN DISTINCT'.join(lines[-1].rsplit('RETURN', 1))
         if skip > 0:
@@ -103,6 +103,12 @@ class BaseQuery:
     def _execute_single_query(self, query, cypher, params):
         return query._data.graph.execute(cypher, **{k.replace('$', ''): v for k, v in params.items()})
 
+    def _get_cached_parameters(self):
+        params = {}
+        for node in self._G.restricted(self._node).nodes:
+            params.update(self._G.G.nodes[node].get('cached_params', {}))
+        return params
+
     def _execute(self, skip=0, limit=None, distinct=False, no_groups=False):
         """
         returns a new query (using _precompile) and an iterator over cursors.
@@ -114,24 +120,24 @@ class BaseQuery:
         :param no_groups: whether to return a single cursor or a generator of cursors
         """
         with logtime('executing'):
+            cached_params = self._get_cached_parameters()
+            placeholder_params = self._G.dependency_parameters(self._node)
+            params = {**placeholder_params, **cached_params}
+            if not no_groups:
+                groupids, names = get_groupids(self._G, params)
+                if groupids:
+                    return _execute_groups(groupids, names, params), self
             new, (lines, params) = self._compile(skip, limit, distinct)
             cypher = '\n'.join(lines)
-            if self._cached_group is not None:
-                return self._execute_single_query(new, *self._cached_group), new
-            if no_groups:
-                return self._execute_single_query(new, cypher, params), new
-            groupids, names = get_groupids(self._G, params)
-            if not groupids:
-                return self._execute_single_query(new, cypher, params), new
-            return _execute_groups(groupids, names, params, cypher), self
+            return self._execute_single_query(new, cypher, params), new
 
     def _iterate(self, skip=0, limit=None, distinct=False, no_groups=False):
         cursor_or_gen, new = self._execute(skip, limit, distinct, no_groups)  # produces either a cursor or a generator of cursors
         if not isinstance(cursor_or_gen, Cursor):
-            for groups, cypher, params in cursor_or_gen:
+            for split_indexes, params in cursor_or_gen:
                 copied = copy(new)  # copy the query, so that the parameters are not shared between the cursors
-                copied._cached_group = (cypher, params)  # store the query and parameters for when the query is executed
-                yield groups, copied
+                new._G.nodes[copied._node]['cached_params'] = params  # store the groups for when the query is executed
+                yield split_indexes, copied
         else:
             rows = new._data.rowparser.iterate_cursor(cursor_or_gen, new._names, new._is_products, True)
             with logtime('total streaming (by iteration)'):
@@ -186,7 +192,6 @@ class BaseQuery:
                  obj: str = None, start: 'Query' = None, index_node = None,
                  single=False, names=None, is_products=None, attrs=None, dtype=None, *args, **kwargs) -> None:
         from .objects import ObjectQuery
-        self._cached_group = None
         self._single = single
         self._data = data
         if G is None:

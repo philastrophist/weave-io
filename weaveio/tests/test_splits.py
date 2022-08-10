@@ -36,3 +36,13 @@ def test_as_attribute(data):
     for index, q in query:
         rows.append(q())
     assert sorted(all_query(limit=None)) == sorted(rows)
+
+
+def test_continue_query(data):
+    obs = data.obs
+    split_obs = split(obs)
+    query = split_obs.l1single_spectra
+
+    for index, q in query:
+        count(q)()
+        break

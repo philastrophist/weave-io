@@ -253,9 +253,12 @@ class QueryGraph:
         self.parameters = {}
         self.groupbys = {}
 
-    @property
-    def statements(self):
-        return {d['statement']: (a, b) for a, b, d in self.G.edges(data=True) if 'statement' in d}
+    def statements(self, node):
+        if node is None:
+            G = self.G
+        else:
+            G = self.restricted(node)
+        return {d['statement']: (a, b) for a, b, d in G.edges(data=True) if 'statement' in d}
 
     def latest_shared_ancestor(self, *nodes):
         if all(n == nodes[0] for n in nodes):
@@ -392,7 +395,7 @@ class QueryGraph:
         statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
         return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
 
-    def add_scalar_operation(self, parent_node, op_format_string, op_name) -> Tuple:
+    def add_scalar_operation(self, parent_node, op_format_string, op_name, parameters=None) -> Tuple:
         """
         A scalar operation is one which takes only one input and returns one output argument
         the input can be one of [object, operation, aggregation]
@@ -400,10 +403,10 @@ class QueryGraph:
         if any(d['type'] == 'aggr' for a, b, d in self.G.in_edges(parent_node, data=True)):
             wrt = next(self.backwards_G.successors(parent_node))
             return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
-        statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self)
+        statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self, parameters)
         return add_operation(self.G, parent_node, [], statement), parent_node
 
-    def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None) -> Tuple:
+    def add_combining_operation(self, op_format_string, op_name, *nodes, wrt=None, parameters=None) -> Tuple:
         """
         A combining operation is one which takes multiple inputs and returns one output
         Operations should be inline (no variables) for as long as possible.
@@ -414,7 +417,7 @@ class QueryGraph:
         if wrt is None:
             wrt = self.latest_object_node(*dependency_nodes)
         deps = [self.G.nodes[d]['variables'][0] for d in dependency_nodes]
-        statement = Operation(deps[0], deps[1:], op_format_string, op_name, self)
+        statement = Operation(deps[0], deps[1:], op_format_string, op_name, self, parameters)
         return add_operation(self.G, wrt, dependency_nodes, statement), wrt
 
     def add_getitem(self, parent_node, item, which=0):
@@ -464,13 +467,15 @@ class QueryGraph:
         statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
         return add_filter(self.G, parent_node, [predicate_node], statement, force_single, split_node=split_node)
 
-    def add_apply_to_list(self, parent_node, list_variable, apply_function, filter_function, *dependencies, put_null_in_empty=False):
+    def add_apply_to_list(self, parent_node, list_variable, apply_function, filter_function,
+                          *dependencies, put_null_in_empty=False, parameters=None):
         dependencies = [self.fold_to_cardinal(d) for d in dependencies]
-        statement = ApplyToList(list_variable, [self.G.nodes[d]['variables'][0] for d in dependencies], apply_function, filter_function, self, put_null_in_empty)
+        statement = ApplyToList(list_variable, [self.G.nodes[d]['variables'][0] for d in dependencies],
+                                apply_function, filter_function, self, put_null_in_empty, parameters=parameters)
         return add_operation(self.G, parent_node, dependencies, statement), statement.output_variables[0]
 
-    def add_unwind_parameter(self, wrt_node, to_unwind, *dependencies):
-        statement = Unwind(wrt_node, to_unwind, 'unwound', self)
+    def add_unwind_parameter(self, wrt_node, to_unwind, *dependencies, parameters=None):
+        statement = Unwind(wrt_node, to_unwind, 'unwound', self, parameters=parameters)
         return add_unwind(self.G, wrt_node, statement, *dependencies)
 
     def collect_or_not(self, index_node, other_node, force_plural):
@@ -554,6 +559,13 @@ class QueryGraph:
             return nx.subgraph_view(self.G)
         return nx.subgraph_view(self.G, lambda n: nx.has_path(self.dag_G, n, result_node))
 
+    def dependency_parameters(self, result_node):
+        ps = set()
+        for statement in self.statements(result_node):
+            if statement.parameters is not None:
+                ps |= set(statement.parameters)
+        return list(ps)
+
     def traverse_query(self, result_node=None, simplify=True):
         graph = self.restricted(result_node)
         verify(graph)
@@ -565,7 +577,7 @@ class QueryGraph:
         graph = self.restricted(goal)
         return verify_traversal(graph, ordering)
 
-    def cypher_lines(self, result):
+    def cypher_lines(self, result, no_cache=False):
         try:
             cypher = self.G.nodes[result]['cypher']
         except KeyError:
@@ -580,7 +592,8 @@ class QueryGraph:
                 except KeyError:
                     pass
             cypher = remove_successive_duplicate_lines(statements)
-            self.G.nodes[result]['cypher'] = cypher
+            if not no_cache:
+                self.G.nodes[result]['cypher'] = cypher
         return copy(cypher)
 
     def node_is_null_statement(self, node):
