@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from .utilities import int_or_none
 from .graph import Graph
-from .hierarchy import Graphable, Hierarchy, Multiple, One2One, Optional
+from .hierarchy import Graphable, Hierarchy, Multiple, OneOf, Optional
 
 
 class AttemptedSchemaViolation(Exception):
