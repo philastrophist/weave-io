@@ -136,7 +136,7 @@ class TestTemplate(_TestTemplate):
         'Run-RawSpectrum-L1SingleSpectrum-L1SuperstackSpectrum',
         'Run-RawSpectrum-L1SingleSpectrum-L1SupertargetSpectrum'
     }
-
-class TestTemplate2Template(_TestTemplate):
-    a, b = L1Spectrum, L1StackedSpectrum
-    expected = set()
+#
+# class TestTemplate2Template(_TestTemplate):
+#     a, b = L1Spectrum, L1StackedSpectrum
+#     expected = set()

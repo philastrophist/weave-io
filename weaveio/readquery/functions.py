@@ -44,6 +44,3 @@ isnull = ismissing
 
 def isnan(item):
     return _template_operator('{0} == 1.0/0.0', 'isnan', item, np.isnan, remove_infs=False, out_dtype='boolean')
-
-def get_neo4j_id(item):
-    return _template_operator('id({0})', 'id', item=item, remove_infs=False, out_dtype='int')

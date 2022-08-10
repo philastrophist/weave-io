@@ -1,6 +1,6 @@
 from typing import Union
 
-from . import BaseQuery, AttributeQuery, get_neo4j_id
+from . import BaseQuery, AttributeQuery
 from .objects import ObjectQuery
 
 
@@ -76,7 +76,10 @@ def split(query: BaseQuery, groupby: Union[AttributeQuery, str, ObjectQuery] = N
             0.0 .. 0.0 4730.0 .. 5450.0
     """
     if groupby is None and isinstance(query, ObjectQuery):
-        groupby = query._get_default_attr()
+        try:
+            groupby = query._get_default_attr()
+        except SyntaxError:
+            groupby = query._get_neo4j_id()
     elif isinstance(groupby, str):
         groupby = query[groupby]
     elif isinstance(groupby, ObjectQuery):
@@ -85,5 +88,5 @@ def split(query: BaseQuery, groupby: Union[AttributeQuery, str, ObjectQuery] = N
         raise TypeError('groupby must be an AttributeQuery, str, or ObjectQuery')
     group_id = query._G.add_groupby(groupby)
     group_eq = groupby._perform_arithmetic(f'{{0}} = {group_id}', '=', group_id, returns_dtype='boolean')
-    grouped_query = query[group_eq]
+    grouped_query = query._filter_by_mask(group_eq, single=True, split_node=True)
     return grouped_query

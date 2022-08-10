@@ -208,9 +208,11 @@ class ObjectQuery(GenericObjectQuery):
                 attrs.append(new)
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
-        n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
+        n, collected = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
         names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
-        return TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
+        t = TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
+        t.one_row = self._G.is_singular_branch_relative_to_splits(n)
+        return t
 
     def _traverse_to_relative_object(self, obj, index, want_singular):
         """
@@ -327,6 +329,10 @@ class ObjectQuery(GenericObjectQuery):
             if isinstance(item, AttributeQuery):
                 raise e
             self._data.autosuggest(item, self._obj, e)
+
+    def _get_neo4j_id(self):
+        n, wrt = self._G.add_scalar_operation(self._node, 'id({0})', 'id')
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype='int')
 
     def __getattr__(self, item):
         if isinstance(item, str):
@@ -630,11 +636,13 @@ class AttributeQuery(BaseQuery):
             dropna = index
         else:
             dropna = None  # figure it out automatically
-        r = self._G.add_results_table(index, [self._node], [not self._single], dropna=dropna)
+        r, collected = self._G.add_results_table(index, [self._node], [not self._single], dropna=dropna)
         a = AttributeQuery._spawn(self, r, self._obj, index, self._single, is_products=self._is_products,
                                   factor_name=self._factor_name)
         if index == 0:
             a.one_row = True
+        else:
+            a.one_row = self._G.is_singular_branch_relative_to_splits(r)
         return a
 
 

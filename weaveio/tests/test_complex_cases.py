@@ -1,11 +1,6 @@
 import pytest
 from weaveio import *
-from weaveio.opr3 import Data
 
-
-@pytest.fixture
-def data():
-    return Data()
 
 def test_rerun(data):
     l2s = data.l2stacks
@@ -23,3 +18,8 @@ def test_rerun(data):
     t = one_l2[['[oiii]_5006.77_flux', 'ha_6562.80_flux', 'cname']]
     cname2 = t()['cname'][0]
     assert cname2 == cname1
+
+
+def test_rerun_with_limit(data):
+    obs = data.obs.id
+    assert np.all(obs(limit=10) == obs(limit=10))

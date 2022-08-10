@@ -1,4 +1,5 @@
 from collections import defaultdict
+from copy import copy
 from typing import List, Tuple, Dict
 from pathlib import Path
 import warnings
@@ -290,6 +291,18 @@ class QueryGraph:
         path = nx.shortest_path(self.above_graph, b, a)
         return all(self.above_graph.edges[(b, a)].get('single', True) for b, a in zip(path[:-1], path[1:]))
 
+    def is_singular_branch_relative_to_splits(self, node):
+        path = nx.shortest_path(self.above_graph, node, self.start)
+        for b, a in zip(path[:-1], path[1:]):
+            edge = self.above_graph.edges[(b, a)]
+            if edge.get('split_node', False):
+                return True
+            if not edge.get('single', True):
+                return False
+        return True  # if we get to this point, we're at the start node and all edges are single
+
+
+
     @property
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
@@ -438,7 +451,7 @@ class QueryGraph:
         op_format_string = f'{op_name}(x in collect({{0}}) where toBoolean(x))'
         return self.add_generic_aggregation(parent, wrt_node, op_format_string, op_name)
 
-    def add_filter(self, parent_node, predicate_node, direct=False):
+    def add_filter(self, parent_node, predicate_node, direct=False, force_single=False, split_node=False):
         wrt = self.latest_shared_ancestor(parent_node, predicate_node)
         predicate_node = self.fold_to_cardinal(predicate_node, wrt)  # put everything back to most recent shared ancestor
         if not nx.has_path(self.G, predicate_node, parent_node):
@@ -449,7 +462,7 @@ class QueryGraph:
         else:
             FilterClass = CopyAndFilter
         statement = FilterClass(self.G.nodes[parent_node]['variables'][0], predicate, self)
-        return add_filter(self.G, parent_node, [predicate_node], statement)
+        return add_filter(self.G, parent_node, [predicate_node], statement, force_single, split_node=split_node)
 
     def add_apply_to_list(self, parent_node, list_variable, apply_function, filter_function, *dependencies, put_null_in_empty=False):
         dependencies = [self.fold_to_cardinal(d) for d in dependencies]
@@ -502,7 +515,8 @@ class QueryGraph:
         else:
             dropna = self.G.nodes[dropna]['variables'][0]
         statement = Return(deps, vs, dropna, self)
-        return add_return(self.G, index_node, column_nodes, statement)
+        collected = [list(self.G.in_edges(column_nodes[0], data='type'))[0][-1] == 'collect' for c in column_nodes]
+        return add_return(self.G, index_node, column_nodes, statement), collected
 
     def add_scalar_results_row(self, *column_nodes):
         """data already folded back"""
@@ -567,7 +581,7 @@ class QueryGraph:
                     pass
             cypher = remove_successive_duplicate_lines(statements)
             self.G.nodes[result]['cypher'] = cypher
-        return cypher
+        return copy(cypher)
 
     def node_is_null_statement(self, node):
         if self.node_holds_type(node, 'aggr'):

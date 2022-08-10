@@ -31,6 +31,22 @@ def logtime(name):
     logging.info(f"{name} took {time.perf_counter() - start: .3f} seconds")
 
 
+def get_groupids(graph, params):
+    groupids = []
+    names = []
+    for name, query in graph.groupbys.items():
+        if name in params:
+            groupids.append(query._iterate(limit=None, skip=0, distinct=True, no_groups=True))
+            names.append(name)
+    return groupids, names
+
+def _execute_groups(groupids, names, params, cypher):
+    for values in itertools.product(*groupids):
+        for name, value in zip(names, values):
+            params[name] = value
+        yield values, cypher, params
+
+
 class BaseQuery:
     one_row = False
     one_column = False
@@ -87,42 +103,34 @@ class BaseQuery:
     def _execute_single_query(self, query, cypher, params):
         return query._data.graph.execute(cypher, **{k.replace('$', ''): v for k, v in params.items()})
 
-    def _execute_groups(self, query, cypher, params):
-        groupids = []
-        names = []
-        for name, query in self._G.groupbys.items():
-            if name in params:
-                groupids.append(query._iterate(limit=None, skip=0, distinct=True, no_groups=True))
-                names.append(name)
-        if not groupids:
-            return self._execute_single_query(query, cypher, params)
-        for values in itertools.product(*groupids):
-            for name, value in zip(names, values):
-                params[name] = value
-            yield values, cypher, params
-
     def _execute(self, skip=0, limit=None, distinct=False, no_groups=False):
         """
         returns a new query (using _precompile) and an iterator over cursors.
         For queries that have not been `split`, this is a single cursor.
         For queries that have been `split`, there will be multiple cursors.
+        :param skip: number of rows to skip
+        :param limit: number of rows to limit to
+        :param distinct: whether to return distinct rows
+        :param no_groups: whether to return a single cursor or a generator of cursors
         """
         with logtime('executing'):
-            if self._cached_group is not None:
-                return self._execute_single_query(self, *self._cached_group), self
             new, (lines, params) = self._compile(skip, limit, distinct)
             cypher = '\n'.join(lines)
+            if self._cached_group is not None:
+                return self._execute_single_query(new, *self._cached_group), new
             if no_groups:
                 return self._execute_single_query(new, cypher, params), new
-            gen = self._execute_groups(new, cypher, params)
-            return gen, new
+            groupids, names = get_groupids(self._G, params)
+            if not groupids:
+                return self._execute_single_query(new, cypher, params), new
+            return _execute_groups(groupids, names, params, cypher), self
 
     def _iterate(self, skip=0, limit=None, distinct=False, no_groups=False):
         cursor_or_gen, new = self._execute(skip, limit, distinct, no_groups)  # produces either a cursor or a generator of cursors
         if not isinstance(cursor_or_gen, Cursor):
             for groups, cypher, params in cursor_or_gen:
-                copied = copy(new)
-                copied._cached_group = (cypher, params)
+                copied = copy(new)  # copy the query, so that the parameters are not shared between the cursors
+                copied._cached_group = (cypher, params)  # store the query and parameters for when the query is executed
                 yield groups, copied
         else:
             rows = new._data.rowparser.iterate_cursor(cursor_or_gen, new._names, new._is_products, True)
@@ -326,7 +334,7 @@ class BaseQuery:
         """
         raise NotImplementedError
 
-    def _filter_by_mask(self, mask):
+    def _filter_by_mask(self, mask, single=None, split_node=False):
         """
         obj[boolean_filter]
         filter, shrinks, destructive
@@ -334,12 +342,13 @@ class BaseQuery:
         e.g. `ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red']` gives only the red stacks
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
+        single = single if single is not None else self._single
         try:
-            n = self._G.add_filter(self._node, mask._node, direct=False)
+            n = self._G.add_filter(self._node, mask._node, direct=False, force_single=single, split_node=split_node)
         except SyntaxError:
             raise DisjointPathError(f"{self} cannot be filtered by {mask} since `{self._obj}` != `{mask._obj}`."
                                     f"This may be because a nonsensical `wrt` has specified in an aggregation.")
-        return self.__class__._spawn(self, n, single=self._single)
+        return self.__class__._spawn(self, n, single=single)
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
         if wrt is None:
