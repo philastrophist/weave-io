@@ -38,11 +38,20 @@ def test_as_attribute(data):
     assert sorted(all_query(limit=None)) == sorted(rows)
 
 
-def test_continue_query(data):
+def test_continue_query_func(data):
     obs = data.obs
     split_obs = split(obs)
     query = split_obs.l1single_spectra
 
     for index, q in query:
-        count(q)()
+        assert count(q)() > (999*2)
         break
+
+def test_continue_query_traverse(data):
+    obs = data.obs
+    obs = obs[obs.id == 3133]
+    split_obs = split(obs)
+    query = split_obs.l1stack_spectra
+
+    for index, q in query:
+        assert np.all(count(q.l1single_spectra, wrt=q)() == 3)
