@@ -186,8 +186,11 @@ class BaseQuery:
         if isinstance(tbl, list):
             return tbl
         tbl = new._post_process_table(tbl)
-        if not len(tbl):
-            return tbl
+        try:
+            if not len(tbl):
+                return tbl
+        except TypeError:
+            return tbl  # not a table, just a value, so return it
         if limit == 1:
             return tbl[0]
         try:
@@ -332,13 +335,7 @@ class BaseQuery:
         return cls(parent._data, parent._G, node, parent, obj, parent._start, index_node, single, *args, **kwargs)
 
     def _get_path_to_object(self, obj, want_single) -> Tuple[List[str], List[bool]]:
-        try:
-            return self._data.paths_to_hierarchy(self._obj, obj, True)
-        except NetworkXNoPath as e:
-            if want_single:
-                raise e
-            else:
-                return self._data.paths_to_hierarchy(self._obj, obj, False)
+        return self._data.paths_to_hierarchy(self._obj, obj, want_single)
 
     def _has_path_to_object(self, obj, want_single) -> bool:
         if self._obj is None:
