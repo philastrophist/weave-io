@@ -306,6 +306,58 @@ Length = 90 rows
 ```
 <img src="mean_flux_gband.png" height="200">
 
+# 5. For each OB at a time, retrieve all the stacked red-arm sky spectra and the single spectra that went into making those stacked spectra
+```python
+from weaveio import *
+data = Data()
+
+obs = split(data.obs)  # mark the fact that you want have one table per OB thereby "splitting" the query in to multiple queries
+stacks = obs.l1stack_spectra[(obs.l1stack_spectra.targuse == 'S') & (obs.l1stack_spectra.camera == 'red')]
+singles = stacks.l1single_spectra
+singles_table =  singles[['flux', 'ivar']]
+query = stacks[['ob.id', {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_': singles_table}]]
+
+for index, ob_query in query:
+    print(f"stacks and singles for OB #{index}:")
+    print(ob_query())
+```
+output:
+```
+stacks and singles for OB #3133:
+ob.id stack_flux [15289] ... single_flux [3,15289] single_ivar [3,15289]
+----- ------------------ ... --------------------- ---------------------
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+ 3133         0.0 .. 0.0 ...            0.0 .. 0.0            0.0 .. 0.0
+```
+Breaking down this query:
+
+There are two new concepts in this example: query splitting and adding tables together.
+
+1. Splitting occurs with `obs = split(data.obs)`. 
+Nothing special happens here except that we have now marked that any query that follows from `obs` will yield more than one table.
+Each table will have a different `ob.id` value
+2. We continue our query as normal
+3. `query = stacks[['ob.id', {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_': singles_table}]]` - Here we have now added the `singles_table` into a new table we are constructing.
+This is equivalent to `query = stacks[['ob.id', {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_flux': singles['flux'], 'single_ivar': singles['ivar']}]]`. 
+When renaming the additional table (with `{'single_': ...}`) we are added a prefix onto each of the new columns.
+4. `for index, ob_query in query:` - `query` is now split query, so when we iterate over it we get one table for each ob.id value. 
+It also returns an index, which in this case is just the `ob.id` value. `ob_query` is now identical to the original `query` except that is will only return results for one OB.
+5. `ob_query()` - Execute the query only for the current OB (the one with `ob.id == index`).
+
+`split` is the equivalent function to `group_by` in pandas or astropy. However, you must perform a `split` before querying whereas in a pandas/astropy `group_by` it is done after the fact.
+
+Also, it is important to note that the `single_flux` and `single_ivar` columns are 2 dimensional since there are 3 single spectra per stack spectrum. 
+So you get all 3 at once, per row of the query.
+
+
 
 ## Details
 
