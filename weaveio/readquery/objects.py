@@ -191,8 +191,8 @@ class ObjectQuery(GenericObjectQuery):
         attrs = []
         for item in items:
             if isinstance(item, dict):
-                if len(item) > 2:
-                    raise ValueError(f"Can only have one key-value pair per item, got {item}")
+                if len(item) != 1:
+                    raise ValueError(f"Must have one key-value pair per item, got {item}")
                 name, item = copy(item).popitem()
             if isinstance(item, ObjectQuery):
                 item = item._get_default_attr()
@@ -257,11 +257,26 @@ class ObjectQuery(GenericObjectQuery):
             items = list(iter(items))
         items = [[{k: v} for k, v in item.items()] if isinstance(item, dict) else [item] for item in items]
         items = [i for item in items for i in item]
+        _items = []
+        for item in items:
+            if isinstance(item, TableQuery):
+                for v in item._attr_queries:
+                    _items.append(v)
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if isinstance(v, TableQuery):
+                        for v in v._attr_queries:
+                            _items.append({k+v._factor_name: v})
+                    else:
+                        _items.append({k: v})
+            else:
+                _items.append(item)
+        items = _items
         values = [list(i.values())[0] if isinstance(i, dict) else i for i in items]
         # names = [list(i.keys())[0] if isinstance(i, dict) else i for i in items]
-        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in values):
+        if not all(isinstance(i, (str, float, int, AttributeQuery, TableQuery)) for i in values):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in values):
+        if all(self._data.is_valid_name(i) or isinstance(i, (AttributeQuery, TableQuery)) for i in values):
             return self._make_table(items)
         if any(self._data.is_valid_name(i) for i in values):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")

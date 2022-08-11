@@ -350,14 +350,13 @@ class HierarchyGraph(nx.MultiDiGraph):
             G = self.singular
         else:
             G = self
-        # return find_paths(G, a, b)
         try:
             return find_paths(G.nonoptional, a, b)
         except nx.NetworkXNoPath:
             return find_paths(G, a, b)
 
     def edge_weights(self, path) -> List[int]:
-        return [nx.shortest_path_length(self, *e, 'weight') for e in nx.utils.pairwise(path)]
+        return [self.edges[self.short_edge(*e, 'weight')]['weight'] for e in nx.utils.pairwise(path)]
 
     def path_is_singular(self, path) -> bool:
         return not any(e > 0 for e in self.edge_weights(path))
