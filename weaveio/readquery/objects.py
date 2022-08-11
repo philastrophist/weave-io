@@ -500,7 +500,7 @@ class AttributeQuery(BaseQuery):
             raise SyntaxError(f"You may not perform an operation on {self} and {item} since one is not an ancestor of the other")
         return AttributeQuery._spawn(self, n, index_node=n, single=True, dtype=self.dtype)
 
-    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None):
+    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None, parameters=None):
         """
         arithmetics
         [+, -, /, *, >, <, ==, !=, <=, >=]
@@ -522,12 +522,12 @@ class AttributeQuery(BaseQuery):
         if isinstance(other, BaseQuery):
             op_string = op_string.format(mask_infs('{0}'), mask_infs('{1}'))
             try:
-                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
+                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node, parameters=parameters)
             except ParserError:
                 raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
         else:
             op_string = op_string.format(mask_infs('{0}'))
-            n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
+            n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name, parameters=parameters)
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype)
 
     def _basic_scalar_function(self, name):

@@ -564,7 +564,7 @@ class QueryGraph:
         for statement in self.statements(result_node):
             if statement.parameters is not None:
                 ps |= set(statement.parameters)
-        return list(ps)
+        return {k: v for k, v in self.parameters.items() if k in ps}
 
     def traverse_query(self, result_node=None, simplify=True):
         graph = self.restricted(result_node)

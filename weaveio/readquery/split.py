@@ -4,37 +4,6 @@ from . import BaseQuery, AttributeQuery
 from .objects import ObjectQuery
 
 
-class SplitQuery:
-    def __init__(self, parent: BaseQuery, groupby: AttributeQuery):
-        self.parent = parent
-        self.groupby = groupby
-        self._ids = None
-        self._group_query = None
-
-    @property
-    def groupby_ids(self):
-        if self._ids is None:
-            self._ids = self.groupby(limit=None, distinct=True)
-        return self._ids
-
-    @property
-    def group_query(self):
-        if self._group_query is None:
-            group = self.parent._G.get_variable_name('group')
-            self._group_query = self.parent[self.groupby == group]
-        return self._group_query
-
-    def __iter__(self):
-        pass
-
-
-
-
-
-    # run groupby and return distinct
-    # add filter
-
-
 def split(query: BaseQuery, splitby: Union[AttributeQuery, str, ObjectQuery] = None):
     """
     Splits the given query into unique parts based on the given groupby attribute.
@@ -87,6 +56,6 @@ def split(query: BaseQuery, splitby: Union[AttributeQuery, str, ObjectQuery] = N
     elif not isinstance(splitby, AttributeQuery):
         raise TypeError('groupby must be an AttributeQuery, str, or ObjectQuery')
     group_id = query._G.add_groupby(splitby)
-    group_eq = splitby._perform_arithmetic(f'{{0}} = {group_id}', '=', group_id, returns_dtype='boolean')
+    group_eq = splitby._perform_arithmetic(f'{{0}} = {group_id}', '=', group_id, returns_dtype='boolean', parameters=[group_id])
     grouped_query = query._filter_by_mask(group_eq, single=True, split_node=True)
     return grouped_query
