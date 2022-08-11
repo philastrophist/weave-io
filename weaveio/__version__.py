@@ -1,2 +1,2 @@
-__version__ = "2022.1.5"
-__changes__ = 'console & installation: use `weaveio console` for interactive console and `weaveio upgrade` to handle updates'
+__version__ = "2022.1.6"
+__changes__ = 'added `split` allowing SQL GROUBPY behaviour to be used, added ability to add tables together, forced singular paths to be found first'
