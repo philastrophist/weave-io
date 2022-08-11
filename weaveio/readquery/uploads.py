@@ -49,7 +49,8 @@ def join(table: Table, index_column: str,
     G = object_query._G
     param = G.add_parameter(table)
     # filter the input table to only include rows that match the join_query
-    applied, applied_var = G.add_apply_to_list(object_query._node, param, '{0}', f'{{0}}.`{index_column}` = {{1}}', join_query._node, put_null_in_empty=True)
+    applied, applied_var = G.add_apply_to_list(object_query._node, param, '{0}', f'{{0}}.`{index_column}` = {{1}}',
+                                               join_query._node, put_null_in_empty=True, parameters=[param])
     applied = G.fold_to_cardinal(applied)
     applied_var = G.G.nodes[applied]['variables'][0]
     row = G.add_unwind_parameter(object_query._node, applied_var, applied)

@@ -1,13 +1,17 @@
+import itertools
 import logging
 import time
 import warnings
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from contextlib import contextmanager
+from copy import copy
 from typing import Tuple, List, Dict, Any, Union, TYPE_CHECKING
 from warnings import warn
 
 import networkx as nx
 from networkx import NetworkXNoPath, NodeNotFound
+from py2neo.cypher import Cursor
+
 from weaveio.hierarchy import Hierarchy
 
 from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
@@ -27,13 +31,33 @@ def logtime(name):
     logging.info(f"{name} took {time.perf_counter() - start: .3f} seconds")
 
 
+def get_groupids(graph, params):
+    groupids = []
+    names = []
+    for name, query in graph.groupbys.items():
+        if name in params:
+            groupids.append(query._iterate(limit=None, skip=0, distinct=True, no_groups=True))
+            names.append(name)
+    return groupids, names
+
+def _execute_groups(groupids, names, params):
+    for values in itertools.product(*groupids):
+        for name, value in zip(names, values):
+            params[name] = value
+        yield values, params
+
+
+SplitQuery = namedtuple('SplitQuery', ['index', 'query'])
+SplitResult = namedtuple('SplitResult', ['index', 'result'])
+
+
 class BaseQuery:
     one_row = False
     one_column = False
 
-    def _debug_output(self):
+    def _debug_output(self, skip=0, limit=None, distinct=False):
         n = self._precompile()
-        c = n._to_cypher()
+        c = n._to_cypher(skip, limit, distinct)
         return '\n'.join(c[0]), c[1]
 
     def raise_error_with_suggestions(self, obj, exception: Exception):
@@ -49,10 +73,9 @@ class BaseQuery:
     def _precompile(self) -> 'BaseQuery':
         return self
 
-    def _prepare_parameters(self, lines):
+    def _prepare_parameters(self, lines, parameters):
         params = {}
-        # aliases = self._G.get_unwind_variables(self._node)
-        for k, v in self._G.parameters.items():
+        for k, v in parameters.items():
             if any(k in l for l in lines):
                 if isinstance(v, AstropyTable):
                     cols = [c for c in v.colnames if any(c in l for l in lines)]
@@ -62,50 +85,91 @@ class BaseQuery:
                     params[k] = v
         return params
 
-    def _to_cypher(self) -> Tuple[List[str], Dict[str, Any]]:
+    def _to_cypher(self, skip, limit, distinct, no_cache=False) -> List[str]:
         """
         returns the cypher lines, cypher parameters, names of columns, expect_one_row, expect_one_column
         """
-        lines = self._G.cypher_lines(self._node)
-        return lines, self._prepare_parameters(lines)
+        lines = self._G.cypher_lines(self._node, no_cache)
+        if distinct:
+            lines[-1] = 'RETURN DISTINCT'.join(lines[-1].rsplit('RETURN', 1))
+        if skip > 0:
+            lines.append(f"\nSKIP {skip}")
+        if limit is not None:
+            lines.append(f"\nLIMIT {limit}")
+        return lines
 
-    def _compile(self) -> Tuple['BaseQuery', Tuple[List[str], Dict[str, Any]]]:
+    def _compile(self, skip, limit, distinct) -> Tuple['BaseQuery', List[str]]:
         with logtime('compiling'):
             r = self._precompile()
-            return r, r._to_cypher()
+            return r, r._to_cypher(skip, limit, distinct)
 
-    def _execute(self, skip=0, limit=None):
+    def _execute_single_query(self, query, cypher, params):
+        return query._data.graph.execute(cypher, **{k.replace('$', ''): v for k, v in params.items()})
+
+    def _get_cached_parameters(self):
+        params = {}
+        for node in self._G.restricted(self._node).nodes:
+            params.update(self._G.G.nodes[node].get('cached_params', {}))
+        return params
+
+    def _execute(self, skip=0, limit=None, distinct=False, no_groups=False):
+        """
+        returns a new query (using _precompile) and an iterator over cursors.
+        For queries that have not been `split`, this is a single cursor.
+        For queries that have been `split`, there will be multiple cursors.
+        :param skip: number of rows to skip
+        :param limit: number of rows to limit to
+        :param distinct: whether to return distinct rows
+        :param no_groups: whether to return a single cursor or a generator of cursors
+        """
         with logtime('executing'):
-            new, (lines, params) = self._compile()
+            cached_params = self._get_cached_parameters()
+            placeholder_params = self._G.dependency_parameters(self._node)
+            params = {**placeholder_params, **cached_params}
+            if not no_groups and any(v == '<placeholder>' for v in params.values()):
+                groupids, names = get_groupids(self._G, params)
+                if groupids:
+                    return _execute_groups(groupids, names, params), self
+            new, lines = self._compile(skip, limit, distinct)
             cypher = '\n'.join(lines)
-            if skip > 0:
-                cypher += f"\nSKIP {skip}"
-            if limit is not None:
-                cypher += f"\nLIMIT {limit}"
-            cursor = new._data.graph.execute(cypher, **{k.replace('$', ''): v for k,v in params.items()})
-            return cursor, new
+            params = self._prepare_parameters(lines, params)
+            return self._execute_single_query(new, cypher, params), new
 
-    def _iterate(self, skip=0, limit=None):
-        cursor, new = self._execute(skip, limit)
-        rows = new._data.rowparser.iterate_cursor(cursor, new._names, new._is_products, True)
-        with logtime('total streaming (by iteration)'):
-            for i, row in enumerate(rows):
-                yield new._post_process_row(row)
-        if limit == i:
-            warnings.simplefilter("always")
-            warn(f"This query has been capped to {limit} rows but the result is larger than that. "
-                 f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
-                 f"the full result (although this is not recommended).")
+    def _iterate_groups(self, generator, query):
+        for split_indexes, params in generator:
+            copied = copy(query)  # copy the query, so that the parameters are not shared between the cursors
+            query._G.G.nodes[copied._node]['cached_params'] = params  # store the groups for when the query is executed
+            yield SplitQuery(split_indexes, copied)
+
+    def _iterate(self, skip=0, limit=None, distinct=False, no_groups=False):
+        cursor_or_gen, new = self._execute(skip, limit, distinct, no_groups)  # produces either a cursor or a generator of cursors
+        if not isinstance(cursor_or_gen, Cursor):
+            yield from self._iterate_groups(cursor_or_gen, new)
+        else:
+            rows = new._data.rowparser.iterate_cursor(cursor_or_gen, new._names, new._is_products, True)
+            i = None
+            with logtime('total streaming (by iteration)'):
+                for i, row in enumerate(rows):
+                    yield new._post_process_row(row)
+            if limit == i:
+                warnings.simplefilter("always")
+                warn(f"This query has been capped to {limit} rows but the result is larger than that. "
+                     f"Consider using the `limit` parameter to better limit the result or set `limit` to None to get "
+                     f"the full result (although this is not recommended).")
 
     def __iter__(self):
         yield from self._iterate()
 
-    def _to_table(self, skip=0, limit=None) -> Tuple[Table, 'BaseQuery']:
+    def _to_table(self, skip=0, limit=None, distinct=False) -> Tuple[Table, 'BaseQuery']:
         with logtime('total streaming'):
-            cursor, new = self._execute(skip, limit)
-            return new._data.rowparser.parse_to_table(cursor, new._names, new._is_products), new
+            cursor_or_gen, new = self._execute(skip, limit, distinct)  # produces either a cursor or a generator of cursors
+            if not isinstance(cursor_or_gen, Cursor):
+                return [SplitResult(split_indexes, query._to_table(skip, limit, distinct)) for split_indexes, query in self._iterate_groups(cursor_or_gen, new)], new
+            return new._data.rowparser.parse_to_table(cursor_or_gen, new._names, new._is_products), new
 
     def _post_process_table(self, result):
+        if isinstance(result, SplitResult):
+            return result.index, self._post_process_table(result.result)
         if self.one_column:
             result = result[result.colnames[0]].data
         if self.one_row:
@@ -117,9 +181,16 @@ class BaseQuery:
             return row[row.colnames[0]]
         return row
 
-    def __call__(self, skip=0, limit=1000, **kwargs):
-        tbl, new = self._to_table(skip, limit)
+    def __call__(self, skip=0, limit=1000, distinct=False, **kwargs):
+        tbl, new = self._to_table(skip, limit, distinct)
+        if isinstance(tbl, list):
+            return tbl
         tbl = new._post_process_table(tbl)
+        try:
+            if not len(tbl):
+                return tbl
+        except TypeError:
+            return tbl  # not a table, just a value, so return it
         if limit == 1:
             return tbl[0]
         try:
@@ -284,7 +355,7 @@ class BaseQuery:
         """
         raise NotImplementedError
 
-    def _filter_by_mask(self, mask):
+    def _filter_by_mask(self, mask, single=None, split_node=False):
         """
         obj[boolean_filter]
         filter, shrinks, destructive
@@ -292,12 +363,13 @@ class BaseQuery:
         e.g. `ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red']` gives only the red stacks
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
+        single = single if single is not None else self._single
         try:
-            n = self._G.add_filter(self._node, mask._node, direct=False)
+            n = self._G.add_filter(self._node, mask._node, direct=False, force_single=single, split_node=split_node)
         except SyntaxError:
             raise DisjointPathError(f"{self} cannot be filtered by {mask} since `{self._obj}` != `{mask._obj}`."
                                     f"This may be because a nonsensical `wrt` has specified in an aggregation.")
-        return self.__class__._spawn(self, n, single=self._single)
+        return self.__class__._spawn(self, n, single=single)
 
     def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
         if wrt is None:

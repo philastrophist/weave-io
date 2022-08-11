@@ -1,12 +1,7 @@
 from astropy.table import Table
 import pytest
 from weaveio import *
-from weaveio.opr3 import Data
 
-
-@pytest.fixture
-def data():
-    return Data()
 
 def test_example1a(data):
     runid = 1003453

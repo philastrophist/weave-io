@@ -186,8 +186,8 @@ class RowParser(FileHandler):
             columns.append(value)
             colnames.append(name)
         if as_row:
-            columns = [MaskedColumn([value], name=name) for value, name in zip(columns, names)]
-            return Table(columns)[0]
+            columns = [MaskedColumn([value]) for value in columns]
+            return Table(columns, names=colnames)[0]
         return columns, colnames
 
     def iterate_cursor(self, cursor: Cursor, names: List[Union[str, None]], is_products: List[bool], as_row: bool):

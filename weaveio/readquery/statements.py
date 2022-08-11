@@ -8,11 +8,12 @@ class Statement:
     default_ids = ['inputs', '__class__']
     ids = []
 
-    def __init__(self, input_variables, graph: 'QueryGraph'):
+    def __init__(self, input_variables, graph: 'QueryGraph', parameters=None):
         self.inputs = input_variables
         self.output_variables = []
         self._edge = None
         self.graph = graph
+        self.parameters = parameters
 
     def __eq__(self, o: object) -> bool:
         if not isinstance(o, self.__class__):
@@ -119,8 +120,8 @@ class NullStatement(Statement):
 class Operation(Statement):
     ids = ['op_string', 'op_name']
 
-    def __init__(self, input_variable, dependency_variables, op_string, op_name, graph: 'QueryGraph'):
-        super().__init__([input_variable]+dependency_variables, graph)
+    def __init__(self, input_variable, dependency_variables, op_string, op_name, graph: 'QueryGraph', parameters: dict = None):
+        super().__init__([input_variable]+dependency_variables, graph, parameters)
         self.op_string = op_string
         self.op_name = op_name
         self.op = f'({self.op_string.format(*self.inputs)})'
@@ -255,8 +256,8 @@ class Return(Statement):
 
 class ApplyToList(Operation):
     def __init__(self, input_variable, dependency_variables, apply_function, filter_function,
-                 graph: 'QueryGraph', put_null_in_empty=False):
-        Statement.__init__(self, [input_variable, *dependency_variables], graph)
+                 graph: 'QueryGraph', put_null_in_empty=False, parameters=None):
+        Statement.__init__(self, [input_variable, *dependency_variables], graph, parameters)
         self.x = graph.get_variable_name('x')
         self.op_name = 'list-apply'
         apply = apply_function.format(self.x, *self.inputs[1:])
@@ -273,8 +274,8 @@ class ApplyToList(Operation):
 class Unwind(Statement):
     ids = ['parameter']
 
-    def __init__(self, wrt, parameter, name, graph: 'QueryGraph'):
-        super().__init__([wrt], graph)
+    def __init__(self, wrt, parameter, name, graph: 'QueryGraph', parameters: dict = None):
+        super().__init__([wrt], graph, parameters)
         self.parameter = parameter
         self.output = self.make_variable(name)
 

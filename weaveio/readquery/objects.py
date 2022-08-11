@@ -139,14 +139,14 @@ class ObjectQuery(GenericObjectQuery):
         path, single = self._get_path_to_object(obj, False)
         travel = self._G.add_traversal(self._node, path, obj, single)
         i = self._G.add_getitem(travel, 'id')
-        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}', parameters=[param])
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         path, single = self._get_path_to_object(obj, False)
         param = self._G.add_parameter(indexes)
-        one_id = self._G.add_unwind_parameter(self._node, param)
+        one_id = self._G.add_unwind_parameter(self._node, param, parameters=[param])
         travel = self._G.add_traversal(self._node, path, obj, single, one_id)
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id, wrt=travel)
@@ -191,8 +191,8 @@ class ObjectQuery(GenericObjectQuery):
         attrs = []
         for item in items:
             if isinstance(item, dict):
-                if len(item) > 2:
-                    raise ValueError(f"Can only have one key-value pair per item, got {item}")
+                if len(item) != 1:
+                    raise ValueError(f"Must have one key-value pair per item, got {item}")
                 name, item = copy(item).popitem()
             if isinstance(item, ObjectQuery):
                 item = item._get_default_attr()
@@ -208,9 +208,11 @@ class ObjectQuery(GenericObjectQuery):
                 attrs.append(new)
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
-        n = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
+        n, collected = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
         names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
-        return TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
+        t = TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
+        t.one_row = self._G.is_singular_branch_relative_to_splits(n)
+        return t
 
     def _traverse_to_relative_object(self, obj, index, want_singular):
         """
@@ -232,7 +234,7 @@ class ObjectQuery(GenericObjectQuery):
         n = self._G.add_traversal(self._node, paths, obj, obj_singular)
         relation_id = self._G.add_getitem(n, 'relation_id', 1)
         name = self._G.add_parameter(singular_name)
-        eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id')
+        eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id', parameters=[name])
         f = self._G.add_filter(n, eq, direct=True)
         return ObjectQuery._spawn(self, f, obj, single=want_singular)
 
@@ -255,11 +257,26 @@ class ObjectQuery(GenericObjectQuery):
             items = list(iter(items))
         items = [[{k: v} for k, v in item.items()] if isinstance(item, dict) else [item] for item in items]
         items = [i for item in items for i in item]
+        _items = []
+        for item in items:
+            if isinstance(item, TableQuery):
+                for v in item._attr_queries:
+                    _items.append(v)
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if isinstance(v, TableQuery):
+                        for v in v._attr_queries:
+                            _items.append({k+v._factor_name: v})
+                    else:
+                        _items.append({k: v})
+            else:
+                _items.append(item)
+        items = _items
         values = [list(i.values())[0] if isinstance(i, dict) else i for i in items]
         # names = [list(i.keys())[0] if isinstance(i, dict) else i for i in items]
-        if not all(isinstance(i, (str, float, int, AttributeQuery)) for i in values):
+        if not all(isinstance(i, (str, float, int, AttributeQuery, TableQuery)) for i in values):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(i, AttributeQuery) for i in values):
+        if all(self._data.is_valid_name(i) or isinstance(i, (AttributeQuery, TableQuery)) for i in values):
             return self._make_table(items)
         if any(self._data.is_valid_name(i) for i in values):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
@@ -327,6 +344,10 @@ class ObjectQuery(GenericObjectQuery):
             if isinstance(item, AttributeQuery):
                 raise e
             self._data.autosuggest(item, self._obj, e)
+
+    def _get_neo4j_id(self):
+        n, wrt = self._G.add_scalar_operation(self._node, 'id({0})', 'id')
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype='int')
 
     def __getattr__(self, item):
         if isinstance(item, str):
@@ -429,13 +450,13 @@ class Query(GenericObjectQuery):
         else:
             travel = self._G.add_traversal(self._node, [], obj, single)
         i = self._G.add_getitem(travel, 'id')
-        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}')
+        eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {name}', f'id={index}', parameters=[name])
         n = self._G.add_filter(travel, eq, direct=True)
         return ObjectQuery._spawn(self, n, obj, single=True)
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         param = self._G.add_parameter(indexes)
-        one_id = self._G.add_unwind_parameter(self._node, param)
+        one_id = self._G.add_unwind_parameter(self._node, param, parameters=[param])
         if self._node == 0:
             travel = self._G.add_start_node(obj, one_id)
         else:
@@ -494,7 +515,7 @@ class AttributeQuery(BaseQuery):
             raise SyntaxError(f"You may not perform an operation on {self} and {item} since one is not an ancestor of the other")
         return AttributeQuery._spawn(self, n, index_node=n, single=True, dtype=self.dtype)
 
-    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None):
+    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None, parameters=None):
         """
         arithmetics
         [+, -, /, *, >, <, ==, !=, <=, >=]
@@ -516,12 +537,12 @@ class AttributeQuery(BaseQuery):
         if isinstance(other, BaseQuery):
             op_string = op_string.format(mask_infs('{0}'), mask_infs('{1}'))
             try:
-                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node)
+                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node, parameters=parameters)
             except ParserError:
                 raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
         else:
             op_string = op_string.format(mask_infs('{0}'))
-            n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name)
+            n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name, parameters=parameters)
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype)
 
     def _basic_scalar_function(self, name):
@@ -531,9 +552,11 @@ class AttributeQuery(BaseQuery):
         if not isinstance(other, AttributeQuery):
             other = self._G.add_parameter(other, 'add')
             string_op = f'{other} {operator} {{0}}' if switch else f'{{0}} {operator} {other}'
+            ps = [other]
         else:
             string_op = f'{{1}} {operator} {{0}}' if switch else f'{{0}} {operator} {{1}}'
-        return self._perform_arithmetic(string_op, operator, other, returns_dtype=out_dtype)
+            ps = []
+        return self._perform_arithmetic(string_op, operator, other, returns_dtype=out_dtype, parameters=ps)
 
     def __and__(self, other):
         return self._basic_math_operator('and', other, out_dtype='boolean')
@@ -630,11 +653,13 @@ class AttributeQuery(BaseQuery):
             dropna = index
         else:
             dropna = None  # figure it out automatically
-        r = self._G.add_results_table(index, [self._node], [not self._single], dropna=dropna)
+        r, collected = self._G.add_results_table(index, [self._node], [not self._single], dropna=dropna)
         a = AttributeQuery._spawn(self, r, self._obj, index, self._single, is_products=self._is_products,
                                   factor_name=self._factor_name)
         if index == 0:
             a.one_row = True
+        else:
+            a.one_row = self._G.is_singular_branch_relative_to_splits(r)
         return a
 
 
