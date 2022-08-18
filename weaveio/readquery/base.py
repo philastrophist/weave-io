@@ -51,7 +51,26 @@ SplitQuery = namedtuple('SplitQuery', ['index', 'query'])
 SplitResult = namedtuple('SplitResult', ['index', 'result'])
 
 
-class BaseQuery:
+class QueryFunctionBase:
+    def __getitem__(self, item):
+        raise NotImplementedError
+
+    def __getattr__(self, item):
+        raise NotImplementedError
+
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def __iter__(self):
+        raise NotImplementedError
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}()'
+
+
+
+
+class BaseQuery(QueryFunctionBase):
     one_row = False
     one_column = False
 
