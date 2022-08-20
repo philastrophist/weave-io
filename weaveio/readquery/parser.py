@@ -171,7 +171,7 @@ def verify(graph):
         inputs = [i for i in inputs if i != 'wrt']
         outputs = [graph.edges[i]['type'] for i in graph.out_edges(node)]
         if sum(o == 'wrt' for o in outputs) > 1:
-            raise ParserError(f"Cannot put > 1 wrt paths as output from an aggregation")
+            raise ParserError(f"Cannot put > 1 wrt paths as output from an aggregation: {node}")
         outputs = [o for o in outputs if o != 'wrt']
         nfilters = sum(i == 'filter' for i in inputs)
         ntraversals = sum(i == 'traversal' for i in inputs)
@@ -499,7 +499,7 @@ class QueryGraph:
             except StopIteration:
                 pass
             # then fold back singularly (i.e. do nothing in terms of cypher)
-            statement = NullStatement(self.G.nodes[other_node]['variables'], self)
+            statement = NullStatement(self.G.nodes[other_node]['variables']+[shared], self)
             return add_aggregation(self.G, other_node, shared, statement, 'aggr', True)
         else:
             return self.add_aggregation(other_node, shared, 'collect')
@@ -520,7 +520,7 @@ class QueryGraph:
         else:
             dropna = self.G.nodes[dropna]['variables'][0]
         statement = Return(deps, vs, dropna, self)
-        collected = [list(self.G.in_edges(column_nodes[0], data='type'))[0][-1] == 'collect' for c in column_nodes]
+        collected = [list(self.G.in_edges(c, data='type'))[0][-1] == 'collect' for c in column_nodes]
         return add_return(self.G, index_node, column_nodes, statement), collected
 
     def add_scalar_results_row(self, *column_nodes):
