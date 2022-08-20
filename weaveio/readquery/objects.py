@@ -262,7 +262,7 @@ class ObjectQuery(GenericObjectQuery):
             if isinstance(item, TableQuery):
                 for v in item._attr_queries:
                     _items.append(v)
-            if isinstance(item, dict):
+            elif isinstance(item, dict):
                 for k, v in item.items():
                     if isinstance(v, TableQuery):
                         for v in v._attr_queries:
