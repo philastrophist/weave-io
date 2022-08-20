@@ -52,10 +52,7 @@ SplitResult = namedtuple('SplitResult', ['index', 'result'])
 
 
 class QueryFunctionBase:
-    def __getitem__(self, item):
-        raise NotImplementedError
-
-    def __getattr__(self, item):
+    def _precompile(self):
         raise NotImplementedError
 
     def __call__(self, *args, **kwargs):

@@ -1,3 +1,4 @@
+from functools import reduce
 from typing import Union
 
 from .objects import BaseQuery, TableQuery
@@ -7,6 +8,12 @@ from .wrappers import QueryWrapper
 
 
 class AlignedQuery(QueryWrapper):
+    pass_to_init = ['wrt']
+
+    def __init__(self, *unnamed_queries, wrt, **named_queries):
+        super().__init__(*unnamed_queries, **named_queries)
+        self.wrt = wrt
+
     def _precompile(self):
         if any(isinstance(v, TableQuery) for v in self.queries.values()):
             if not all(isinstance(v, TableQuery) for v in self.queries.values()):
@@ -31,11 +38,21 @@ def align(*unnamed_queries: BaseQuery, wrt=None, **named_queries: BaseQuery):
     if not all(q._data is data for q in queries):
         raise ValueError('All queries must be from the same parent Data object')
     if wrt is None:
-        wrt = queries[0]._G.latest_shared_ancestor(*[q._node for q in queries])
+        d = {}
+        previous_nodes = []
+        for q in queries:
+            d[q._node] = q
+            _previous_nodes = []
+            while True:
+                _previous_nodes.append(q._node)
+                q = q._previous
+                if q is None:
+                    break
+            previous_nodes.append(_previous_nodes)
+        wrt = d[max(reduce(set.intersection, map(set, previous_nodes)))]
     else:
-        wrt = wrt._node
-        descendants = nx.descendants(queries[0]._G.G, wrt)
+        descendants = nx.descendants(queries[0]._G.G, wrt._node)
         if not all(q._node in descendants for q in queries):
             raise ValueError(f'wrt {wrt} must be a common ancestor of all queries')
-    return AlignedQuery(*unnamed_queries, **named_queries, wrt=wrt)
+    return AlignedQuery(*unnamed_queries, wrt=wrt, **named_queries)
 

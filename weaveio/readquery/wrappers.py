@@ -4,6 +4,8 @@ from .base import QueryFunctionBase
 
 
 class QueryWrapper(QueryFunctionBase):
+    pass_to_init = []
+
     def __init__(self, *unnamed_queries, **named_queries):
         self.unnamed_queries = unnamed_queries
         self.named_queries = named_queries
@@ -15,7 +17,9 @@ class QueryWrapper(QueryFunctionBase):
 
     def apply(self, function):
         # apply function to all queries and return a new QueryWrapper with the same named an unnamed queries
-        return self.__class__(*map(function, self.unnamed_queries), **{k: function(v) for k, v in self.named_queries.items()})
+        return self.__class__(*map(function, self.unnamed_queries),
+                              **{k: getattr(self, k) for k in self.pass_to_init},
+                              **{k: function(v) for k, v in self.named_queries.items()})
 
     def __getitem__(self, item):
         func = operator.itemgetter(item)
