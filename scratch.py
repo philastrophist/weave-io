@@ -14,5 +14,6 @@ blue = red.adjunct
 # print(r)
 
 aligned = align(red=red, blue=blue)
-print(aligned[['run.id', 'snr']](limit=10))
+print((aligned.snr * 2)(limit=10))
+# print(aligned[['run.id', 'snr']](limit=10))
 
