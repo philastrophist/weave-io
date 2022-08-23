@@ -71,10 +71,20 @@ class BaseQuery(QueryFunctionBase):
     one_row = False
     one_column = False
 
-    def _debug_output(self, skip=0, limit=None, distinct=False):
+    def _debug_output(self, skip=0, limit=None, distinct=False, no_cache=False, graph_export_fname=None,
+                      exclusive=True):
         n = self._precompile()
-        c = n._to_cypher(skip, limit, distinct)
-        return '\n'.join(c[0]), c[1]
+        cached_params = n._get_cached_parameters()
+        placeholder_params = n._G.dependency_parameters(self._node)
+        params = {**placeholder_params, **cached_params}
+        c = n._to_cypher(skip, limit, distinct, no_cache)
+        params = n._prepare_parameters(c, params)
+        if graph_export_fname is not None:
+            if exclusive:
+                n._G.export(graph_export_fname, n._node)
+            else:
+                n._G.export(graph_export_fname)
+        return '\n'.join(c), self._G.G.nodes[n._node]['ordering'], params
 
     def raise_error_with_suggestions(self, obj, exception: Exception):
         self._data.autosuggest(obj, self._obj, exception)
