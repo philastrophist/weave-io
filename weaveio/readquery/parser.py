@@ -204,11 +204,6 @@ def verify(graph):
                 raise ParserError(f"All operations must be aggregated back at some point: {node}")
             if ntraversals + naggs + nfilters > 1:
                 raise ParserError(f"Can only have dependencies as input for an operation: {node}")
-        if ndeps:
-            if naggs:
-                raise ParserError(f"A traversal/aggregation cannot take any other inputs: {node}")
-            if not (nops ^ nfilters ^ nreturns ^ ntraversals):
-                raise ParserError(f"A dependency link necessitates an operation filter: {node}")
 
 
 def merge_attribute_forks(graph):
@@ -392,8 +387,7 @@ class QueryGraph:
             return parent_node
         if wrt == parent_node:
             return parent_node
-        statement = NullStatement(self.G.nodes[parent_node]['variables'], self)
-        return add_aggregation(self.G, parent_node, wrt, statement, 'aggr', True)
+        return self.add_aggregation(parent_node, wrt, 'aggr')
 
     def add_scalar_operation(self, parent_node, op_format_string, op_name, parameters=None) -> Tuple:
         """
@@ -443,8 +437,13 @@ class QueryGraph:
             op_format_string = op_format_string.format(mask_infs('{0}'))
         if wrt_node not in nx.ancestors(self.dag_G, parent_node):
             raise SyntaxError(f"{parent_node} cannot be aggregated to {wrt_node} ({wrt_node} is not an ancestor of {parent_node})")
-        statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
-        return add_aggregation(self.G, parent_node, wrt_node, statement)
+        if op_name == 'aggr':
+            statement = NullStatement(self.G.nodes[parent_node]['variables'] + [wrt_node], self)
+        else:
+            statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
+        previous = next(self.backwards_G.successors(parent_node), parent_node)
+        dependencies = [] if previous == parent_node else [parent_node]
+        return add_aggregation(self.G, previous, wrt_node, statement, dependencies=dependencies)
 
     def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None, input_dtype=None):
         return self.add_generic_aggregation(parent_node, wrt_node, f"{op}({{0}})", op,
@@ -499,8 +498,7 @@ class QueryGraph:
             except StopIteration:
                 pass
             # then fold back singularly (i.e. do nothing in terms of cypher)
-            statement = NullStatement(self.G.nodes[other_node]['variables']+[shared], self)
-            return add_aggregation(self.G, other_node, shared, statement, 'aggr', True)
+            return self.add_aggregation(other_node, shared, 'aggr')
         else:
             return self.add_aggregation(other_node, shared, 'collect')
 
@@ -600,7 +598,7 @@ class QueryGraph:
 
     def node_is_null_statement(self, node):
         if self.node_holds_type(node, 'aggr'):
-            return any(isinstance(d['statement'], NullStatement) for _, _, d in self.G.in_edges(node, data=True))
+            return any(isinstance(d.get('statement', None), NullStatement) for _, _, d in self.G.in_edges(node, data=True))
         return False
 
     def get_unwind_variables(self, until_node):

@@ -41,3 +41,16 @@ def test_merge_tables(data):
         assert len(t['stack_flux'].shape) == 1
         assert len(t['single_flux'].shape) == 2
         break
+
+
+def test_aggregations_of_aggregations_of_aggregations(data):
+    obs = data.obs
+    runs = obs.runs
+    single = runs.l1single_spectra
+    spec = single.l1stack_spectra
+    single_mean = mean(spec.snr, wrt=single)
+    run_mean = mean(single_mean, wrt=runs)
+    ob_mean = mean(run_mean, wrt=obs)
+    assert len(ob_mean()) == count(obs)()
+
+
