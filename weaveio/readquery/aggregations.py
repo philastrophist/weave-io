@@ -18,6 +18,7 @@ python_sum = sum
 
 def _template_aggregator(string_op, predicate, python_func: Callable, item: BaseQuery, wrt: BaseQuery = None,
                          remove_infs: bool = True, expected_dtype: str = None, returns_dtype:str = None,
+                         op_name=None,
                          args=None, kwargs=None):
     from ..data import Data
     from .objects import AttributeQuery
@@ -25,8 +26,10 @@ def _template_aggregator(string_op, predicate, python_func: Callable, item: Base
         wrt = None
     elif isinstance(wrt, AttributeQuery):
         raise TypeError(f"Cannot aggregate {item} with respect to an attribute {wrt}. You can only aggregate with respect to an object.")
+    if op_name is None:
+        op_name = string_op
     try:
-        return item._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
+        return item._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs)
     except AttributeError:
         return python_func(item, *args, **kwargs)
 
@@ -56,7 +59,8 @@ def std(item, wrt=None, *args, **kwargs):
 
 
 def mean(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('avg', False, np.mean, item, wrt, expected_dtype='number', args=args, kwargs=kwargs)
+    return _template_aggregator('avg', False, np.mean, item, wrt, expected_dtype='number', op_name='mean',
+                                args=args, kwargs=kwargs)
 
 #predicates
 

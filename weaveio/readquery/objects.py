@@ -267,11 +267,11 @@ class ObjectQuery(GenericObjectQuery):
                 for k, v in item.items():
                     if isinstance(v, TableQuery):
                         for n, v in zip(v._names, v._attr_queries):  # use table colnames
-                            name = n or getattr(v, '_factor_name', '')
+                            name = n or getattr(v, '_factor_name', '') or ''
                             if k.endswith('_'):
                                 _items.append({k+name: v})
                             else:
-                                _items.append({k.rstrip('_')+name: v})
+                                _items.append({name+k: v})
                     else:
                         _items.append({k: v})
             else:
@@ -691,8 +691,8 @@ class TableQuery(BaseQuery):
         self._attr_queries = attr_queries
         self._lookup = {k: v for k, v in zip(self._names, self._attr_queries)}
 
-    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
-        return self._previous._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
+    def _aggregate(self, wrt, string_op, op_name, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
+        return self._previous._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs)
 
     def __getitem__(self, item):
         return self._lookup[item]

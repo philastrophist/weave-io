@@ -397,7 +397,7 @@ class BaseQuery(QueryFunctionBase):
                                     f"This may be because a nonsensical `wrt` has specified in an aggregation.")
         return self.__class__._spawn(self, n, single=single)
 
-    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
+    def _aggregate(self, wrt, string_op, op_name, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
         if wrt is None:
             wrt = self._start
         try:
@@ -408,4 +408,4 @@ class BaseQuery(QueryFunctionBase):
         except SyntaxError:
             raise DisjointPathError(f"Cannot aggregate {self} into {wrt} since they don't share a parent query")
         from .objects import AttributeQuery
-        return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, dtype=returns_dtype, single=True)
+        return AttributeQuery._spawn(self, n, wrt._obj, wrt._node, dtype=returns_dtype, single=True, factor_name=op_name)
