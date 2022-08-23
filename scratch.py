@@ -5,15 +5,14 @@ from weaveio import *
 data = Data()
 
 red = data.l1single_spectra[data.l1single_spectra.camera == 'red']
-blue = red.adjunct#.l1stack_spectra
-
-aligned = align(red=red, blue=blue)
-q = aligned.snr * 2
-print(q(limit=10))
-
+blue = red.adjunct
 
 aligned = align(red=red, blue=blue)
 avg = mean(aligned.l1stack_spectra.snr, wrt=aligned)
-q = avg / aligned.snr
+snr =  aligned.snr
 
+q = aligned[{'divide': avg / snr}]
+lines, ordering, params = data.query._debug_output(graph_export_fname='parser')
+print(ordering)
+print(lines)
 print(q(limit=10))
