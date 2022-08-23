@@ -580,6 +580,7 @@ class QueryGraph:
     def cypher_lines(self, result, no_cache=False):
         try:
             cypher = self.G.nodes[result]['cypher']
+            ordering = self.G.nodes[result]['ordering']
         except KeyError:
             ordering = self.traverse_query(result)
             self.verify_traversal(result, ordering)
@@ -594,6 +595,7 @@ class QueryGraph:
             cypher = remove_successive_duplicate_lines(statements)
             if not no_cache:
                 self.G.nodes[result]['cypher'] = cypher
+                self.G.nodes[result]['ordering'] = ordering
         return copy(cypher)
 
     def node_is_null_statement(self, node):
