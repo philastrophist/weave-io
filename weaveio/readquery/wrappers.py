@@ -93,10 +93,6 @@ class QueryWrapper(QueryFunctionBase):
     def __iadd__(self, other):
         return self.apply(operator.__iadd__, other)
 
-    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None, parameters=None):
-        return self.apply(lambda x, *args, **kwargs: x._perform_arithmetic(*args, **kwargs),
-                          op_string, op_name, other, expected_dtype, returns_dtype, parameters)
-
     def __call__(self, *args, **kwargs):
         if isinstance(self.first_query, QueryFunctionBase):
             q = self._precompile()
@@ -107,13 +103,15 @@ class QueryWrapper(QueryFunctionBase):
 
     def __iter__(self):
         q = self._precompile()
-        self = q
-        queries = {k: q._iterate() for k, q in self.queries.items()}
-        while True:
-            row = {k: next(v, None) for k, v in queries.items()}
-            if all(v is None for v in row.values()):
-                break
-            yield row
+        if isinstance(q, QueryWrapper):
+            queries = {k: q._iterate() for k, q in self.queries.items()}
+            while True:
+                row = {k: next(v, None) for k, v in queries.items()}
+                if all(v is None for v in row.values()):
+                    break
+                yield row
+        else:
+            yield from iter(q)
 
     def _debug_output(self, *args, **kwargs):
         return self._precompile()._debug_output(*args, **kwargs)

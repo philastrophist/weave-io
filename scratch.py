@@ -11,8 +11,14 @@ aligned = align(red=red, blue=blue)
 avg = mean(aligned.l1stack_spectra.snr, wrt=aligned)
 snr =  aligned.snr
 
+# q = aligned[[avg / snr]]
 q = aligned[{'divide': avg / snr}]
-lines, ordering, params = data.query._debug_output(graph_export_fname='parser')
-print(ordering)
-print(lines)
-print(q(limit=10))
+# lines, ordering, params = data.query._debug_output(graph_export_fname='parser')
+# print(ordering)
+# print(lines)
+# print(q(limit=10))
+
+for i, row in enumerate(q):
+    print(row)
+    if i > 10:
+        break

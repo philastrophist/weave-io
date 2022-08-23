@@ -266,11 +266,12 @@ class ObjectQuery(GenericObjectQuery):
             elif isinstance(item, dict):
                 for k, v in item.items():
                     if isinstance(v, TableQuery):
-                        for v in v._attr_queries:
+                        for n, v in zip(v._names, v._attr_queries):  # use table colnames
+                            name = n or getattr(v, '_factor_name', '')
                             if k.endswith('_'):
-                                _items.append({k+getattr(v, '_factor_name', ''): v})
+                                _items.append({k+name: v})
                             else:
-                                _items.append({k.rstrip('_') + getattr(v, '_factor_name', ''): v})
+                                _items.append({k.rstrip('_')+name: v})
                     else:
                         _items.append({k: v})
             else:
