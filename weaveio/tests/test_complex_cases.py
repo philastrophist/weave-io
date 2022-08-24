@@ -54,3 +54,13 @@ def test_aggregations_of_aggregations_of_aggregations(data):
     assert len(ob_mean()) == count(obs)()
 
 
+def test_noss_access(data):
+    parent = data.obs
+    stacks = parent.l1stack_spectra[(parent.l1stack_spectra.targuse == 'S') & (parent.l1stack_spectra.camera == 'red')]
+    singles = stacks.l1single_spectra  # get single spectra for each stack spectrum
+    ss_query = stacks[['ob.id', {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_': singles[['flux', 'ivar', 'wvl']]}]]
+    noss_query = stacks.noss[['ob.id', {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_': singles.noss[['flux', 'ivar', 'wvl']]}]]
+    ss = ss_query(limit=10)
+    noss = noss_query(limit=10)
+    assert all(ss['ob.id'] == noss['ob.id'])
+    assert all(np.max(ss['stack_flux'], axis=1) <= np.max(noss['stack_flux'], axis=1))
