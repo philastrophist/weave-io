@@ -15,7 +15,7 @@ def graph():
 
 
 def make_path_test(graph, a, b):
-    paths = graph.find_paths(a, b, False)
+    paths, _ = zip(*graph.find_paths(a, b, False))
     for path in paths:
         yield '-'.join(n.__name__ for n in path)
 
