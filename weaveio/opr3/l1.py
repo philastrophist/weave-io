@@ -10,21 +10,22 @@ class L1(Hierarchy):
     is_template = True
 
 
-class L1Spectrum(Spectrum1D, L1):
-    is_template = True
-    children = Spectrum1D.children + [Optional('self', idname='adjunct')]
-    products = ['flux', 'ivar', 'sensfunc']
-    factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
-    parents = [FibreTarget]
-
-
 class NoSS(Spectrum1D):
     plural_name = 'nosses'
     singular_name = 'noss'
     products = ['flux', 'ivar']
-    parents = [OneOf(L1Spectrum, one2one=True)]
+    # parents = [OneOf(L1Spectrum, one2one=True)]
     children = [Optional('self', idname='adjunct')]
-    identifier_builder = ['l1_spectrum']
+    # identifier_builder = ['l1_spectrum']
+    indexes = [None]
+
+
+class L1Spectrum(Spectrum1D, L1):
+    is_template = True
+    children = Spectrum1D.children + [Optional('self', idname='adjunct'), OneOf(NoSS, one2one=True)]
+    products = ['flux', 'ivar', 'sensfunc']
+    factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
+    parents = [FibreTarget]
 
 
 class L1SingleSpectrum(L1Spectrum, Single):
