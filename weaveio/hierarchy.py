@@ -269,8 +269,9 @@ class GraphableMeta(type):
                     (cls.identifier_builder is not None and len(cls.identifier_builder) > 0)):
                 raise RuleBreakingException(f"{name} must define an indexes, idname, or identifier_builder")
         for p in cls.indexes:
-            if p not in cls.parents and p not in cls.factors:
-                raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
+            if p is not None:
+                if p not in cls.parents and p not in cls.factors:
+                    raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
         if cls.concatenation_constants is not None:
             if len(cls.concatenation_constants):
                 cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']

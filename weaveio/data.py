@@ -333,8 +333,8 @@ class Data:
             if singular:
                 raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")
             raise NetworkXNoPath(f"No path found between `{from_obj}` and `{to_obj}`")
-        paths, reversed = zip(*[(path[::-1], True) if path[0] is to_obj else (path, False) for path in paths])
-        singulars = [self.hierarchy_graph.path_is_singular(path) for path in paths]
+        paths, edges, reversed = zip(*[(path[::-1], [self.hierarchy_graph.short_edge(e[1], e[0]) for e in es[::-1]], True) if path[0] is to_obj else (path, es, False) for path, es in paths])
+        singulars = [self.hierarchy_graph.edge_path_is_singular(es) for es in edges]
         return paths, singulars, reversed
 
 
@@ -354,7 +354,6 @@ class Data:
         from_obj, to_obj = self.singular_hierarchies[a], self.singular_hierarchies[b]
         try:
             paths, singulars, reversed = self._path_to_hierarchy(from_obj, to_obj, singular)
-            # TODO: make it so that path singularity is checked after reversal
             arrows = [make_arrows(path, [not r]*(len(path)-1), descriptor) for path, r in zip(paths, reversed)]
             if return_objs:
                 return arrows, singulars, paths

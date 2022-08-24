@@ -107,9 +107,12 @@ def add_filter(graph: HashedDiGraph, parent, dependencies, statement, force_sing
     return n
 
 
-def add_aggregation(graph: HashedDiGraph, parent, wrt, statement, type='aggr', single=False):
+def add_aggregation(graph: HashedDiGraph, parent, wrt, statement, type='aggr', single=False, dependencies=None):
+    dependencies = [] if dependencies is None else dependencies
     n = make_node(graph, parent, type, statement, single)
     graph.add_edge(n, wrt, type='wrt', style='dashed')
+    for d in dependencies:
+        graph.add_edge(d, n, type='dep', style='dotted')
     return n
 
 

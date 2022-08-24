@@ -148,9 +148,11 @@ def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
     for ip, path in enumerate(_paths):
         edges = edges_from_path(G, path, weight)
         reduced_path = [edge[0] for edge in edges if G.edges[edge]['type'] not in ['is_a', 'subclassed_by']]
-        reduced_paths.add((*reduced_path, path[-1]))
-    if not use_children:
-        return {path[::-1] for path in reduced_paths}
+        reduced_path = (*reduced_path, path[-1])
+        if not use_children:
+            reduced_path = reduced_path[::-1]  # reverse it because the actual database has only parent relations
+            edges = (graph.short_edge(e[1], e[0], weight) for e in edges[::-1])
+        reduced_paths.add((reduced_path, tuple(edges)))
     return reduced_paths
 
 
@@ -361,6 +363,9 @@ class HierarchyGraph(nx.MultiDiGraph):
 
     def edge_weights(self, path) -> List[int]:
         return [self.edges[self.short_edge(*e, 'weight')]['weight'] for e in nx.utils.pairwise(path)]
+
+    def edge_path_is_singular(self, edges):
+        return not any(self.edges[e]['weight'] > 0 for e in edges)
 
     def path_is_singular(self, path) -> bool:
         return not any(e > 0 for e in self.edge_weights(path))

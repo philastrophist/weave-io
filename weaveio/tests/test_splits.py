@@ -22,7 +22,6 @@ def test_as_table(data):
     row_table.sort('id')
     all_table = all_r(limit=None)
     all_table.sort('id')
-    row_table.rename_column('count1', 'count0')
     assert all(row_table == all_table)
 
 

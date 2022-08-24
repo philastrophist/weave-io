@@ -15,6 +15,7 @@ from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any, Iterable
 
 from networkx import NetworkXNoPath
 
+from .align import AlignedQuery
 from .base import BaseQuery
 from .exceptions import CardinalityError, AttributeNameError, UserError
 from .parser import QueryGraph, ParserError
@@ -262,11 +263,15 @@ class ObjectQuery(GenericObjectQuery):
             if isinstance(item, TableQuery):
                 for v in item._attr_queries:
                     _items.append(v)
-            if isinstance(item, dict):
+            elif isinstance(item, dict):
                 for k, v in item.items():
                     if isinstance(v, TableQuery):
-                        for v in v._attr_queries:
-                            _items.append({k+v._factor_name: v})
+                        for n, v in zip(v._names, v._attr_queries):  # use table colnames
+                            name = n or getattr(v, '_factor_name', '') or ''
+                            if k.endswith('_'):
+                                _items.append({k+name: v})
+                            else:
+                                _items.append({name+k: v})
                     else:
                         _items.append({k: v})
             else:
@@ -274,9 +279,9 @@ class ObjectQuery(GenericObjectQuery):
         items = _items
         values = [list(i.values())[0] if isinstance(i, dict) else i for i in items]
         # names = [list(i.keys())[0] if isinstance(i, dict) else i for i in items]
-        if not all(isinstance(i, (str, float, int, AttributeQuery, TableQuery)) for i in values):
+        if not all(isinstance(i, (str, float, int, AttributeQuery, TableQuery, AlignedQuery)) for i in values):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
-        if all(self._data.is_valid_name(i) or isinstance(i, (AttributeQuery, TableQuery)) for i in values):
+        if all(self._data.is_valid_name(i) or isinstance(i, (AttributeQuery, TableQuery, AlignedQuery)) for i in values):
             return self._make_table(items)
         if any(self._data.is_valid_name(i) for i in values):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
@@ -432,6 +437,9 @@ class Query(GenericObjectQuery):
     def __init__(self, data: 'Data', G: QueryGraph = None, node=None, previous: 'BaseQuery' = None, obj: str = None, start=None) -> None:
         super().__init__(data, G, node, previous, obj, start, 'start')
 
+    def _debug_output(self, skip=0, limit=None, distinct=False, no_cache=False, graph_export_fname=None):
+        return super(Query, self)._debug_output(skip, limit, distinct, no_cache, graph_export_fname, exclusive=False)
+
     def _compile(self):
         raise NotImplementedError(f"{self.__class__} is not compilable")
 
@@ -543,14 +551,14 @@ class AttributeQuery(BaseQuery):
         else:
             op_string = op_string.format(mask_infs('{0}'))
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name, parameters=parameters)
-        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype)
+        return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype, factor_name=op_name)
 
     def _basic_scalar_function(self, name):
         return self._perform_arithmetic(f'{name}({{0}})', name)
 
     def _basic_math_operator(self, operator, other, switch=False, out_dtype='number'):
         if not isinstance(other, AttributeQuery):
-            other = self._G.add_parameter(other, 'add')
+            other = self._G.add_parameter(other, 'param')
             string_op = f'{other} {operator} {{0}}' if switch else f'{{0}} {operator} {other}'
             ps = [other]
         else:
@@ -683,8 +691,8 @@ class TableQuery(BaseQuery):
         self._attr_queries = attr_queries
         self._lookup = {k: v for k, v in zip(self._names, self._attr_queries)}
 
-    def _aggregate(self, wrt, string_op, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
-        return self._previous._aggregate(wrt, string_op, predicate, expected_dtype, returns_dtype, remove_infs)
+    def _aggregate(self, wrt, string_op, op_name, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
+        return self._previous._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs)
 
     def __getitem__(self, item):
         return self._lookup[item]

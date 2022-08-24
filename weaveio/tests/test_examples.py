@@ -18,7 +18,7 @@ def test_example1c(data):
     query_table = data.runs[['id', nsky]]  # design a table by using the square brackets
     concrete_table = query_table()
     assert len(concrete_table) == 196
-    assert set(concrete_table.sum0) == {100, 160, 198, 200, 299, 360}
+    assert set(concrete_table.sum) == {100, 160, 198, 200, 299, 360}
     assert len(set(concrete_table.id)) == 196
 
 

@@ -1,4 +1,4 @@
-from collections import OrderedDict
+from collections import OrderedDict, Counter, defaultdict
 from pathlib import Path
 from typing import List, Union, Tuple
 
@@ -105,7 +105,16 @@ def vstack_rows(rows: List[Tuple[List, List[bool], List[str]]], *args, **kwargs)
     columns, names = zip(*rows)
     names = names[0]
     columns = list(zip(*columns))
-    return Table([ragged_column(c, n) for c, n in zip(columns, names)])
+    duplicate_names = [n for n, i in Counter(names).items() if i > 1]
+    counter = defaultdict(int)
+    _names = []
+    for n in names:
+        if n in duplicate_names:
+            _names.append(f"{n}{counter[n]}")
+            counter[n] += 1
+        else:
+            _names.append(n)
+    return Table([ragged_column(c, f"{n}{counter.get(n, '')}") for c, n in zip(columns, _names)])
 
 def int_or_slice(x: Union[int, float, slice, None]) -> Union[int, slice]:
     if isinstance(x, (int, float)):
