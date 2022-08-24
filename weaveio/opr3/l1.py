@@ -14,9 +14,7 @@ class NoSS(Spectrum1D):
     plural_name = 'nosses'
     singular_name = 'noss'
     products = ['flux', 'ivar']
-    # parents = [OneOf(L1Spectrum, one2one=True)]
     children = [Optional('self', idname='adjunct')]
-    # identifier_builder = ['l1_spectrum']
     indexes = [None]
 
 
