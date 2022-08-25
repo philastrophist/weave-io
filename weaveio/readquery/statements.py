@@ -23,7 +23,7 @@ class Statement:
     def __hash__(self):
         ids = self.ids + self.default_ids
         obs = (getattr(self, i) for i in ids)
-        obs = map(lambda x: tuple(x) if isinstance(x, list) else x, obs)
+        obs = map(lambda x: tuple(x) if isinstance(x, list) else tuple(x.items()) if isinstance(x, dict) else x, obs)
         return hash(tuple(map(hash, obs)))
 
     @property
@@ -86,26 +86,6 @@ class Traversal(Statement):
         # use `union all` not `union` since there should be no duplicates as each end-node will be a different type
         statements = '\n\tUNION ALL\n'.join([f'\tWITH {self.from_variable}\n\t{s} RETURN {self.to_node}' for s in statements])
         return f"CALL {{\n {statements}\n}}"
-
-
-class UnionTraversal(Statement):
-    ids = ['to_node_type', 'path_names', 'path_values', 'from_variable', 'unwound']
-
-    def __init__(self, from_variable, paths, to_node_type, unwound, graph):
-        super().__init__([from_variable], graph)
-        self.from_variable = from_variable
-        self.to_node_type = to_node_type
-        self.paths = paths
-        self.path_names = list(paths.keys())
-        self.path_values = list(paths.values())
-        self.to_node = self.make_variable('node')
-        self.using_edge = self.make_variable('edge')
-        self.unwound = unwound
-
-    def make_cypher(self, ordering: list) -> str:
-        paths = [(n, path.format(name=self.using_edge)) for n, path in self.paths.items()]
-        matches = 'UNION\n'.join([f'OPTIONAL MATCH ({self.from_variable}){path}({self.to_node}:{n})' for n, path in paths])
-        return f"CALL {{WITH {self.from_variable}\n{matches}\nRETURN {self.to_node}\n}}"
 
 
 class NullStatement(Statement):
