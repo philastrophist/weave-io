@@ -91,8 +91,10 @@ class Multiple:
             return self.singular_name
         return self.plural_name
 
-    def instantate_node(self, include_hierarchies=None):
-        if not inspect.isclass(self.node):
+    def instantate_node(self, node=None, include_hierarchies=None):
+        if self._isself and node is not None:
+            self.node = node
+        elif not inspect.isclass(self.node):
             if isinstance(self.node, str):
                 hierarchies = {i.__name__: i for i in all_subclasses(Hierarchy)}
                 if include_hierarchies is not None:
@@ -215,9 +217,7 @@ class GraphableMeta(type):
         cls.parents = deepcopy(cls.parents)
         for i, c in enumerate(cls.children):
             if isinstance(c, Multiple):
-                if c._isself:
-                    c.node = cls
-                c.instantate_node()
+                c.instantate_node(cls)
                 for n in c.constrain:
                     if n not in cls.children:
                         cls.children.append(n)
@@ -229,9 +229,7 @@ class GraphableMeta(type):
                 parentnames[c.singular_name] = (1, 1)
         for i, p in enumerate(cls.parents):
             if isinstance(p, Multiple):
-                if p._isself:
-                    p.node = cls
-                p.instantate_node()
+                p.instantate_node(cls)
                 for n in p.constrain:
                     if n not in cls.parents:
                         cls.parents.append(n)

@@ -119,63 +119,6 @@ def expand_template_relation(relation, allowed_hiers: Set[Type[Hierarchy]]):
     subclasses = [cls for cls in get_all_subclasses(relation.node) if not cls.is_template and cls in allowed_hiers]
     return [Multiple(subclass, 0, relation.maxnumber, relation.constrain, relation.relation_idname, relation.one2one) for subclass in subclasses]
 
-
-def add_relation_graph_edge(graph, parent, child, relation: Multiple, allowed_hiers: Set[Type[Hierarchy]]):
-    """
-    if an object of type O requires n parents of type P then this is equivalent to defining that instances of those behave as:
-        P-(n)->O (1 object of type O has n parents of type P)
-    it implicitly follows that:
-        O--(m)--P (each of object's parents of type P can be used by an unknown number `m` of objects of type O = many to one)
-    if an object of type O requires n children of type C then this is equivalent to defining that instances of those behave as:
-        O-(n)->C (1 object has n children of type C)
-        it implicitly follows that:
-            child-[m]->Object (each child has m parents of type O)
-    """
-    relation.instantate_node()
-    child_defines_parents = relation.node is parent
-    for relation in expand_template_relation(relation, allowed_hiers):
-        relation.instantate_node()
-        # only parent-->child is in the database
-        relstyle = 'solid' if relation.maxnumber == 1 else 'dashed'
-        if parent is child:
-            for a, b in [(parent, child), (child, parent)]:
-                graph.add_edge(a, b, singular=relation.maxnumber == 1,
-                               optional=relation.minnumber == 0, style=relstyle, actual_number=1)
-        elif child_defines_parents:  # i.e. parents = [...] is set in the class for this object
-            # child instance has n of type Parent, parent instance has unknown number of type Child
-            parent = relation.node  # reset from new relations
-            graph.add_edge(child, parent, singular=relation.maxnumber == 1,
-                           optional=relation.minnumber == 0, style=relstyle, actual_number=1)
-            if relation.one2one:
-                graph.add_edge(parent, child, singular=True, optional=True, style='solid',
-                               relation=relation, actual_number=1)
-            else:
-                graph.add_edge(parent, child, singular=False, optional=True, style='dotted',
-                               relation=relation, actual_number=1)
-        else:  # i.e. children = [...] is set in the class for this object
-            # parent instance has n of type Child, each child instance has one of type Parent
-            child = relation.node  # reset from new relations
-            graph.add_edge(parent, child, singular=relation.maxnumber == 1,
-                           optional=relation.minnumber == 0,
-                           relation=relation, style=relstyle, actual_number=1)
-            graph.add_edge(child, parent, singular=True, optional=True, style='solid', actual_number=1)
-
-
-def make_relation_graph(hierarchies: Set[Type[Hierarchy]]):
-    graph = nx.DiGraph()
-    for h in hierarchies:
-        if h not in graph.nodes:
-            graph.add_node(h)
-        for child in h.children:
-            rel = child if isinstance(child, Multiple) else OneOf(child)
-            child = child.node if isinstance(child, Multiple) else child
-            add_relation_graph_edge(graph, h, child, rel, hierarchies)
-        for parent in h.parents:
-            rel = parent if isinstance(parent, Multiple) else OneOf(parent)
-            parent = parent.node if isinstance(parent, Multiple) else parent
-            add_relation_graph_edge(graph, parent, h, rel, hierarchies)
-    return graph
-
 def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None, templates=False) -> Set[Type[Hierarchy]]:
     if done is None:
         done = []
@@ -335,6 +278,8 @@ class Data:
             raise NetworkXNoPath(f"No path found between `{from_obj}` and `{to_obj}`")
         paths, edges, reversed = zip(*[(path[::-1], [self.hierarchy_graph.short_edge(e[1], e[0]) for e in es[::-1]], True) if path[0] is to_obj else (path, es, False) for path, es in paths])
         singulars = [self.hierarchy_graph.edge_path_is_singular(es) for es in edges]
+        if singular and not all(singulars):
+            raise NetworkXNoPath(f"No singular path found between `{from_obj}` and `{to_obj}`")
         return paths, singulars, reversed
 
 
@@ -358,7 +303,7 @@ class Data:
             if return_objs:
                 return arrows, singulars, paths
             return arrows, singulars
-        except nx.NetworkXNoPath:
+        except nx.NetworkXNoPath as e:
             if not singular:
                 to = f"multiple `{self.plural_name(b)}`"
             else:
@@ -366,7 +311,7 @@ class Data:
             from_ = self.singular_name(a.lower())
             raise NetworkXNoPath(f"Can't find a link between `{from_}` and {to}. "
                                 f"This may be because it doesn't make sense for `{from_}` to have {to}. "
-                                f"Try checking the cardinality of your query.")
+                                f"Try checking the cardinality of your query.") from e
 
     def all_links_to_hierarchy(self, hierarchy: Type[Hierarchy], edge_constraint: Callable[[nx.DiGraph, Tuple], bool]) -> Set[Type[Hierarchy]]:
         hierarchy = self.class_hierarchies[self.class_name(hierarchy)]

@@ -143,9 +143,8 @@ class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
             'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
-    parents = [CASU, RawSpectrum]
-    produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
-    children = [Optional('self', idname='adjunct')]
+    parents = [CASU, RawSpectrum, Optional('self', idname='adjunct', one2one=True)]
+    produces = []  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -157,7 +156,7 @@ class RawFile(HeaderFibinfoFile):
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(path, slc)
         adjunct_run = hiers['adjunct_run']
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
-        adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
+        adjunct_rawfile = RawFile.find(anonymous_parents=[adjunct_raw])
         raw = RawSpectrum(run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'], adjunct=adjunct_rawfile)
         where = {'counts1': 1, 'counts2': 2}
@@ -172,9 +171,8 @@ class L1File(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
             'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
-    children = [Optional('self', idname='adjunct'), WavelengthHolder]
-    parents = [Multiple(L1Spectrum, maxnumber=1000, one2one=True), CASU]
-    produces = [CASU, NoSS]  # extra things which are not necessarily children of this object, cannot include parents
+    parents = [Multiple(L1Spectrum, maxnumber=1000, one2one=True), CASU, Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
+    produces = []  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
     def wavelengths(cls, rootdir: Path, fname: Union[Path, str]):
@@ -198,8 +196,8 @@ class L1File(HeaderFibinfoFile):
 class L1SingleFile(L1File):
     singular_name = 'l1single_file'
     match_pattern = 'single_\d+\.fit'
-    parents = [CASU, OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000, one2one=True)]
-    children = [Optional('self', idname='adjunct'), WavelengthHolder]
+    parents = [CASU, OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000, one2one=True),
+                Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
     version_on = ['raw_file']
 
     @classmethod
@@ -325,8 +323,7 @@ class L1StackFile(L1StackedFile):
     singular_name = 'l1stack_file'
     match_pattern = 'stack_[0-9]+\.fit'
     parents = [CASU, Multiple(L1SingleFile, maxnumber=10, constrain=(OB, ArmConfig)),
-               Multiple(L1StackSpectrum, maxnumber=1000, one2one=True)]
-    children = [Optional('self', idname='adjunct'), WavelengthHolder]
+               Multiple(L1StackSpectrum, maxnumber=1000, one2one=True), Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
     SpectrumType =  L1StackSpectrum
 
     @classmethod
@@ -340,8 +337,8 @@ class L1SuperstackFile(L1StackedFile):
     singular_name = 'l1superstack_file'
     match_pattern = 'superstack_[0-9]+\.fit'
     parents = [Multiple(L1SingleFile, maxnumber=5, constrain=(OBSpec, ArmConfig)), CASU,
-               Multiple(L1SuperstackSpectrum, maxnumber=1000, one2one=True)]
-    children = [Optional('self', idname='adjunct'), WavelengthHolder]
+               Multiple(L1SuperstackSpectrum, maxnumber=1000, one2one=True),
+               Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
     SpectrumType = L1SuperstackSpectrum
 
     @classmethod
@@ -359,8 +356,7 @@ class L1SupertargetFile(L1StackedFile):
     singular_name = 'l1supertarget_file'
     match_pattern = 'WVE_.+\.fit'
     parents = [Multiple(L1SingleFile, maxnumber=10, constrain=(WeaveTarget, ArmConfig)), CASU,
-               OneOf(L1SupertargetSpectrum, one2one=True)]
-    children = [Optional('self', idname='adjunct'), WavelengthHolder]
+               OneOf(L1SupertargetSpectrum, one2one=True), Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
     SpectrumType = L1SupertargetSpectrum
     recommended_batchsize = None
 

@@ -298,7 +298,7 @@ class Spectrum(Hierarchy):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    children = [OneOf(WavelengthHolder, one2one=True)]
+    parents = [WavelengthHolder]
     products = ['flux', 'ivar']
     plural_name = 'spectra1d'
 
@@ -314,17 +314,15 @@ class Run(Hierarchy):
     A run belongs to an exposure, which always consists of one or two runs (per arm).
     """
     idname = 'id'
-    parents = [Exposure, ArmConfig]
-    children = [Optional('self', idname='adjunct')]
+    parents = [Exposure, ArmConfig, Optional('self', idname='adjunct', one2one=True)]
 
 
 class RawSpectrum(Spectrum2D):
     """
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
     """
-    parents = [CASU, OneOf(Run, one2one=True)]
+    parents = [CASU, OneOf(Run, one2one=True), Optional('self', idname='adjunct', one2one=True)]
     products = ['counts1', 'counts2']
-    children = [Optional('self', idname='adjunct')]
     identifier_builder = ['casu', 'run']
 
 
