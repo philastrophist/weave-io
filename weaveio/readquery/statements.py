@@ -35,10 +35,13 @@ class Statement:
         self._edge = value
         self.graph.G.nodes[self._edge[1]]['variables'] = self.output_variables
 
-    def make_variable(self, name):
-        out = self.graph.get_variable_name(name)
-        self.output_variables.append(out)
-        return out
+    def make_variable(self, *names):
+        for name in names:
+            out = self.graph.get_variable_name(name)
+            self.output_variables.append(out)
+        if len(names) == 1
+            return self.output_variables[0]
+        return self.output_variables
 
     def make_cypher(self, ordering: list) -> Optional[str]:
         raise NotImplementedError

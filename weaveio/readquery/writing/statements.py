@@ -84,28 +84,45 @@ class CollisionManager:
 
 
 class Merge(Statement):
-    pass
+    ids = ['labels', 'on_collision', 'ident_properties', 'other_properties']
+
+    def __init__(self, labels, ident_properties, other_properties, on_collision, graph, parameters=None):
+        self.ident_properties = to_cypher_dict_or_variable(ident_properties)
+        self.other_properties = to_cypher_dict_or_variable(other_properties)
+        super(Merge, self).__init__([self.ident_properties, self.other_properties], graph, parameters)
+        self.labels = ':'.join(labels)
+        self.on_collision = on_collision
 
 
 class MergeNode(Merge):
     """
     Merge a node only on class and properties
-    on_collision can be either `overwrite` or `ignore`
     """
-    ids = ['labels', 'on_collision']
 
     def __init__(self, labels, ident_properties, other_properties, on_collision, graph, parameters=None):
-        self.ident_properties = to_cypher_dict_or_variable(ident_properties)
-        self.other_properties = to_cypher_dict_or_variable(other_properties)
-        super(MergeNode, self).__init__([self.ident_properties, self.other_properties], graph, parameters)
+        super().__init__(labels, ident_properties, other_properties, on_collision, graph, parameters)
         self.to_node = self.make_variable(labels[0])
-        self.labels = ':'.join(labels)
-        self.on_collision = on_collision
 
     def make_cypher(self, ordering: list) -> str:
         merge = f"MERGE ({self.to_node}:{self.labels} {self.ident_properties})"
         if self.other_properties:
             collision = CollisionManager.from_neo_object(self.to_node, self.other_properties, self.ident_properties, self.on_collision)
+            return f"{merge}\n{collision}\nWITH *"
+        return f"{merge}\nWITH *"
+
+
+class MergeRel(Merge):
+    def __init__(self, from_node, to_node, labels, ident_properties, other_properties, on_collision, graph, parameters=None):
+        super().__init__(labels, ident_properties, other_properties, on_collision, graph, parameters)
+        self.from_node = from_node
+        self.to_node = to_node
+        self.inputs += [self.from_node, self.to_node]
+        self.rel = self.make_variable('rel')
+
+    def make_cypher(self, ordering: list) -> str:
+        merge = f"MERGE ({self.from_node})-[{self.rel}:{self.labels} {self.ident_properties}]->({self.to_node})"
+        if self.other_properties:
+            collision = CollisionManager.from_neo_object(self.rel, self.other_properties, self.ident_properties, self.on_collision)
             return f"{merge}\n{collision}\nWITH *"
         return f"{merge}\nWITH *"
 
@@ -154,7 +171,7 @@ class MergeSimpleNodeAndRelationships(MergeNode):
             return f"{merge}\nWITH *"
 
 
-class AdvancedMergeNodeAndRelationships(MergeSimpleNodeAndRelationships):
+class AdvancedMergeNodeAndRelationships(MergeNode):
     """
     A complex relationship of many parents and one child
     If the entire pattern exists use on_match, otherwise create it and use on_create
@@ -179,18 +196,45 @@ class AdvancedMergeNodeAndRelationships(MergeSimpleNodeAndRelationships):
         3. make two lists from parts (creaed/matched). one should be always empty
         4. do foreach set stuff on each list
         5. do the always and after
+
+    Input parent_nodes etc are expected to be in a collection, so they will be unwound
+        parents = [[node, {id: ...}, {other: ...}, type], ...]
     """
+
+    def __init__(self, labels, ident_properties, other_properties, parents,
+                 same_rel_type, same_rel_ids,
+                 on_collision, graph, parameters=None):
+        super().__init__(labels, ident_properties, other_properties, on_collision, graph, parameters)
+        self.parents = parents
+        self.inputs.append(self.parents)
+        self.same_rel_type = same_rel_type
+        self.same_rel_ids = same_rel_ids
+        self.dummy = self.make_variable('parents', 'v')
 
     def make_cypher(self, ordering: list) -> str:
         merge_node = MergeNode(self.labels, self.ident_properties, None, self.on_collision, self.graph, self.parameters)
-        merge_rels = []
-        for r, ri, rp, rt in zip(self.rels, self.parent_rel_ident_properties, self.parent_rel_other_properties, self.parent_rel_types):
-            merge_rel = MergeRel(ri, None, rt, self.on_collision, self.graph, self.parameters)
-            merge_rels.append(merge_rel)
-        collect_parts_and_flags = ""
-        validate_merge = ""
+        unwind = f"UNWIND {self.parents} as p_array\np_array[0] as node"
+        if self.same_rel_ids:
+            unwind += ", p_array[1] as p_ids, p_array[2] as p_others"
+        if self.same_rel_type:
+            unwind += ", p_array[3] as p_type"
+        if not self.same_rel_ids:
+            
+
+
+        merge_rel = MergeRel('p_node', 'p_type', 'p_ids', None, self.on_collision, self.graph, self.parameters)
+        collect_parts_and_flags = f"WITH {self.parents},  collect({merge_rel.rel}) as all_parts\n" \
+                                  f"WITH *, [x in all_parts where x._dbcreated = time0] as created_parts, " \
+                                  f"[x in all_parts where x._dbcreated <> time0] as matched_parts"
+        validate_merge = f"CALL apoc.utils.validate(size(created_parts) ^ size(matched_parts), " \
+                         f"'merge on {merge_node.to_node} failed: some relations existed already.', []"
         collision = CollisionManager.from_neo_object('part[0]', 'part[1]', 'part[2]', self.on_collision, False)
-        matched = f"FOREACH ( part in {matched_parts} | {collision.matched})"
-        created = f"FOREACH ( part in {created_parts} | {collision.created})"
-        called = f"CALL {{ WITH {all_parts} WITH {all_parts} UNWIND {all_parts} as part\n{collision.always}\n{collision.after} }}"
+        matched = f"FOREACH ( part in matched_parts | {collision.matched} )"  # 1 of these must be empty
+        created = f"FOREACH ( part in created_parts | {collision.created} )"  # 1 of these must be empty
+        called = f"UNWIND all_parts as part\n" \
+                 f"{collision.always}\n{collision.after}"
+        subquery = '\n'.join([merge_node.make_cypher(ordering), unwind, merge_rel, collect_parts_and_flags,
+                   validate_merge, matched, created, called])
+        return f"CALL {{WITH {self.parents}\n{subquery}\nRETURN count(*) as {self.dummy} }}"
+
         
