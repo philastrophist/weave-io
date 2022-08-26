@@ -11,51 +11,76 @@ def to_cypher_dict_or_variable(x):
         return x
 
 
+def nonempty(l):
+    return [i for i in l if i]
+
+
 class CollisionManager:
-    def __init__(self, on_create=None, on_match=None, always=None, after=None):
+    def __init__(self, on_create=None, on_match=None, on_always=None, on_after=None, prefix=True):
         self.on_create = on_create
         self.on_match = on_match
-        self.always = always
-        self.after = after
+        self.on_always = on_always
+        self.on_after = on_after
+        self.prefix = prefix
 
     @classmethod
-    def from_neo_object(cls, neo_object, properties, id_properties, on_collision):
+    def from_neo_object(cls, obj, properties, id_properties, on_collision, prefix):
         on_create, on_match, always, after = "", "", "", ""
+        set_collision = f"{obj}._collisions = [x in apoc.coll.intersection(keys(properties({obj})), " \
+                       f"keys({properties})) where {obj}[x] <> {properties}[x]]"
+        set_modified = f"{obj}._dbupdated = CASE WHEN apoc.map.submap(properties({obj}), keys({properties})) = {properties} THEN {obj}._dbupdated ELSE time0 END"
         if on_collision == 'rewrite':
-            always = f"{neo_object} = {id_properties}, {neo_object} += {properties}"
+            always = f"{obj} = {id_properties}, {obj} += {properties}"
         elif on_collision == 'preferold':
-            on_match = f"{neo_object} = apoc.map.merge({properties}, properties({neo_object}))"
-            on_create = f"{neo_object} += {properties}"
+            on_match = f"{obj} = apoc.map.merge({properties}, properties({obj}))"
+            on_create = f"{obj} += {properties}"
         elif on_collision == 'prefernew':
-            always = f"{neo_object} += {properties}"
+            always = f"{obj} += {properties}"
         elif on_collision == 'leavealone':
-            on_create = f"{neo_object} = {properties}"
+            on_create = f"{obj} = {properties}"
         elif on_collision == 'raise':
-            on_create = f"{neo_object} += {properties}, {neo_object}._collisions = []"
-            on_match = f"{neo_object}._collisions = [x in apoc.coll.intersection(keys(properties({neo_object})), " \
-                       f"keys({properties})) where {neo_object}[x] <> {properties}[x]], {neo_object} = apoc.map.merge({properties}, properties({neo_object}))"
-            after = f"CALL apoc.util.validate(not isempty({neo_object}._collisions)" \
-                    f", 'properties of {neo_object} collided with new: %s != %s', [apoc.map.fromPairs([x in {neo_object}._collisions | [x, {properties}[x]]]), apoc.map.fromPairs([x in {neo_object}._collisions | [x, {neo_object}[x]]])])"
+            on_create = f"{obj} += {properties}"
+            on_match = f"{obj} = apoc.map.merge({properties}, properties({obj}))"
+            after = f"CALL apoc.util.validate(not isempty({obj}._collisions)" \
+                    f", 'properties of {obj} collided with new: %s != %s'," \
+                    f" [apoc.map.fromPairs([x in {obj}._collisions | [x, {properties}[x]]]), apoc.map.fromPairs([x in {obj}._collisions | [x, {obj}[x]]])])"
         else:
             raise ValueError(f"Unknown on_collision `{on_collision}`. Accepted values are 'rewrite', 'prefernew', 'prefer', 'leavealone', 'raise'")
-        return CollisionManager(on_create, on_match, always, after)
+        on_create = ', \n\t\t'.join(nonempty([on_create, f'{obj}._dbcreated = time0, {obj}._dbupdated = time0, {obj}._collisions = []']))
+        on_match = ", \n\t\t".join(nonempty([set_collision, on_match]))
+        always = ", \n\t\t".join(nonempty([always, set_modified]))
+        return CollisionManager(on_create, on_match, always, after, prefix)
 
     def extend(self, x: 'CollisionManager') -> 'CollisionManager':
         return CollisionManager(', \n\t\t'.join([self.on_create, x.on_create]).strip('\t\n, '),
                                 ', \n\t\t'.join([self.on_match, x.on_match]).strip('\t\n, '),
-                                ', \n\t\t'.join([self.always, x.always]).strip('\t\n, '),
-                                '\n\t\t'.join([self.after, x.after]).strip('\t\n ')
-                                )
+                                ', \n\t\t'.join([self.on_always, x.on_always]).strip('\t\n, '),
+                                '\n\t'.join([self.on_after, x.on_after]).strip('\t\n '),
+                                self.prefix)
 
     def __iadd__(self, other):
         return reduce(lambda x, y: x.extend(y), [self]+list(other))
 
+    @property
+    def created(self):
+        prefix = 'ON CREATE ' if self.prefix else ''
+        return f"\t{prefix}SET {self.on_create}" if self.on_create else None
+
+    @property
+    def matched(self):
+        prefix = 'ON MATCH ' if self.prefix else ''
+        return f"\t{prefix}SET {self.on_match}" if self.on_match else None
+
+    @property
+    def after(self):
+        return f"\tWITH * \n\t{self.on_after}" if self.on_after else None
+
+    @property
+    def always(self):
+        return f"\tSET {self.on_always}" if self.on_always else None
+
     def __str__(self):
-        on_create = f"\tON CREATE SET {self.on_create}" if self.on_create else None
-        on_match = f"\tON MATCH SET {self.on_match}" if self.on_match else None
-        after = f"\tWITH * {self.after}" if self.after else None
-        always = f"\tSET {self.always}" if self.always else None
-        return '\n'.join([i for i in [on_create, on_match, always, after] if i])
+        return '\n'.join([i for i in [self.created, self.matched, self.always, self.after] if i])
 
 
 class Merge(Statement):
@@ -70,11 +95,9 @@ class MergeNode(Merge):
     ids = ['labels', 'on_collision']
 
     def __init__(self, labels, ident_properties, other_properties, on_collision, graph, parameters=None):
-        ident_properties = to_cypher_dict_or_variable(ident_properties)
-        other_properties = to_cypher_dict_or_variable(other_properties)
-        super(MergeNode, self).__init__([ident_properties, other_properties], graph, parameters)
-        self.ident_properties = ident_properties
-        self.other_properties = other_properties
+        self.ident_properties = to_cypher_dict_or_variable(ident_properties)
+        self.other_properties = to_cypher_dict_or_variable(other_properties)
+        super(MergeNode, self).__init__([self.ident_properties, self.other_properties], graph, parameters)
         self.to_node = self.make_variable(labels[0])
         self.labels = ':'.join(labels)
         self.on_collision = on_collision
@@ -132,4 +155,42 @@ class MergeSimpleNodeAndRelationships(MergeNode):
 
 
 class AdvancedMergeNodeAndRelationships(MergeSimpleNodeAndRelationships):
-    pass
+    """
+    A complex relationship of many parents and one child
+    If the entire pattern exists use on_match, otherwise create it and use on_create
+    Merge node only on ids and
+    Merge each rel independently on ids
+    pattern now is guaranteed to exist
+
+    if all parts were created now:
+        use on_create
+    if no parts were created now:
+        use on_match
+    if node was created but not rels:
+        not possible
+    if rels where created but not node:
+        this should never happen because node must be created along with the rels since its uniqueness depends on them
+        raise error
+
+    In cypher we do this:
+        0. unwind collections
+        1. merge each part only on ids
+        2. collect with created flag & validate the merge holistically
+        3. make two lists from parts (creaed/matched). one should be always empty
+        4. do foreach set stuff on each list
+        5. do the always and after
+    """
+
+    def make_cypher(self, ordering: list) -> str:
+        merge_node = MergeNode(self.labels, self.ident_properties, None, self.on_collision, self.graph, self.parameters)
+        merge_rels = []
+        for r, ri, rp, rt in zip(self.rels, self.parent_rel_ident_properties, self.parent_rel_other_properties, self.parent_rel_types):
+            merge_rel = MergeRel(ri, None, rt, self.on_collision, self.graph, self.parameters)
+            merge_rels.append(merge_rel)
+        collect_parts_and_flags = ""
+        validate_merge = ""
+        collision = CollisionManager.from_neo_object('part[0]', 'part[1]', 'part[2]', self.on_collision, False)
+        matched = f"FOREACH ( part in {matched_parts} | {collision.matched})"
+        created = f"FOREACH ( part in {created_parts} | {collision.created})"
+        called = f"CALL {{ WITH {all_parts} WITH {all_parts} UNWIND {all_parts} as part\n{collision.always}\n{collision.after} }}"
+        
