@@ -300,7 +300,6 @@ class QueryGraph:
         return True  # if we get to this point, we're at the start node and all edges are single
 
 
-
     @property
     def above_graph(self):
         return get_above_state_traversal_graph(self.G)
@@ -547,6 +546,9 @@ class QueryGraph:
         varname = self.get_variable_name(name)
         self.parameters[varname] = value
         return varname
+
+    def add_variable_getitem(self, variable, item):
+        return f"{variable}.`{item}`"
 
     def add_previous_reference(self, parent_node, node_to_reference):
         vars = self.G.nodes[node_to_reference]['variables']
