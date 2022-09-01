@@ -175,22 +175,49 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
     """
     A complex relationship of many parents and one child
     If the entire pattern exists use on_match, otherwise create it and use on_create
+
+    Parents are already known, just the rels and child need finding
+        - # children/parent is always less than or equal to # globally unique children indexed by id:
+            Expand from parent and filter to child
+
+    pseudo code:
+        CALL apoc.lock.nodes(parent_nodes)
+        WITH *, head(parent_nodes) as first_node, head(parent_ids) as first_id, head(parent_
+        WITH *, first[0] as first_node, first[1] as first_id, first[2] as first_other, first[3] as first_type
+        OPTIONAL MATCH (first_node)-[first_rel:TYPE {first_id}]->(d:Label)
+        WHERE all(node in tail(parents) where (node-[:TYPE]->(d))
+
+        OPTIONAL MATCH whole pattern
+        if not matched:
+            CREATE node with all properties
+            CREATE rels with all properties
+        else:
+            return pattern
+
+
+
     Merge node only on ids and
     Merge each rel independently on ids
     pattern now is guaranteed to exist
 
-    if all parts were created now:
+    if all parts were created in this transaction:
         use on_create
-    if no parts were created now:
+    if no parts were created in this transaction:
         use on_match
-    if node was created but not rels:
-        not possible
-    if rels where created but not node:
-        this should never happen because node must be created along with the rels since its uniqueness depends on them
-        raise error
+    if a node matching these id_properties was matched but there exist different rels:
+        Since the parents & rels define the uniqueness of this child node,
+        create a new node and rels
+        use on_create
+    if a node matching these id_properties was not found but there exist matched rels:
+        this would mean that a different child node was created earlier
+        Since the parents & rels define the uniqueness of this child node,
+        create a new node
+        use on_create
+    Since we want to guarantee that node is present after the operation, we can merge each part
+    separately and take the relevant "on_create/on_match" for all after the fact.
 
     In cypher we do this:
-        0. unwind collections
+        0. unwind input parents
         1. merge each part only on ids
         2. collect with created flag & validate the merge holistically
         3. make two lists from parts (creaed/matched). one should be always empty
