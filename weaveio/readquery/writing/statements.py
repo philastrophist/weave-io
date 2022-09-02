@@ -18,15 +18,16 @@ def nonempty(l):
 
 
 class CollisionManager:
-    def __init__(self, on_create=None, on_match=None, on_always=None, on_after=None, prefix=True):
+    def __init__(self, on_create=None, on_match=None, on_always=None, on_after=None, prefix=True, indent=0):
         self.on_create = on_create
         self.on_match = on_match
         self.on_always = on_always
         self.on_after = on_after
         self.prefix = prefix
+        self.indent = indent
 
     @classmethod
-    def from_neo_object(cls, obj, properties, id_properties, on_collision, prefix):
+    def from_neo_object(cls, obj, properties, id_properties, on_collision, prefix=True, indent=0):
         on_create, on_match, always, after = "", "", "", ""
         set_collision = f"{obj}._collisions = [x in apoc.coll.intersection(keys(properties({obj})), " \
                        f"keys({properties})) where {obj}[x] <> {properties}[x]]"
@@ -44,42 +45,46 @@ class CollisionManager:
             on_create = f"{obj} += {properties}"
             on_match = f"{obj} = apoc.map.merge({properties}, properties({obj}))"
             after = f"CALL apoc.util.validate(not isempty({obj}._collisions)" \
-                    f", 'properties of {obj} collided with new: %s != %s'," \
-                    f" [apoc.map.fromPairs([x in {obj}._collisions | [x, {properties}[x]]]), apoc.map.fromPairs([x in {obj}._collisions | [x, {obj}[x]]])])"
+                    f", 'properties of {obj} collided with new: %s'," \
+                    f" [{obj}._collisions])"
         else:
             raise ValueError(f"Unknown on_collision `{on_collision}`. Accepted values are 'rewrite', 'prefernew', 'prefer', 'leavealone', 'raise'")
         on_create = ', \n\t\t'.join(nonempty([on_create, f'{obj}._dbcreated = time0, {obj}._dbupdated = time0, {obj}._collisions = []']))
         on_match = ", \n\t\t".join(nonempty([set_collision, on_match]))
         always = ", \n\t\t".join(nonempty([always, set_modified]))
-        return CollisionManager(on_create, on_match, always, after, prefix)
+        return CollisionManager(on_create, on_match, always, after, prefix, indent)
 
     def extend(self, x: 'CollisionManager') -> 'CollisionManager':
         return CollisionManager(', \n\t\t'.join([self.on_create, x.on_create]).strip('\t\n, '),
                                 ', \n\t\t'.join([self.on_match, x.on_match]).strip('\t\n, '),
                                 ', \n\t\t'.join([self.on_always, x.on_always]).strip('\t\n, '),
                                 '\n\t'.join([self.on_after, x.on_after]).strip('\t\n '),
-                                self.prefix)
+                                self.prefix, self.indent)
 
     def __iadd__(self, other):
         return reduce(lambda x, y: x.extend(y), [self]+list(other))
 
     @property
+    def indents(self):
+        return '\t' * self.indent
+
+    @property
     def created(self):
         prefix = 'ON CREATE ' if self.prefix else ''
-        return f"\t{prefix}SET {self.on_create}" if self.on_create else None
+        return f"{self.indents}\t{prefix}SET {self.on_create}" if self.on_create else None
 
     @property
     def matched(self):
         prefix = 'ON MATCH ' if self.prefix else ''
-        return f"\t{prefix}SET {self.on_match}" if self.on_match else None
+        return f"{self.indents}\t{prefix}SET {self.on_match}" if self.on_match else None
 
     @property
     def after(self):
-        return f"\tWITH * \n\t{self.on_after}" if self.on_after else None
+        return f"{self.indents}\tWITH * \n\t{self.on_after}" if self.on_after else None
 
     @property
     def always(self):
-        return f"\tSET {self.on_always}" if self.on_always else None
+        return f"{self.indents}\tSET {self.on_always}" if self.on_always else None
 
     def __str__(self):
         return '\n'.join([i for i in [self.created, self.matched, self.always, self.after] if i])
@@ -189,7 +194,7 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
     """
     ids = Merge.ids + ['rel_type, rel_ident_properties_collection, rel_other_properties_collection', 'ordered']
 
-    def __init__(self, labels: List[str], ident_properties: Dict[str], other_properties: Dict[str],
+    def __init__(self, labels: List[str], ident_properties: Dict[str, str], other_properties: Dict[str, str],
                  rels: Dict[str, Tuple[Dict[str, str], Dict[str, str]]],
                  rel_type: str,
                  ordered, on_collision, graph, parameters=None):
@@ -208,35 +213,53 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
     def make_cypher(self, ordering: list) -> str:
         c = ""
         if self.ordered:
-            for parent, (ids, others) in self.rels.items():
-                c += '// auto-enumerate\n'
-                c += f"WITH *, range(0, size({parent})-1) as {ids['_order']}\n"
+            c += '// auto-enumerate\n'
+            for parents, (ids, others) in self.rels.items():
+                c += f"WITH *, range(0, size({parents})-1) as {ids['_order']}\n"
         # do call signature
         c += "CALL {with "
-        for parent, (ids, others) in self.rels.items():
-            c += f", {parent}"
+        for parents, (ids, others) in self.rels.items():
+            c += f"{parents}, "
             for v in list(ids.values()) + list(others.values()):
-                c += f", {v}"
+                c += f"{v}, "
+        c = c.strip(', ')
         c += '\nWITH '
-        # turn collections into maps
-        for parent, (ids, others) in self.rels.items():
-            c += f'{parent}, '
-        for v in list(ids.values()) + list(others.values()):
-            c += f"apoc.map.fromLists([x in {parent} | toString(id(x))], {v}) as {v}, "
-        for parent in self.rels:
-            c += f"\nCALL apoc.lock.nodes({parent})\n"  # lock nodes
-        c += f"WITH *, head({parent}) as first\n" # take a parent to act as the first rel used
-        first_ident = ', '.join([f'{k}: {v}[toString(id(first))].{k}]' for ids, _ in self.rels[parent] for k, v in ids.items()])
-        c += f"OPTIONAL MATCH (first)-[:{self.rel_type} {{{first_ident}}}]->(d:{':'.join(self.labels)})\n"
-        tail_idents = []
-        for parent, (ids, others) in self.rels.items():
-            i = ', '.join([f'{k}: {v}[toString(id(x))].{k}]' for k, v in ids.items()])
-            tail_idents.append(f"WHERE all(x in tail({parent}) WHERE (x)-[:{self.rel_type} {{{i}}}]->(d))")
-        tail_idents = "\n\tand ".join(tail_idents)
-        c += f'WHERE {tail_idents}\n'
-        c += f"""CALL apoc.do.where(d is null,
-                "CREATE (dd:{self.labels}) FOREACH (x in ${self.parent_nodes} | CREATE (x)-[r:REL {id: ${self.parent_ids}[toString(id(x))].id}]->(dd) ) RETURN dd as d", 
-                "RETURN d as d", {d:d, {self.parent_nodes}:{self.parent_nodes}, {self.parent_ids}:{self.parent_ids}}) yield value
-            RETURN value.d as d
-        }}
-        """
+        # turn collections into maps i.e. [a0, a1, ...] -> {nodeid0: a0, ...}
+        for parents, (ids, others) in self.rels.items():
+            c += f'{parents}, '
+            for v in list(ids.values()) + list(others.values()):
+                c += f"apoc.map.fromLists([x in {parents} | toString(id(x))], {v}) as {v}, "
+        c = c.strip(', ') + '\n'
+        # so now self.rels looks like {parent_node_collection_var: [{'key': nodeid2prop_map}, ...]}
+        for parents in self.rels:
+            c += f"CALL apoc.lock.nodes({parents})\n"  # lock nodes
+        c += f"WITH *, head({parents}) as first\n" # take a parent to act as the first rel used
+        first_identity = ', '.join([f'{k}: {mapping}[toString(id(first))]' for k, mapping in self.rels[parents][0].items()])
+        c += f"OPTIONAL MATCH (first)-[:{self.rel_type} {{{first_identity}}}]->(d:{self.labels})\n"
+        tail_identities = []
+        for parents, (ids, others) in self.rels.items():
+            i = ', '.join([f'{k}: {v}[toString(id(x))]' for k, v in ids.items()])
+            tail_identities.append(f"all(x in tail({parents}) where (x)-[:{self.rel_type} {{{i}}}]->(d))")
+        tail_identities = "\n\tand ".join(tail_identities)
+        c += f'WHERE {tail_identities}\n'
+
+        creates = []
+        matches = []
+        for parents, (ids, others) in self.rels.items():
+            i = ', '.join([f'{k}: ${v}[toString(id(x))]' for k, v in ids.items()])
+            o = ', '.join([f'{k}: ${v}[toString(id(x))]' for k, v in others.items()])
+            setup = f'WITH *, {{{i}}} as ids, {{{o}}} as others'
+            collision = CollisionManager.from_neo_object('r', 'others', 'ids', self.on_collision, False)
+            creates.append(f"\tUNWIND ${parents} as x \n\t\t{setup}\n\t\tCREATE (x)-[r:{self.rel_type}]->(dd))\n\t\t{collision.created}\n\t\t{collision.always}\n\t\t{collision.after}")
+            matches.append(f"\tUNWIND ${parents} as x \n\t\t{setup}\n\t\t{collision.matched}\n\t\t{collision.always}\n\t\t{collision.after}")
+        node_collision = CollisionManager.from_neo_object('dd', self.other_properties, self.ident_properties, self.on_collision, False)
+        creates.append(f"{node_collision.created}\n{node_collision.always}\n{node_collision.after}")
+        matches.append(f"{node_collision.matched}\n{node_collision.always}\n{node_collision.after}")
+        create = '\n'.join(creates)
+        match = '\n'.join(matches)
+
+        var = ', '.join([f"{x}:{x}" for parents, (ids, others) in self.rels.items() for x in [parents]+list(ids.values())+list(others.values())])
+        var_import = f"{{{var}}}"
+        c += f'CALL apoc.do.when(d is null, "CREATE (dd:{self.labels})\n\t{create} RETURN dd", \n\t"{match} RETURN d as dd", {var_import})\n yield value\n'
+        c += f" RETURN value.dd as {self.to_node}} WITH * limit 1 RETURN {self.to_node}"
+        return c
