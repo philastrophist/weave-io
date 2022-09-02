@@ -1,6 +1,8 @@
 from collections import namedtuple
 from functools import reduce
 
+from typing import List, Dict, Tuple
+
 from ..statements import Statement
 
 
@@ -180,88 +182,61 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
         - # children/parent is always less than or equal to # globally unique children indexed by id:
             Expand from parent and filter to child
 
-    pseudo code:
-        CALL apoc.lock.nodes(parent_nodes)
-        WITH *, head(parent_nodes) as first_node, head(parent_ids) as first_id, head(parent_
-        WITH *, first[0] as first_node, first[1] as first_id, first[2] as first_other, first[3] as first_type
-        OPTIONAL MATCH (first_node)-[first_rel:TYPE {first_id}]->(d:Label)
-        WHERE all(node in tail(parents) where (node-[:TYPE]->(d))
-
-        OPTIONAL MATCH whole pattern
-        if not matched:
-            CREATE node with all properties
-            CREATE rels with all properties
-        else:
-            return pattern
-
-
-
-    Merge node only on ids and
-    Merge each rel independently on ids
-    pattern now is guaranteed to exist
-
-    if all parts were created in this transaction:
-        use on_create
-    if no parts were created in this transaction:
-        use on_match
-    if a node matching these id_properties was matched but there exist different rels:
-        Since the parents & rels define the uniqueness of this child node,
-        create a new node and rels
-        use on_create
-    if a node matching these id_properties was not found but there exist matched rels:
-        this would mean that a different child node was created earlier
-        Since the parents & rels define the uniqueness of this child node,
-        create a new node
-        use on_create
-    Since we want to guarantee that node is present after the operation, we can merge each part
-    separately and take the relevant "on_create/on_match" for all after the fact.
-
-    In cypher we do this:
-        0. unwind input parents
-        1. merge each part only on ids
-        2. collect with created flag & validate the merge holistically
-        3. make two lists from parts (creaed/matched). one should be always empty
-        4. do foreach set stuff on each list
-        5. do the always and after
-
-    Input parent_nodes etc are expected to be in a collection, so they will be unwound
-        parents = [[node, {id: ...}, {other: ...}, type], ...]
+    Input parent_nodes etc are expected to be in a collection
+    Input properties are expected to be in individual collections
+    e.g.
+    >>> AdvancedMergeNodeAndRelationships(['OB'], {'id': 'id1'}, {}, {'fibre_targets1': [{'a': 'a0'}, {}}, 'is_required_by', True, 'raise', graph)
     """
+    ids = Merge.ids + ['rel_type, rel_ident_properties_collection, rel_other_properties_collection', 'ordered']
 
-    def __init__(self, labels, ident_properties, other_properties, parents,
-                 same_rel_type, same_rel_ids,
-                 on_collision, graph, parameters=None):
+    def __init__(self, labels: List[str], ident_properties: Dict[str], other_properties: Dict[str],
+                 rels: Dict[str, Tuple[Dict[str, str], Dict[str, str]]],
+                 rel_type: str,
+                 ordered, on_collision, graph, parameters=None):
         super().__init__(labels, ident_properties, other_properties, on_collision, graph, parameters)
-        self.parents = parents
-        self.inputs.append(self.parents)
-        self.same_rel_type = same_rel_type
-        self.same_rel_ids = same_rel_ids
-        self.dummy = self.make_variable('parents', 'v')
+        self.ordered = ordered
+        self.rel_type = rel_type
+        self.rels = rels
+        for parent, (ids, others) in self.rels.items():
+            if self.ordered:
+                ids['_order'] = self.make_variable('_order')
+            self.inputs.append(parent)
+            for d in [ids, others]:
+                self.inputs += list(d.values())
+
 
     def make_cypher(self, ordering: list) -> str:
-        merge_node = MergeNode(self.labels, self.ident_properties, None, self.on_collision, self.graph, self.parameters)
-        unwind = f"UNWIND {self.parents} as p_array\np_array[0] as node"
-        if self.same_rel_ids:
-            unwind += ", p_array[1] as p_ids, p_array[2] as p_others"
-        if self.same_rel_type:
-            unwind += ", p_array[3] as p_type"
-        if not self.same_rel_ids:
-            
-
-
-        merge_rel = MergeRel('p_node', 'p_type', 'p_ids', None, self.on_collision, self.graph, self.parameters)
-        collect_parts_and_flags = f"WITH {self.parents},  collect({merge_rel.rel}) as all_parts\n" \
-                                  f"WITH *, [x in all_parts where x._dbcreated = time0] as created_parts, " \
-                                  f"[x in all_parts where x._dbcreated <> time0] as matched_parts"
-        validate_merge = f"CALL apoc.utils.validate(size(created_parts) ^ size(matched_parts), " \
-                         f"'merge on {merge_node.to_node} failed: some relations existed already.', []"
-        collision = CollisionManager.from_neo_object('part[0]', 'part[1]', 'part[2]', self.on_collision, False)
-        matched = f"FOREACH ( part in matched_parts | {collision.matched} )"  # 1 of these must be empty
-        created = f"FOREACH ( part in created_parts | {collision.created} )"  # 1 of these must be empty
-        called = f"UNWIND all_parts as part\n" \
-                 f"{collision.always}\n{collision.after}"
-        subquery = '\n'.join([merge_node.make_cypher(ordering), unwind, merge_rel, collect_parts_and_flags,
-                   validate_merge, matched, created, called])
-        return f"CALL {{WITH {self.parents}\n{subquery}\nRETURN count(*) as {self.dummy} }}"
-
-        
+        c = ""
+        if self.ordered:
+            for parent, (ids, others) in self.rels.items():
+                c += '// auto-enumerate\n'
+                c += f"WITH *, range(0, size({parent})-1) as {ids['_order']}\n"
+        # do call signature
+        c += "CALL {with "
+        for parent, (ids, others) in self.rels.items():
+            c += f", {parent}"
+            for v in list(ids.values()) + list(others.values()):
+                c += f", {v}"
+        c += '\nWITH '
+        # turn collections into maps
+        for parent, (ids, others) in self.rels.items():
+            c += f'{parent}, '
+        for v in list(ids.values()) + list(others.values()):
+            c += f"apoc.map.fromLists([x in {parent} | toString(id(x))], {v}) as {v}, "
+        for parent in self.rels:
+            c += f"\nCALL apoc.lock.nodes({parent})\n"  # lock nodes
+        c += f"WITH *, head({parent}) as first\n" # take a parent to act as the first rel used
+        first_ident = ', '.join([f'{k}: {v}[toString(id(first))].{k}]' for ids, _ in self.rels[parent] for k, v in ids.items()])
+        c += f"OPTIONAL MATCH (first)-[:{self.rel_type} {{{first_ident}}}]->(d:{':'.join(self.labels)})\n"
+        tail_idents = []
+        for parent, (ids, others) in self.rels.items():
+            i = ', '.join([f'{k}: {v}[toString(id(x))].{k}]' for k, v in ids.items()])
+            tail_idents.append(f"WHERE all(x in tail({parent}) WHERE (x)-[:{self.rel_type} {{{i}}}]->(d))")
+        tail_idents = "\n\tand ".join(tail_idents)
+        c += f'WHERE {tail_idents}\n'
+        c += f"""CALL apoc.do.where(d is null,
+                "CREATE (dd:{self.labels}) FOREACH (x in ${self.parent_nodes} | CREATE (x)-[r:REL {id: ${self.parent_ids}[toString(id(x))].id}]->(dd) ) RETURN dd as d", 
+                "RETURN d as d", {d:d, {self.parent_nodes}:{self.parent_nodes}, {self.parent_ids}:{self.parent_ids}}) yield value
+            RETURN value.d as d
+        }}
+        """
