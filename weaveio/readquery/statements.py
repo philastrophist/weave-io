@@ -39,9 +39,9 @@ class Statement:
         for name in names:
             out = self.graph.get_variable_name(name)
             self.output_variables.append(out)
-        if len(names) == 1
-            return self.output_variables[0]
-        return self.output_variables
+        if len(names) == 1:
+            return out
+        return self.output_variables[-len(names):]
 
     def make_cypher(self, ordering: list) -> Optional[str]:
         raise NotImplementedError

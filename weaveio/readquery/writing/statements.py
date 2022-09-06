@@ -236,12 +236,12 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
         c += f"WITH *, head({parents}) as first\n" # take a parent to act as the first rel used
         first_identity = ', '.join([f'{k}: {mapping}[toString(id(first))]' for k, mapping in self.rels[parents][0].items()])
         c += f"OPTIONAL MATCH (first)-[:{self.rel_type} {{{first_identity}}}]->(d:{self.labels})\n"
-        tail_identities = []
+        identities = []
         for parents, (ids, others) in self.rels.items():
             i = ', '.join([f'{k}: {v}[toString(id(x))]' for k, v in ids.items()])
-            tail_identities.append(f"all(x in tail({parents}) where (x)-[:{self.rel_type} {{{i}}}]->(d))")
-        tail_identities = "\n\tand ".join(tail_identities)
-        c += f'WHERE {tail_identities}\n'
+            identities.append(f"all(x in {parents} where (x)-[:{self.rel_type} {{{i}}}]->(d))")
+        identities = "\n\tand ".join(identities)
+        c += f'WHERE {identities}\n'
 
         creates = []
         matches = []
@@ -261,5 +261,5 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
         var = ', '.join([f"{x}:{x}" for parents, (ids, others) in self.rels.items() for x in [parents]+list(ids.values())+list(others.values())])
         var_import = f"{{{var}}}"
         c += f'CALL apoc.do.when(d is null, "CREATE (dd:{self.labels})\n\t{create} RETURN dd", \n\t"{match} RETURN d as dd", {var_import})\n yield value\n'
-        c += f" RETURN value.dd as {self.to_node}}} WITH * limit 1 RETURN {self.to_node}"
+        c += f" RETURN value.dd as {self.to_node}}} RETURN {self.to_node}"
         return c
