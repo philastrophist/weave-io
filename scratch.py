@@ -14,7 +14,13 @@ other = data.query._G.add_parameter({'a': 1, 'b': 2}, 'p')
 #                                 ['is_required', 'is_required'], 'raise', data.query._G)
 # print(node.make_cypher([]))
 
-node = AdvancedMergeNodeAndRelationships(['OB'], {'id': data.query._G.add_variable_getitem(ids, 'id')}, other,
-                                         {'parents0': ({'ids': 'ids0'}, {'a': 'a0'}), 'parents1': ({'ids': 'ids1'}, {'a': 'a1'})},
-                                         'is_required', True, 'raise', data.query._G)
+# node = AdvancedMergeNodeAndRelationships(['OB'], {'id': data.query._G.add_variable_getitem(ids, 'id')}, other,
+#                                          {'parents0': ({'ids': 'ids0'}, {'a': 'a0'}), 'parents1': ({'ids': 'ids1'}, {'a': 'a1'})},
+#                                          'is_required', True, 'raise', data.query._G)
+# print(node.make_cypher([]))
+
+
+node = AdvancedMergeNodeAndRelationships(['Child'], {'id': 100}, {},
+                                         {'parents0': ({}, {})},
+                                         'is_required', True, 'leavealone', data.query._G)
 print(node.make_cypher([]))

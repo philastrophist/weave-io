@@ -239,7 +239,7 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
         identities = []
         for parents, (ids, others) in self.rels.items():
             i = ', '.join([f'{k}: {v}[toString(id(x))]' for k, v in ids.items()])
-            identities.append(f"all(x in {parents} where (x)-[:{self.rel_type} {{{i}}}]->(d))")
+            identities.append(f"all(x in {parents} where (x)-[:{self.rel_type} {{{i}}}]->(d)")
         identities = "\n\tand ".join(identities)
         c += f'WHERE {identities}\n'
 
@@ -260,6 +260,6 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
 
         var = ', '.join([f"{x}:{x}" for parents, (ids, others) in self.rels.items() for x in [parents]+list(ids.values())+list(others.values())])
         var_import = f"{{{var}}}"
-        c += f'CALL apoc.do.when(d is null, "CREATE (dd:{self.labels})\n\t{create} RETURN dd", \n\t"{match} RETURN d as dd", {var_import})\n yield value\n'
+        c += f'CALL apoc.do.when(d is null, "CREATE (dd:{self.labels}) WITH *\n\t{create} RETURN dd", \n\t"{match} RETURN d as dd", {var_import})\n yield value\n'
         c += f" RETURN value.dd as {self.to_node}}} RETURN {self.to_node}"
         return c
