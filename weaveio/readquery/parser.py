@@ -542,7 +542,7 @@ class QueryGraph:
                 value = value[allowed_cols]
         if value in self.parameters.values():
             return [k for k, v in self.parameters.items() if v == value][0]
-        name = f'${name}' if name is not None else '$'
+        name = f'${name}' if name is not None else '$p'
         varname = self.get_variable_name(name)
         self.parameters[varname] = value
         return varname

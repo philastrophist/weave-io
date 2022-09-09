@@ -14,7 +14,7 @@ class CollisionManager:
         self.indent = indent
 
     @classmethod
-    def from_neo_object(cls, obj: str, properties: Dict[str, str], id_properties: Dict[str, str], on_collision: str, prefix=True, indent=0):
+    def from_neo_object(cls, obj: str, properties, id_properties, on_collision: str, prefix=True, indent=0):
         properties = to_cypher_dict_or_variable(properties)
         id_properties = to_cypher_dict_or_variable(id_properties)
         on_create, on_match, always, after = "", "", "", ""
@@ -28,8 +28,8 @@ class CollisionManager:
             on_create = f"{obj} += {properties}"
         elif on_collision == 'prefernew':
             always = f"{obj} += {properties}"
-        elif on_collision == 'leavealone':
-            on_create = f"{obj} = {properties}"
+        elif on_collision == 'leavealone':  # if matched, dont even add anything
+            on_create = f"{obj} = {id_properties}, {obj} += {properties}"
         elif on_collision == 'raise':
             on_create = f"{obj} += {properties}"
             on_match = f"{obj} = apoc.map.merge({properties}, properties({obj}))"

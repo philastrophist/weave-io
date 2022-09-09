@@ -136,6 +136,8 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
 
 
     def make_cypher(self, ordering: list) -> str:
+        ident_properties = to_cypher_dict_or_variable(self.ident_properties)
+        properties = to_cypher_dict_or_variable(self.other_properties)
         c = ""
         if self.ordered:
             c += '// auto-enumerate\n'
@@ -162,7 +164,7 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
             c += f"CALL apoc.lock.nodes({parents})\n"  # lock nodes
         c += f"WITH *, head({parents}) as first\n" # take a parent to act as the first rel used
         first_identity = ', '.join([f'{k}: {mapping}[toString(id(first))]' for k, mapping in self.rels[parents][0].items()])
-        c += f"OPTIONAL MATCH (first)-[:{self.rel_type} {{{first_identity}}}]->(d:{self.labels} {self.ident_properties})\n"
+        c += f"OPTIONAL MATCH (first)-[:{self.rel_type} {{{first_identity}}}]->(d:{self.labels} {ident_properties})\n"
         identities = []
         for parents, (ids, others) in self.rels.items():
             i = ', '.join([f'{k}: {v}[toString(id(x))]' for k, v in ids.items()])
@@ -173,20 +175,24 @@ class AdvancedMergeNodeAndRelationships(MergeNode):
         creates = []
         matches = []
         for parents, (ids, others) in self.rels.items():
-            i = ', '.join([f'{k}: ${v}[toString(id(x))]' for k, v in ids.items()])
-            o = ', '.join([f'{k}: ${v}[toString(id(x))]' for k, v in others.items()])
-            setup = f'WITH *, {{{i}}} as ids, {{{o}}} as others, $time0 as time0'
+            i = ', '.join([f'{k}: {v}[toString(id(x))]' for k, v in ids.items()])
+            o = ', '.join([f'{k}: {v}[toString(id(x))]' for k, v in others.items()])
+            setup = f'WITH *, {{{i}}} as ids, {{{o}}} as others'
             collision = CollisionManager.from_neo_object('r', 'others', 'ids', self.on_collision, False)
-            creates.append(f"\tUNWIND ${parents} as x \n\t\t{setup}\n\t\tCREATE (x)-[r:{self.rel_type}]->(dd)\n\t\t{collision.created}\n\t\t{collision.always}\n\t\t{collision.after}")
-            matches.append(f"\tUNWIND ${parents} as x \n\t\tMATCH (x)-[r:{self.rel_type} {{{i}}}]->(d)\n\t\t{setup}, d as dd\n\t\t{collision.matched}\n\t\t{collision.always}\n\t\t{collision.after}")
+            creates.append(f"\tUNWIND {parents} as x \n\t\t{setup}\n\t\tCREATE (x)-[r:{self.rel_type}]->(dd)\n\t\t{collision.created}\n\t\t{collision.always}\n\t\t{collision.after}")
+            matches.append(f"\tUNWIND {parents} as x \n\t\tMATCH (x)-[r:{self.rel_type} {{{i}}}]->(d)\n\t\t{setup}, d as dd\n\t\t{collision.matched}\n\t\t{collision.always}\n\t\t{collision.after}")
         node_collision = CollisionManager.from_neo_object('dd', self.other_properties, self.ident_properties, self.on_collision, False)
         creates.append(f"{node_collision.created}\n{node_collision.always}\n{node_collision.after}")
         matches.append(f"{node_collision.matched}\n{node_collision.always}\n{node_collision.after}")
         create = '\n'.join(creates)
         match = '\n'.join(matches)
 
-        var = ', '.join([f"{x}:{x}" for parents, (ids, others) in self.rels.items() for x in ['d', 'time0', parents]+list(ids.values())+list(others.values())])
-        var_import = f"{{{var}}}"
-        c += f'CALL apoc.do.when(d is null, "CREATE (dd:{self.labels} {self.ident_properties}) WITH *\n\t{create} RETURN dd", \n\t"{match} RETURN d as dd", {var_import})\n yield value\n'
+        vars = [x for parents, (ids, others) in self.rels.items() for x in ['d', 'time0', parents]+list(ids.values())+list(others.values())]
+        vars += [x for x in list(self.ident_properties.values()) + list(self.other_properties.values())]
+        vs1 = ', '.join([f"{x.replace('$', '')}: {x}" for x in vars])
+        vs2 = ', '.join([f"${x.replace('$', '')} as {x.replace('$', '')}" for x in vars])
+        var_import = f"{{{vs1}}}"
+        setup_vars = f"WITH {vs2}"
+        c += f'CALL apoc.do.when(d is null, "{setup_vars}\n\tCREATE (dd:{self.labels} {ident_properties}) WITH *\n\t{create} RETURN dd", \n\t"{setup_vars}\n\t{match} RETURN d as dd", {var_import})\n yield value\n'
         c += f" RETURN value.dd as {self.to_node}}} RETURN {self.to_node}"
         return c
