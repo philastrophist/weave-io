@@ -2,7 +2,7 @@ from weaveio.readquery.writing.statements import MergeNode, MergeSimpleNodeAndRe
 from weaveio import *
 
 data = Data()
-id = data.query._G.add_parameter(1, 'id')
+# id = data.query._G.add_parameter(1, 'id')
 
 # node = MergeNode(['OB'], {'id': id}, {'a': id, 'b': id}, on_collision='rewrite', graph=data.query._G)
 # print(node.make_cypher([]))
@@ -19,9 +19,18 @@ id = data.query._G.add_parameter(1, 'id')
 # print(node.make_cypher([]))
 
 
-id = data.query._G.add_parameter(100)
-node = AdvancedMergeNodeAndRelationships(['Child'], {'id': id}, {},
-                                         {'parents0': ({}, {})},
-                                         'is_required', True, 'leavealone', data.query._G)
-print(node.ident_properties)
-print(node.make_cypher([]))
+# id = data.query._G.add_parameter(100)
+# node = AdvancedMergeNodeAndRelationships(['Child'], {'id': id}, {},
+#                                          {'parents0': ({}, {})},
+#                                          'is_required', True, 'leavealone', data.query._G)
+# print(node.ident_properties)
+# print(node.make_cypher([]))
+
+from weaveio.opr3 import *
+with data.write(collisions='raise'):
+    surveys = data.surveys[data.surveys == '/WL.*/']
+    surveys = [Survey(name='wl'), Survey(name='wl2')]
+    subprogramme = Subprogramme(surveys=surveys)
+    cat = SurveyCatalogue(name='cat', subprogramme=subprogramme)
+
+

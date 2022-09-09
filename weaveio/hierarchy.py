@@ -386,7 +386,7 @@ class Graphable(metaclass=GraphableMeta):
         return d
 
 
-    def __init__(self, predecessors, successors=None, do_not_create=False):
+    def __init__(self, predecessors, do_not_create=False):
         if successors is None:
             successors = {}
         self.predecessors = predecessors
