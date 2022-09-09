@@ -2,14 +2,13 @@ from weaveio.readquery.writing.statements import MergeNode, MergeSimpleNodeAndRe
 from weaveio import *
 
 data = Data()
-ids = data.query._G.add_parameter({'id': 1}, 'p')
-other = data.query._G.add_parameter({'a': 1, 'b': 2}, 'p')
+id = data.query._G.add_parameter(1, 'id')
 
-# node = MergeNode(['OB'], {'id': data.query._G.add_variable_getitem(ids, 'id')}, other, on_collision='rewrite', graph=data.query._G)
+# node = MergeNode(['OB'], {'id': id}, {'a': id, 'b': id}, on_collision='rewrite', graph=data.query._G)
 # print(node.make_cypher([]))
 
 
-# node = MergeSimpleNodeAndRelationships(['OB'], {'id': data.query._G.add_variable_getitem(ids, 'id')}, other,
+# node = MergeSimpleNodeAndRelationships(['OB'], {'id':id}, {'other': id},
 #                                 ['a', 'b'], [{'i':0}, {'i':0}], [{'other':0}, {'other':0}],
 #                                 ['is_required', 'is_required'], 'raise', data.query._G)
 # print(node.make_cypher([]))
@@ -20,7 +19,9 @@ other = data.query._G.add_parameter({'a': 1, 'b': 2}, 'p')
 # print(node.make_cypher([]))
 
 
-node = AdvancedMergeNodeAndRelationships(['Child'], {'id': 100}, {},
+id = data.query._G.add_parameter(100)
+node = AdvancedMergeNodeAndRelationships(['Child'], {'id': id}, {},
                                          {'parents0': ({}, {})},
                                          'is_required', True, 'leavealone', data.query._G)
+print(node.ident_properties)
 print(node.make_cypher([]))
