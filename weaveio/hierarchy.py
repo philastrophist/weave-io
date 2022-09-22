@@ -1,53 +1,12 @@
 import inspect
-import logging
-from collections import OrderedDict, Counter
+from collections import OrderedDict
 from copy import deepcopy
-from functools import wraps, partial, reduce
-from typing import Tuple, Dict, Type, Union, List, Optional as _Optional
+from functools import reduce
+from typing import Tuple, Type, Union, List, Optional as _Optional
 from warnings import warn
 
-import networkx as nx
-
-from . import writequery
-from .writequery import CypherQuery, Unwind, Collection, CypherVariable
-from .context import ContextError
-from .utilities import Varname, make_plural, int_or_none, camelcase2snakecase, snakecase2camelcase
-from .writequery.base import CypherVariableItem, Alias
-
-
-def _convert_types_to_node(x):
-    if isinstance(x, dict):
-        return {_convert_types_to_node(k): _convert_types_to_node(v) for k, v in x.items()}
-    elif isinstance(x, (list, set, tuple)):
-        return x.__class__([_convert_types_to_node(i) for i in x])
-    elif isinstance(x, Graphable):
-        return x.node
-    else:
-        return x
-
-def hierarchy_query_decorator(function):
-    @wraps(function)
-    def inner(*args, **kwargs):
-        args = _convert_types_to_node(args)
-        kwargs = _convert_types_to_node(kwargs)
-        return function(*args, **kwargs)
-    return inner
-
-
-unwind = hierarchy_query_decorator(writequery.unwind)
-merge_node = hierarchy_query_decorator(writequery.merge_node)
-match_node = hierarchy_query_decorator(writequery.match_node)
-match_pattern_node = hierarchy_query_decorator(writequery.match_pattern_node)
-match_branch_node = hierarchy_query_decorator(writequery.match_branch_node)
-collect = hierarchy_query_decorator(writequery.collect)
-merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
-set_version = hierarchy_query_decorator(writequery.set_version)
-
-
-def chunker(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
-
+from .readquery.parser import QueryGraph
+from .utilities import int_or_none, camelcase2snakecase, make_plural
 
 FORBIDDEN_LABELS = []
 FORBIDDEN_PROPERTY_NAMES = []
@@ -55,14 +14,8 @@ FORBIDDEN_LABEL_PREFIXES = ['_']
 FORBIDDEN_PROPERTY_PREFIXES = ['_']
 FORBIDDEN_IDNAMES = ['idname']
 
-
 class RuleBreakingException(Exception):
     pass
-
-
-def all_subclasses(cls):
-    return set(cls.__subclasses__()).union(
-        [s for c in cls.__subclasses__() for s in all_subclasses(c)])
 
 
 class Multiple:
@@ -164,7 +117,7 @@ class Optional(Multiple):
         return self.singular_name
 
 
-class GraphableMeta(type):
+class HierarchyMeta(type):
     def __new__(meta, name: str, bases, _dct):
         dct = {'is_template': False}
         dct.update(_dct)
@@ -202,7 +155,7 @@ class GraphableMeta(type):
             dct['factors'] = list(OrderedDict.fromkeys(dct['factors']))
         if 'produces' in dct:
             dct['produces'] = list(OrderedDict.fromkeys(dct['produces']))
-        r = super(GraphableMeta, meta).__new__(meta, name, bases, dct)
+        r = super(HierarchyMeta, meta).__new__(meta, name, bases, dct)
         return r
 
     def __init__(cls, name, bases, dct):
@@ -290,347 +243,8 @@ class GraphableMeta(type):
         super().__init__(name, bases, dct)
 
 
-class Graphable(metaclass=GraphableMeta):
-    idname = None
-    identifier = None
-    indexer = None
-    type_graph_attrs = {}
-    plural_name = None
-    singular_name = None
-    parents = []
-    children = []
-    uses_tables = False
-    factors = []
-    data = None
-    query = None
-    is_template = True
-    products = []
-    indexes = []
-    identifier_builder = None
-    version_on = []
-    produces = []
-    concatenation_constants = []
-    belongs_to = []
-    products_and_factors = []
-    relative_names = {}
-
-    @property
-    def node(self):
-        return self._node
-
-    @node.setter
-    def node(self, value):
-        assert isinstance(value, CypherVariable)
-        self._node = value
-
-    @classmethod
-    def requirement_names(cls):
-        l = []
-        for p in cls.parents:
-            if isinstance(p, type):
-                if issubclass(p, Graphable):
-                    l.append(p.singular_name)
-            else:
-                if isinstance(p, Multiple):
-                    if p.maxnumber == 1:
-                        l.append(p.singular_name)
-                    else:
-                        l.append(p.plural_name)
-                else:
-                    raise RuleBreakingException(f"The parent list of a Hierarchy must contain "
-                                                f"only other Hierarchies or Multiple(Hierarchy)")
-
-        return l
-
-    def add_parent_data(self, data):
-        self.data = data
-
-    def add_parent_query(self, query):
-        self.query = query
-
-    def __getattr__(self, item):
-        if self.query is not None:
-            warn('Lazily loading a hierarchy attribute can be costly. Consider using a more flexible query.')
-            attribute = getattr(self.query, item)()
-            setattr(self, item, attribute)
-            return attribute
-        raise AttributeError(f"Query not added to {self}, cannot search for {self}.{item}")
-
-    @property
-    def neoproperties(self):
-        identifier_builder = [] if self.identifier_builder is None else self.identifier_builder
-        d = {}
-        for f in self.factors:
-            if f not in identifier_builder and f != self.idname:
-                value = getattr(self, f.lower())
-                if value is not None:
-                    d[f.lower()] = value
-        return d
-
-    @property
-    def neoidentproperties(self):
-        identifier_builder = [] if self.identifier_builder is None else self.identifier_builder
-        d = {}
-        if self.identifier is None and self.idname is not None:
-            raise ValueError(f"{self} must have an identifier")
-        if self.idname is None and self.identifier is not None:
-            raise ValueError(f"{self} must have an idname to be given an identifier")
-        elif self.idname is not None:
-            d[self.idname] = self.identifier
-            d['id'] = self.identifier
-        for f in self.factors:
-            if f in identifier_builder:
-                value = getattr(self, f.lower())
-                if value is not None:
-                    d[f.lower()] = value
-        return d
-
-
-    def __init__(self, predecessors, do_not_create=False):
-        if successors is None:
-            successors = {}
-        self.predecessors = predecessors
-        self.successors = successors
-        self.data = None
-        if do_not_create:
-            return
-        try:
-            query = CypherQuery.get_context()  # type: CypherQuery
-            collision_manager = query.collision_manager
-        except ContextError:
-            return
-        merge_strategy = self.__class__.merge_strategy()
-        version_parents = []
-        if  merge_strategy == 'NODE FIRST':
-            self.node = child = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
-                                           collision_manager=collision_manager)
-            for k, parent_list in predecessors.items():
-                type = 'is_required_by'
-                if isinstance(parent_list, Collection):
-                    with unwind(parent_list, enumerated=True) as (parent, i):
-                        props = {'order': i, 'relation_id': k}
-                        merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
-                    parent_list = collect(parent)
-                    if k in self.version_on:
-                        raise RuleBreakingException(f"Cannot version on a collection of nodes")
-                else:
-                    for parent in parent_list:
-                        props = {'order': 0, 'relation_id': k}
-                        merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
-                        if k in self.version_on:
-                            version_parents.append(parent)
-        elif merge_strategy == 'NODE+RELATIONSHIP':
-            parentnames = [p.name for p in self.parents]
-            parents = []
-            others = []
-            for k, parent_list in predecessors.items():
-                if isinstance(parent_list, Collection):
-                    raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
-                if k in parentnames and k in self.identifier_builder:
-                    parents += [p for p in parent_list]
-                else:
-                    others += [(i, k, p) for i, p in enumerate(parent_list)]
-                if k in self.version_on:
-                    version_parents += parent_list
-            reltype = 'is_required_by'
-            relparents = {p: (reltype, {'order': 0}, {}) for p in parents}
-            child = self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
-                                           parents=relparents, collision_manager=collision_manager)
-            for i, k, other in others:
-                if other is not None:
-                    merge_relationship(other, child, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
-        else:
-            ValueError(f"Merge strategy not known: {merge_strategy}")
-        if len(version_parents):
-            version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
-            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child, version_factors)
-        # now the children
-        for k, child_list in successors.items():
-            type = 'is_required_by'
-            if isinstance(child_list, Collection):
-                with unwind(child_list, enumerated=True) as (child, i):
-                    merge_relationship(self.node, child, type,
-                                       {}, {'relation_id': k, 'order': i},
-                                       collision_manager=collision_manager)
-                collect(child)
-            else:
-                for child in child_list:
-                    props =  {'relation_id': k, 'order': 0}
-                    merge_relationship(self.node, child, type, {},
-                                       props, collision_manager=collision_manager)
-
-
-    @classmethod
-    def has_factor_identity(cls):
-        if cls.identifier_builder is None:
-            return False
-        if len(cls.identifier_builder) == 0:
-            return False
-        return not any(n.name in cls.identifier_builder for n in cls.parents+cls.children)
-
-    @classmethod
-    def has_rel_identity(cls):
-        if cls.identifier_builder is None:
-            return False
-        if len(cls.identifier_builder) == 0:
-            return False
-        return any(n.name in cls.identifier_builder for n in cls.parents + cls.children)
-
-    @classmethod
-    def make_schema(cls) -> List[str]:
-        name = cls.__name__
-        indexes = []
-        nonunique = False
-        if cls.is_template:
-            return []
-        elif cls.idname is not None:
-            prop = cls.idname
-            indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY')
-        elif cls.identifier_builder:
-            if cls.has_factor_identity():  # only of factors
-                key = ', '.join([f'n.{f}' for f in cls.identifier_builder])
-                indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT ({key}) IS NODE KEY')
-            elif cls.has_rel_identity():  # based on rels from parents/children
-                # create 1 index on id factors and 1 index per factor as well
-                key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
-                if key:  # joint index
-                    indexes.append(f'CREATE INDEX {name}_rel FOR (n:{name}) ON ({key})')
-                # separate indexes
-                indexes += [f'CREATE INDEX {name}_{f} FOR (n:{name}) ON (n.{f})' for f in cls.identifier_builder if f in cls.factors]
-        else:
-            nonunique = True
-        if cls.indexes:
-            id = cls.identifier_builder or []
-            indexes += [f'CREATE INDEX {name}_{i} FOR (n:{name}) ON (n.{i})' for i in cls.indexes if i not in id]
-        if not indexes and nonunique:
-            raise RuleBreakingException(f"{name} must define an idname, identifier_builder, or indexes, "
-                                        f"unless it is marked as template class for something else (`is_template=True`)")
-        return indexes
-
-    @classmethod
-    def merge_strategy(cls):
-        if cls.idname is not None:
-            return 'NODE FIRST'
-        elif cls.identifier_builder:
-            if cls.has_factor_identity():
-                return 'NODE FIRST'
-            elif cls.has_rel_identity():
-                return 'NODE+RELATIONSHIP'
-        return 'NODE FIRST'
-
-    def attach_product(self, product_name, hdu, index=None, column_name=None):
-        """attaches products to a hierarchy with relations like: <-[:PRODUCT {index: rowindex, name: 'flux'}]-"""
-        if product_name not in self.products:
-            raise TypeError(f"{product_name} is not a product of {self.__class__.__name__}")
-        collision_manager = CypherQuery.get_context().collision_manager
-        props = {'name': product_name}
-        if index is not None:
-            props['index'] = index
-        if column_name is not None:
-            props['column_name'] = column_name
-        merge_relationship(hdu, self, 'product', props, {}, collision_manager=collision_manager)
-
-    @classmethod
-    def without_creation(cls, **kwargs):
-        return cls(do_not_create=True, **kwargs)
-
-    @classmethod
-    def find(cls, anonymous_children=None, anonymous_parents=None,
-             exclude=None,
-             **kwargs):
-        parent_names = [i.name if isinstance(i, Multiple) else i.singular_name for i in cls.parents]
-        parents = [] if anonymous_parents is None else anonymous_parents
-        anonymous_children = [] if anonymous_children is None else anonymous_children
-        factors = {}
-        for k, v in kwargs.items():
-            if k in cls.factors:
-                factors[k] = v
-            elif k in parent_names:
-                if not isinstance(v, list):
-                    v = [v]
-                for vi in v:
-                    parents.append(vi)
-            elif k == cls.idname:
-                factors[k] = v
-            else:
-                raise ValueError(f"Unknown name {k} for {cls}")
-        node = match_pattern_node(labels=cls.neotypes, properties=factors,
-                                  parents=parents, children=anonymous_children, exclude=exclude)
-        obj = cls.without_creation(**kwargs)
-        obj.node = node
-        return obj
-
-    def __repr__(self):
-        i = ''
-        if self.idname is not None:
-            i = f'{self.identifier}'
-        return f"<{self.__class__.__name__}({self.idname}={i})>"
-
-
-class Hierarchy(Graphable):
-    parents = []
-    factors = []
-    _waiting = []
-    _hierarchies = {}
-    is_template = True
-
-
-    @classmethod
-    def from_cypher_variable(cls, variable):
-        thing = cls(do_not_create=True)
-        thing.node = variable
-        return thing
-
-    @classmethod
-    def as_factors(cls, *names, prefix=''):
-        if len(names) == 1 and isinstance(names[0], list):
-            names = prefix+names[0]
-        if cls.parents+cls.children:
-            raise TypeError(f"Cannot use {cls} as factors {names} since it has defined parents and children")
-        return [f"{prefix}{name}_{factor}" if factor != 'value' else f"{prefix}{name}" for name in names for factor in cls.factors]
-
-    @classmethod
-    def from_name(cls, name):
-        singular_name = f"{name}_{cls.singular_name}"
-        plural_name = f"{name}_{cls.plural_name}"
-        name = snakecase2camelcase(name)
-        name = f"{name}{cls.__name__}"
-        try:
-            return cls._hierarchies[name]
-        except KeyError:
-            cls._hierarchies[name] = type(name, (cls,), {'singular_name': singular_name, 'plural_name': plural_name})
-            return cls._hierarchies[name]
-
-    @classmethod
-    def from_names(cls, *names):
-        if len(names) == 1 and isinstance(names[0], list):
-            names = names[0]
-        return [cls.from_name(name) for name in names]
-
-    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str], Dict[str, Type[Graphable]]]:
-        """
-        Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
-        """
-        # ordered here since we need to use the first parent as a match point in merge_dependent_node
-        parents = OrderedDict([(getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name, p) for p in self.parents])
-        children = OrderedDict([(getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name, c) for c in self.children])
-        factors = {f.lower(): f for f in self.factors}
-        specification = parents.copy()
-        specification.update(factors)
-        specification.update(children)
-        return specification, factors, children
-
-    @classmethod
-    def instantate_nodes(cls, hierarchies=None):
-        for i in cls.parents + cls.factors + cls.children:
-            if isinstance(i, Multiple):
-                if isinstance(i.node, str):
-                    i.instantate_node(hierarchies)
-
-    def __init__(self, do_not_create=False, tables=None, tables_replace: Dict = None,
-                 **kwargs):
-        if tables_replace is None:
-            tables_replace = {}
+class Hierarchy(metaclass=HierarchyMeta):
+    def __init__(self, **kwargs):
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         self.instantate_nodes()
         self.uses_tables = False
@@ -689,37 +303,18 @@ class Hierarchy(Graphable):
             setattr(self, self.idname, self.identifier)
         super(Hierarchy, self).__init__(predecessors, successors, do_not_create)
 
-    def __getitem__(self, item):
-        assert isinstance(item, str)
-        getitem = CypherVariableItem(self.node, item)
-        query = CypherQuery.get_context()
-        if isinstance(item, int):
-            item = f'{self.namehint}_index{item}'
-        alias_statement = Alias(getitem, str(item))
-        query.add_statement(alias_statement)
-        return alias_statement.out
-
-    def attach_optionals(self, **optionals):
-        try:
-            query = CypherQuery.get_context()  # type: CypherQuery
-            collision_manager = query.collision_manager
-        except ContextError:
-            return
-        reltype = 'is_required_by'
-        parents = [getattr(p, 'relation_idname', None) or p.singular_name for p in self.parents if isinstance(p, Multiple) and p.is_optional]
-        children = [getattr(c, 'relation_idname', None) or c.singular_name for c in self.children if isinstance(c, Multiple) and c.is_optional]
-        for key, item in optionals.items():
-            if key in parents:
-                parent, child = item.node, self.node
-            elif key in children:
-                parent, child = self.node, item.node
-            else:
-                raise KeyError(f"{key} is not a parent or child of {self}")
-            merge_relationship(parent, child, reltype, {'order': 0, 'relation_id': key}, {}, collision_manager=collision_manager)
-
-def find_branch(*nodes_or_types):
-    """
-    Given a mix of variables and types along an undirected path (the input order), instantate those types from the graph
-    >>> _, _, l1spectrum, _ = find_branch(fibre, FibreTarget, L1Spectrum, l1file)
-    """
-    return match_branch_node(*[i.__name__ if isinstance(i, type) else i for i in nodes_or_types])
+    def __new__(cls, name, bases, dct):
+        from .readquery.objects import ObjectQuery
+        from .data import Data
+        data = Data.get_context()  # type: Data
+        hierarchy = super().__new__(cls, name, bases, dct).__init__()  # do super to actually make this class
+        inputs = [v for v in hierarchy.__dict__.values() if isinstance(v, ObjectQuery)]
+        # infer shared hierarchy from parents/children
+        G = data.query._G  # type: QueryGraph
+        if not inputs:
+            previous = data.query
+        else:
+            previous = G.latest_object_node(*inputs)
+        # make a ObjectQuery with shared hierarchy
+        n = G.add_write(hierarchy)
+        return ObjectQuery._spawn(previous, n, cls.__name__, single=True, hierarchy=hierarchy)  # insert Hierarchy into ObjectQuery

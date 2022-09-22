@@ -20,6 +20,7 @@ from operator import mul
 from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
+from .context import ContextMeta
 from .file import File, HDU
 from .graph import Graph
 from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
@@ -230,6 +231,24 @@ def plot_graph(G, fname, format):
     return graphviz.Source(to_pydot(G).to_string()).render(fname, format=format)
 
 
+class Writer(metaclass=ContextMeta):
+    def __new__(cls, *args, **kwargs):
+        # resolves the parent instance
+        instance = super().__new__(cls)
+        if kwargs.get("graph") is not None:
+            instance._parent = kwargs.get("graph")
+        else:
+            instance._parent = cls.get_context(error_if_none=False)
+        return instance
+
+    def __init__(self, data, on_collision, dryrun=False):
+        self.data = data
+        self.on_collision = on_collision
+        self.dryrun = dryrun
+
+Writer._context_class = Writer
+
+
 class Data:
     filetypes = []
 
@@ -276,6 +295,9 @@ class Data:
                 self.relative_names[name][h.__name__] = relation
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
+
+    def write(self, on_collision, dryrun=False):
+        return Writer(self, on_collision, dryrun)
 
     def __dir__(self) -> List[str]:
         neighbors = [i.plural_name for i in self.hierarchies]
@@ -888,3 +910,4 @@ class Data:
         string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
         msg = f"did you mean one of:\n{string}"
         raise exception.__class__(f"{str(exception.args[0])}\n{msg}") from exception
+

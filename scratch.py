@@ -27,9 +27,9 @@ data = Data()
 # print(node.make_cypher([]))
 
 from weaveio.opr3 import *
-with data.write(collisions='raise'):
+with data.write(on_collision='raise', dryrun=True):
     surveys = data.surveys[data.surveys == '/WL.*/']
-    surveys = [Survey(name='wl'), Survey(name='wl2')]
+    # surveys = [Survey(name='wl'), Survey(name='wl2')]
     subprogramme = Subprogramme(surveys=surveys)
     cat = SurveyCatalogue(name='cat', subprogramme=subprogramme)
 

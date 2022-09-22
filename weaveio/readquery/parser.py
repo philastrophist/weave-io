@@ -7,10 +7,12 @@ import warnings
 import networkx as nx
 import pandas as pd
 from astropy.table import Table
+from weaveio.hierarchy import Hierarchy
 
 from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, ApplyToList
+from .writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships
 
 
 class ParserError(Exception):
@@ -363,6 +365,9 @@ class QueryGraph:
     def add_traversal(self, parent_node, paths: List[str], end_node_type: str, single=False, unwound=None):
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, paths, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
+
+    def add_write(self, hierarchy: Hierarchy):
+        hierarchy.strat
 
     def fold_to_cardinal(self, parent_node, wrt=None):
         """
