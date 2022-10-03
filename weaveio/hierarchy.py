@@ -2,20 +2,18 @@
 1. Create subclass: `class MyHierarchy: ...` in terms of other Hierarchies
 2. Instantiate: `MyHierarchy(arg1)` with query arguments
 3. Return query object: `hier = MyHierarchy(arg1)` returns a query
-
-
-
 """
 import inspect
 from collections import OrderedDict
 from copy import deepcopy
 from functools import reduce
-from typing import Tuple, Type, Union, List, Optional as _Optional
+from typing import Tuple, Type, Union, List, Optional as _Optional, TYPE_CHECKING
 from warnings import warn
 
-from .readquery.parser import QueryGraph
 from .utilities import int_or_none, camelcase2snakecase, make_plural
 
+if TYPE_CHECKING:
+    from .readquery.parser import QueryGraph
 
 FORBIDDEN_LABELS = []
 FORBIDDEN_PROPERTY_NAMES = []
@@ -49,6 +47,8 @@ class Multiple:
 
     @property
     def name(self):
+        if self.relation_idname is not None:
+            return self.relation_idname
         if self.maxnumber == 1:
             return self.singular_name
         return self.plural_name
@@ -223,13 +223,6 @@ class HierarchyMeta(type):
                                                 f"Available are: {list(parentnames.keys())+cls.factors}")
         version_parents = []
         version_factors = []
-        for p in cls.version_on:
-            if p in [pp.singular_name if isinstance(pp, type) else pp.name for pp in cls.parents+cls.children]:
-                version_parents.append(p)
-            elif p in cls.factors:
-                version_factors.append(p)
-            else:
-                raise RuleBreakingException(f"Unknown {p} to version on for {name}. Must refer to a parent or factor.")
         if len(version_factors) > 1 and len(version_parents) == 0:
             raise RuleBreakingException(f"Cannot build a version relative to nothing. You must version on at least one parent.")
         if not cls.is_template:
@@ -240,11 +233,8 @@ class HierarchyMeta(type):
             if p is not None:
                 if p not in cls.parents and p not in cls.factors:
                     raise RuleBreakingException(f"index {p} of {name} must be a factor or parent of {name}")
-        if cls.concatenation_constants is not None:
-            if len(cls.concatenation_constants):
-                cls.factors = cls.factors + cls.concatenation_constants + ['concatenation_constants']
         clses = [i.__name__ for i in inspect.getmro(cls)]
-        clses = clses[:clses.index('Graphable')]
+        clses = clses[:clses.index('object')]
         cls.neotypes = clses
         cls.products_and_factors = cls.factors + cls.products
         if cls.idname is not None:
@@ -282,6 +272,7 @@ class Hierarchy(metaclass=HierarchyMeta):
     singular_name = None
     parents = []
     children = []
+    produces = []
     factors = []
     indexes = []
     products = []
@@ -290,90 +281,119 @@ class Hierarchy(metaclass=HierarchyMeta):
     idname = None
     identifier = None
     is_template = True
+    _waiting = []
 
+    @classmethod
+    def as_factors(cls, *names, prefix=''):
+        if len(names) == 1 and isinstance(names[0], list):
+            names = prefix+names[0]
+        if cls.parents+cls.children:
+            raise TypeError(f"Cannot use {cls} as factors {names} since it has defined parents and children")
+        return [f"{prefix}{name}_{factor}" if factor != 'value' else f"{prefix}{name}" for name in names for factor in cls.factors]
+
+    @property
+    def inputs(self):
+        from weaveio.readquery.objects import ObjectQuery
+        inputs = []
+        _inputs = (*self.parents.values(), *self.children.values(), *self.products_and_factors)
+        if not isinstance(self.identifier, list) and self.identifier is not None:
+            _inputs = (*_inputs, self.identifier)
+        for i in _inputs:
+            if isinstance(i, (list, tuple)):
+                inputs += [ii for ii in i if isinstance(i, ObjectQuery)]
+            elif isinstance(i, ObjectQuery):
+                inputs.append(i)
+        return inputs
 
     def __init__(self, **kwargs):
-        # for each parent/child/factor, get from kwargs, raise if missing (if not optional)
-        parents = []
-        for p in map(Multiple.from_argument, self.parents):
-            if p.maxnumber == 1:
-                if p.minnumber == 1:
-                    parentskwargs[p.node.singular_name]
-
-
-    def __init__(self, **kwargs):
-
-
-        kwargs = {k: v for k, v in kwargs.items() if v is not None}
-        self.instantate_nodes()
-        self.uses_tables = False
-        if tables is None:
-            for value in kwargs.values():
-                if isinstance(value, Unwind):
-                    self.uses_tables = True
-                elif isinstance(value, Hierarchy):
-                    self.uses_tables = value.uses_tables
-        else:
-            self.uses_tables = True
-        self.identifier = kwargs.pop(self.idname, None)
-        self.specification, factors, children = self.make_specification()
-        # add any data held in a neo4j unwind table
-        for k, v in self.specification.items():
-            if k not in kwargs:
-                if isinstance(v, Multiple) and (v.minnumber == 0 or v.notreal):  # i.e. optional
-                    continue
-                if tables is not None:
-                    kwargs[k] = tables.get(tables_replace.get(k, k), alias=False)
-        self._kwargs = kwargs.copy()
-        # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
-        predecessors = {}
-        successors = {}
-        for name, nodetype in self.specification.items():
-            if isinstance(nodetype, Multiple):
-                if (nodetype.minnumber == 0 or nodetype.notreal) and name not in kwargs:
-                    continue
-            if do_not_create:
-                value = kwargs.pop(name, None)
-            else:
-                value = kwargs.pop(name)
-            setattr(self, name, value)
-            if isinstance(nodetype, Multiple) and not isinstance(nodetype, (OneOf, Optional)):
-                if nodetype.maxnumber != 1:
-                    if not isinstance(value, (tuple, list)):
-                        if isinstance(value, Graphable):
-                            if not getattr(value, 'uses_tables', False):
-                                raise TypeError(f"{name} expects multiple elements")
-            else:
-                value = [value]
-            if name in children:
-                successors[name] = value
-            elif name not in factors:
-                predecessors[name] = value
-        if len(kwargs):
-            raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
-        self.predecessors = predecessors
-        self.successors = successors
-        if self.identifier_builder is not None:
-            if self.identifier is not None:
-                raise RuleBreakingException(f"{self} must not take an identifier if it has an identifier_builder")
+        """
+        validate kwargs and set parents, children, factors, identifier, etc
+        each input could be a CollectionQuery/list[ObjectQuery]/ObjectQuery
+        """
+        from .readquery.objects import ObjectCollectionQuery, ObjectQuery
+        parents = {}
+        for p in self.parents:
+            p = Multiple.from_argument(p)
+            if p.notreal:
+                continue
+            v = kwargs.get(p.name)
+            if not p.is_optional and v is None:
+                raise KeyError(f"{self} requires input {p.name}. Argument not found.")
+            if isinstance(v, (list, tuple)):
+                if not all(isinstance(i, p.node) for i in v):
+                    raise TypeError(f"Argument `{p.name}` of {self} is not a list/collection of instances of {p.node}.")
+            if isinstance(v, ObjectCollectionQuery):
+                if v._obj != p.node.__name__:
+                    raise TypeError(f"Argument `{p.name}` of {self} is not a list/collection of instances of {p.node}.")
+            elif isinstance(v, ObjectQuery):
+                if v._obj != p.node.__name__:
+                    raise TypeError(f"Argument `{p.name}` of {self} is not an instance of {p.node}.")
+            parents[p] = v
+            setattr(self, p.name, v)
+        children = {}
+        for c in self.children:
+            c = Multiple.from_argument(c)
+            if c.notreal:
+                continue
+            v = kwargs.get(c.name)
+            if not c.is_optional and v is None:
+                raise KeyError(f"{self} requires input {c.name}. Argument not found.")
+            if isinstance(v, ()):
+                if not all(isinstance(i, c.node) for i in v):
+                    raise TypeError(f"Argument `{c.name}` of {self} is not a list/collection of instances of {c.node}.")
+            if isinstance(v, ObjectCollectionQuery):
+                if v._obj != c.node.__name__:
+                    raise TypeError(f"Argument `{c.name}` of {self} is not a list/collection of instances of {c.node}.")
+            elif isinstance(v, ObjectQuery):
+                if v._obj != c.node.__name__:
+                    raise TypeError(f"Argument `{c.name}` of {self} is not an instance of {c.node}.")
+            children[c] = v
+            setattr(self, c.name, v)
+        factors = {}
+        for f in self.factors:
+            try:
+                v = kwargs.get(f)
+            except KeyError:
+                raise KeyError(f"{self} requires input {f}. Argument not found.")
+            factors[f] = v
+            setattr(self, f, v)
+        products = {}
+        for p in self.products:
+            try:
+                v = kwargs.get(p.name)
+            except KeyError:
+                raise KeyError(f"{self} requires input {p.name}. Argument not found.")
+            products[p] = v
+            setattr(self, p.name, v)
         if self.idname is not None:
-            if not do_not_create and self.identifier is None:
-                raise ValueError(f"Cannot assign an id of None to {self}")
-            setattr(self, self.idname, self.identifier)
-        super(Hierarchy, self).__init__(predecessors, successors, do_not_create)
+            identifier = kwargs[self.idname]
+        elif self.identifier_builder is not None:
+            identifier = [kwargs[i] for i in self.identifier_builder]
+        else:
+            identifier = None
+
+        self.factors = factors
+        self.products = products
+        self.parents = parents
+        self.children = children
+        self.identifier = identifier
+        self.products_and_factors = {**factors, **products}
 
 
-
-    def __new__(cls, name, bases, dct):
+    def __new__(cls, **kwargs):
         from .readquery.objects import ObjectQuery
-        from .data import Data
-        data = Data.get_context()  # type: Data
-        hierarchy = super().__new__(cls, name, bases, dct).__init__()  # do super to actually make this class
-        inputs = [v for v in hierarchy.__dict__.values() if isinstance(v, ObjectQuery)]
+        from .data import Writer
+        writer = Writer.get_context()  # type: Writer
+        data = writer.data
+        hierarchy = object.__new__(cls)
+        cls.__init__(hierarchy, **kwargs)  # do super to actually make this class
+        inputs = hierarchy.inputs
         # infer shared hierarchy from parents/children
         G = data.query._G  # type: QueryGraph
         if not inputs:
             previous = data.query
+        elif len(inputs) == 1:
+            previous = inputs[0]
         else:
             previous = G.latest_object_node(*inputs)
         # make a ObjectQuery with shared hierarchy

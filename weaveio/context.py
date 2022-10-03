@@ -19,12 +19,16 @@ class ContextMeta(type):
     def __new__(cls, name, bases, dct, **kargs):  # pylint: disable=unused-argument
         "Add __enter__ and __exit__ methods to the class."
 
+        _enter = dct.get('__enter__', lambda self: self)
+        _exit = dct.get('__exit__', lambda *args, **kwargs: None)
+
         def __enter__(self):
             self.__class__.context_class.get_contexts().append(self)
-            return self
+            return _enter(self)
 
         def __exit__(self, typ, value, traceback):  # pylint: disable=unused-argument
             self.__class__.context_class.get_contexts().pop()
+            return _exit(self, typ, value, traceback)
 
         dct[__enter__.__name__] = __enter__
         dct[__exit__.__name__] = __exit__
@@ -117,7 +121,7 @@ class ContextMeta(type):
     # Initialize object in its own context...
     # Merged from InitContextMeta in the original.
     def __call__(cls, *args, **kwargs):
-        instance = cls.__new__(cls, *args, **kwargs)
+        instance = cls.__new__(cls)
+        instance.__init__(*args, **kwargs)
         with instance:  # appends context
-            instance.__init__(*args, **kwargs)
-        return instance
+            return instance

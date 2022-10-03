@@ -700,3 +700,6 @@ class TableQuery(BaseQuery):
 
 class ListAttributeQuery(AttributeQuery):
     pass
+
+class ObjectCollectionQuery(GenericObjectQuery):
+    pass

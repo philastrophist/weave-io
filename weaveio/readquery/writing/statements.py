@@ -2,7 +2,7 @@ from typing import List, Dict, Tuple
 
 from .collision import CollisionManager
 from ..statements import Statement
-from ... import to_cypher_dict_or_variable
+from . import to_cypher_dict_or_variable
 
 
 class Merge(Statement):

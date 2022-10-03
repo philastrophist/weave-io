@@ -11,7 +11,7 @@ import numpy as np
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
-from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf, Optional
+from weaveio.hierarchy import Multiple, Hierarchy, OneOf, Optional
 from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
     OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder

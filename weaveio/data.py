@@ -23,7 +23,7 @@ from tqdm import tqdm
 from .context import ContextMeta
 from .file import File, HDU
 from .graph import Graph
-from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
+from .hierarchy import Multiple, Hierarchy, OneOf
 from .path_finding import HierarchyGraph, get_all_class_bases
 from .readquery import Query
 from .readquery.exceptions import UserError, CardinalityError
@@ -79,7 +79,7 @@ def process_neo4j_error(data: 'Data', file: File, msg):
     logging.exception(f"filenames: {fname}, {file.fname}")
 
 
-def get_all_subclasses(cls: Type[Graphable]) -> List[Type[Graphable]]:
+def get_all_subclasses(cls: Type[Hierarchy]) -> List[Type[Hierarchy]]:
     all_subclasses = []
     for subclass in cls.__subclasses__():
         all_subclasses.append(subclass)
@@ -235,8 +235,8 @@ class Writer(metaclass=ContextMeta):
     def __new__(cls, *args, **kwargs):
         # resolves the parent instance
         instance = super().__new__(cls)
-        if kwargs.get("graph") is not None:
-            instance._parent = kwargs.get("graph")
+        if kwargs.get("writer") is not None:
+            instance._parent = kwargs.get("writer")
         else:
             instance._parent = cls.get_context(error_if_none=False)
         return instance
@@ -245,6 +245,12 @@ class Writer(metaclass=ContextMeta):
         self.data = data
         self.on_collision = on_collision
         self.dryrun = dryrun
+
+    def __enter__(self):
+        self.data.write_allowed = True
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.data.write_allowed = False
 
 Writer._context_class = Writer
 
@@ -410,13 +416,6 @@ class Data:
         if self.write_allowed:
             return self.graph.write(collision_manager)
         raise IOError(f"You have not allowed write operations in this instance of data (write=False)")
-
-    @property
-    @contextmanager
-    def write(self):
-        self.write_allowed = True
-        yield self.graph
-        self.write_allowed = False
 
     def is_unique_factor(self, name):
         return len(self.factor_hierarchies[name]) == 1

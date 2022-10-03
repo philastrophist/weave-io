@@ -12,8 +12,6 @@ import networkx as nx
 from networkx import NetworkXNoPath, NodeNotFound
 from py2neo.cypher import Cursor
 
-from weaveio.hierarchy import Hierarchy
-
 from .exceptions import AmbiguousPathError, CardinalityError, DisjointPathError, AttributeNameError
 from .parser import QueryGraph
 from .results import Table, AstropyTable

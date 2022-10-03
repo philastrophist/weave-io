@@ -12,7 +12,7 @@ from astropy.table import Table, Column
 
 from weaveio.file import File, PrimaryHDU, TableHDU
 from weaveio.graph import Graph
-from weaveio.hierarchy import Multiple, unwind, collect, Hierarchy, find_branch
+from weaveio.hierarchy import Multiple, Hierarchy
 from weaveio.opr3.hierarchy import APS, OB, OBSpec, Exposure, WeaveTarget, _predicate, Run, ArmConfig, FibreTarget, Fibre
 from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1SupertargetSpectrum
 from weaveio.opr3.l2 import L2, L2Single, L2Stack, L2Superstack, L2Supertarget, IngestedSpectrum, Fit, ModelSpectrum, Redrock, \
