@@ -1,3 +1,11 @@
+"""
+1. Create subclass: `class MyHierarchy: ...` in terms of other Hierarchies
+2. Instantiate: `MyHierarchy(arg1)` with query arguments
+3. Return query object: `hier = MyHierarchy(arg1)` returns a query
+
+
+
+"""
 import inspect
 from collections import OrderedDict
 from copy import deepcopy
@@ -7,6 +15,7 @@ from warnings import warn
 
 from .readquery.parser import QueryGraph
 from .utilities import int_or_none, camelcase2snakecase, make_plural
+
 
 FORBIDDEN_LABELS = []
 FORBIDDEN_PROPERTY_NAMES = []
@@ -91,6 +100,12 @@ class Multiple:
         single_list = [OneOf(hierarchy, idname=name) for name in singles]
         multiple_list = [Multiple(hierarchy, i, i) if isinstance(i, int) else Multiple(cls, *i) for k, i in multiples.items()]
         return single_list + multiple_list
+
+    @classmethod
+    def from_argument(cls, arg) -> 'Multiple':
+        if isinstance(arg, Multiple):
+            return arg
+        return OneOf(arg)
 
 
 class OneOf(Multiple):
@@ -243,8 +258,52 @@ class HierarchyMeta(type):
         super().__init__(name, bases, dct)
 
 
+def make_specification(hierarchy: 'Hierarchy'):
+    spec = []
+    for p in hierarchy.parents:
+        if isinstance(p, Hierarchy):
+            spec.append(p.singular_name)
+            continue
+        elif isinstance(p, Multiple):
+            if p.maxnumber == 1:
+                spec.append(p.singular_name)
+                continue
+        else:
+            raise TypeError(f"Inputs can only be instances of Multiple or Hierarchy")
+
+
+
 class Hierarchy(metaclass=HierarchyMeta):
+    # notreal
+    # multiple or list
+    # optionals
+    # idname
+    plural_name = None
+    singular_name = None
+    parents = []
+    children = []
+    factors = []
+    indexes = []
+    products = []
+    identifier_builder = None
+    products_and_factors = []
+    idname = None
+    identifier = None
+    is_template = True
+
+
     def __init__(self, **kwargs):
+        # for each parent/child/factor, get from kwargs, raise if missing (if not optional)
+        parents = []
+        for p in map(Multiple.from_argument, self.parents):
+            if p.maxnumber == 1:
+                if p.minnumber == 1:
+                    parentskwargs[p.node.singular_name]
+
+
+    def __init__(self, **kwargs):
+
+
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         self.instantate_nodes()
         self.uses_tables = False
@@ -303,6 +362,8 @@ class Hierarchy(metaclass=HierarchyMeta):
             setattr(self, self.idname, self.identifier)
         super(Hierarchy, self).__init__(predecessors, successors, do_not_create)
 
+
+
     def __new__(cls, name, bases, dct):
         from .readquery.objects import ObjectQuery
         from .data import Data
@@ -318,3 +379,7 @@ class Hierarchy(metaclass=HierarchyMeta):
         # make a ObjectQuery with shared hierarchy
         n = G.add_write(hierarchy)
         return ObjectQuery._spawn(previous, n, cls.__name__, single=True, hierarchy=hierarchy)  # insert Hierarchy into ObjectQuery
+
+
+
+
