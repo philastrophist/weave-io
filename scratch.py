@@ -31,7 +31,7 @@ from weaveio.opr3 import *
 with data.write(on_collision='raise', dryrun=True):
     print(Writer.get_context().data.write_allowed)
     surveys = data.surveys[data.surveys == '/WL.*/']
-    surveys.subprogrammes.id
+    # surveys.subprogrammes.id
     # # surveys = [Survey(name='wl'), Survey(name='wl2')]
     subprogramme = Subprogramme(id='prog001', name='prog', surveys=surveys)
     # cat = SurveyCatalogue(name='cat', subprogramme=subprogramme)

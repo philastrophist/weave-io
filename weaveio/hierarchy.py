@@ -305,6 +305,74 @@ class Hierarchy(metaclass=HierarchyMeta):
                 inputs.append(i)
         return inputs
 
+    @classmethod
+    def has_factor_identity(cls):
+        if cls.identifier_builder is None:
+            return False
+        if len(cls.identifier_builder) == 0:
+            return False
+        return not any(n.name in cls.identifier_builder for n in cls.parents+cls.children)
+
+    @classmethod
+    def rel_identity(cls):
+        if cls.identifier_builder is None:
+            return False
+        if len(cls.identifier_builder) == 0:
+            return False
+        return sum(n.name in cls.identifier_builder for n in cls.parents + cls.children)
+
+    @classmethod
+    def has_simple_rel_identity(cls):
+        return 0 < cls.rel_identity() < 3
+
+    @classmethod
+    def has_advanced_rel_identity(cls):
+        return cls.rel_identity() > 2
+
+    @classmethod
+    def make_schema(cls) -> List[str]:
+        name = cls.__name__
+        indexes = []
+        nonunique = False
+        if cls.is_template:
+            return []
+        elif cls.idname is not None:
+            prop = cls.idname
+            indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT (n.{prop}) IS NODE KEY')
+        elif cls.identifier_builder:
+            if cls.has_factor_identity():  # only of factors
+                key = ', '.join([f'n.{f}' for f in cls.identifier_builder])
+                indexes.append(f'CREATE CONSTRAINT {name}_id ON (n:{name}) ASSERT ({key}) IS NODE KEY')
+            elif cls.has_rel_identity():  # based on rels from parents/children
+                # create 1 index on id factors and 1 index per factor as well
+                key = ', '.join([f'n.{f}' for f in cls.identifier_builder if f in cls.factors])
+                if key:  # joint index
+                    indexes.append(f'CREATE INDEX {name}_rel FOR (n:{name}) ON ({key})')
+                # separate indexes
+                indexes += [f'CREATE INDEX {name}_{f} FOR (n:{name}) ON (n.{f})' for f in cls.identifier_builder if f in cls.factors]
+        else:
+            nonunique = True
+        if cls.indexes:
+            id = cls.identifier_builder or []
+            indexes += [f'CREATE INDEX {name}_{i} FOR (n:{name}) ON (n.{i})' for i in cls.indexes if i not in id]
+        if not indexes and nonunique:
+            raise RuleBreakingException(f"{name} must define an idname, identifier_builder, or indexes, "
+                                        f"unless it is marked as template class for something else (`is_template=True`)")
+        return indexes
+
+    @classmethod
+    def merge_strategy(cls):
+        if cls.idname is not None:
+            return 'NODE FIRST'
+        elif cls.identifier_builder:
+            if cls.has_factor_identity():
+                return 'NODE FIRST'
+            elif cls.has_simple_rel_identity():
+                return 'NODE+RELATIONSHIP_SIMPLE'
+            elif cls.has_advanced_rel_identity():
+                return 'NODE+RELATIONSHIP_ADVANCED'
+        return 'NODE FIRST'
+
     def __init__(self, **kwargs):
         """
         validate kwargs and set parents, children, factors, identifier, etc
@@ -370,7 +438,7 @@ class Hierarchy(metaclass=HierarchyMeta):
         elif self.identifier_builder is not None:
             identifier = [kwargs[i] for i in self.identifier_builder]
         else:
-            identifier = None
+            identifier = []
 
         self.factors = factors
         self.products = products
@@ -396,8 +464,9 @@ class Hierarchy(metaclass=HierarchyMeta):
             previous = inputs[0]
         else:
             previous = G.latest_object_node(*inputs)
+        inputs = {input: G.collect_or_not(previous._node, input._node, False) for input in inputs}
+        n = G.add_write(hierarchy, inputs)
         # make a ObjectQuery with shared hierarchy
-        n = G.add_write(hierarchy)
         return ObjectQuery._spawn(previous, n, cls.__name__, single=True, hierarchy=hierarchy)  # insert Hierarchy into ObjectQuery
 
 

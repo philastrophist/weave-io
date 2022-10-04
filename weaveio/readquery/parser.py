@@ -1,3 +1,4 @@
+import typing
 from collections import defaultdict
 from copy import copy
 from typing import List, Tuple, Dict
@@ -8,11 +9,13 @@ import networkx as nx
 import pandas as pd
 from astropy.table import Table
 from weaveio.hierarchy import Hierarchy
+if typing.TYPE_CHECKING:
+    from .objects import ObjectQuery
 
 from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, ApplyToList
-from .writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships
+from .writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships, MergeRel
 
 
 class ParserError(Exception):
@@ -366,8 +369,28 @@ class QueryGraph:
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, paths, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
-    def add_write(self, hierarchy: Hierarchy):
-        hierarchy.strat
+    def add_merge_node(self, hierarchy, parent, inputs):
+        from weaveio.data import Writer
+        props = {f: v for f, v in hierarchy.factors.items() if f not in hierarchy.identifier_builder}
+        writer = Writer.get_context()
+        statement = MergeNode(hierarchy.neotypes, hierarchy.identifier_builder, props,
+                              writer.on_collision, writer.data.query._G)
+        merge = add_traversal(self.G, parent, statement, single=True)
+        for input in inputs:
+            statement = MergeRel(parent, merge)
+
+    def add_write(self, hierarchy: Hierarchy, parent: int, inputs: Dict['ObjectQuery', int]):
+        parent = self.G.nodes[parent]['variables'][0]
+        inputs = {k: self.G.nodes[v]['variables'][0] for k, v in inputs.items()}
+        strategy = hierarchy.merge_strategy()
+        if strategy == 'NODE FIRST':
+            return self.add_merge_node(hierarchy, parent, inputs)
+        elif strategy == 'NODE+RELATIONSHIP_SIMPLE':
+            return self.merge_node_and_relationship_simple(hierarchy, parent, inputs)
+        elif strategy == 'NODE+RELATIONSHIP_ADVANCED':
+            return self.merge_node_and_relationship_advanced(hierarchy, parent, inputs)
+        else:
+            raise ValueError('Unknown strategy: {}'.format(strategy))
 
     def fold_to_cardinal(self, parent_node, wrt=None):
         """
@@ -502,6 +525,8 @@ class QueryGraph:
             except StopIteration:
                 pass
             # then fold back singularly (i.e. do nothing in terms of cypher)
+            if other_node == index_node:
+                return other_node
             return self.add_aggregation(other_node, shared, 'aggr')
         else:
             return self.add_aggregation(other_node, shared, 'collect')

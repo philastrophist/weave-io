@@ -166,6 +166,7 @@ class Optional(Multiple):
     def name(self):
         return self.singular_name
 
+
 class GraphableMeta(type):
     def __new__(meta, name: str, bases, _dct):
         dct = {'is_template': False}
