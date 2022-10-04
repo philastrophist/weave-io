@@ -378,6 +378,7 @@ class QueryGraph:
         merge = add_traversal(self.G, parent, statement, single=True)
         for input in inputs:
             statement = MergeRel(parent, merge)
+        # todo: make sure all lower numbered nodes are executed before this write.
 
     def add_write(self, hierarchy: Hierarchy, parent: int, inputs: Dict['ObjectQuery', int]):
         parent = self.G.nodes[parent]['variables'][0]
