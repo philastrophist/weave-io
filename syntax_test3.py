@@ -4,9 +4,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 from weaveio.opr3 import Data
 
-data = Data(dbname='incrementaltest')
-with data.write:
-    # data.restore_state(1653303490523)  # restore back to L1 only
+data = Data(dbname='testwrite')
 
-    print(len(fs))
-    data.write_files(*fs[1:], debug_time=True, dryrun=False, batch_size=50, test_one=False, parts=['GAND'], halt_on_error=False)
+from weaveio.opr3.l1 import L1SingleSpectrum
+fs = data.find_files('l1single_file', skip_extant_files=True)
+with data.write:
+    data.write_files(*fs, debug_time=True, debug=True)

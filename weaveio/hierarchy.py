@@ -208,8 +208,6 @@ class GraphableMeta(type):
     def __init__(cls, name, bases, dct):
         if cls.idname is not None and cls.identifier_builder is not None:
             raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
-        if cls.indexes and (cls.idname is not None or cls.identifier_builder is not None):
-            raise RuleBreakingException(f"You cannot define an index and an id at the same time for {name}")
         parentnames = {}
         cls.children = deepcopy(cls.children)  # sever link so that changes here dont affect base classes
         cls.parents = deepcopy(cls.parents)

@@ -24,6 +24,7 @@ class L1Spectrum(Spectrum1D, L1):
     products = ['flux', 'ivar', 'sensfunc']
     factors = Spectrum.factors + ['nspec', 'snr'] + MeanFlux.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mean_flux_')
     parents = [FibreTarget]
+    indexes = ['nspec']
 
 
 class L1SingleSpectrum(L1Spectrum, Single):
@@ -78,6 +79,7 @@ class L1SupertargetSpectrum(L1StackedSpectrum, Supertarget):
     factors = ['id']
     parents = [Multiple(L1SingleSpectrum, 2, 10, constrain=(WeaveTarget, ArmConfig))] + L1Spectrum.parents
     identifier_builder = ['l1single_spectra', 'id']
+    indexes = []
 
 
 
