@@ -56,6 +56,15 @@ class MergeRel(Merge):
         return f"{merge}\nWITH *"
 
 
+class MergeRelCollection(MergeRel):
+    def make_cypher(self, ordering: list) -> str:
+        merge = f"MERGE ({self.from_node})-[{self.rel}:{self.labels} {to_cypher_dict_or_variable(self.ident_properties)}]->({self.to_node})"
+        if self.other_properties:
+            collision = CollisionManager.from_neo_object(self.rel, self.other_properties, self.ident_properties, self.on_collision)
+            return f"{merge}\n{collision}\nWITH *"
+        return f"{merge}\nWITH *"
+
+
 class MergeSimpleNodeAndRelationships(MergeNode):
     ids = ['labels', 'on_collision', 'parent_rel_types']
 

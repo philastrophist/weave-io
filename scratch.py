@@ -1,10 +1,10 @@
 from weaveio.data import Writer
-from weaveio.readquery.writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships
 from weaveio import *
 
 data = Data(password='wrong')
 # id = data.query._G.add_parameter(1, 'id')
 
+# from weaveio.readquery.writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships
 # node = MergeNode(['OB'], {'id': id}, {'a': id, 'b': id}, on_collision='rewrite', graph=data.query._G)
 # print(node.make_cypher([]))
 
@@ -31,9 +31,9 @@ from weaveio.opr3 import *
 with data.write(on_collision='raise', dryrun=True):
     print(Writer.get_context().data.write_allowed)
     surveys = data.surveys[data.surveys == '/WL.*/']
-    # surveys.subprogrammes.id
-    # # surveys = [Survey(name='wl'), Survey(name='wl2')]
+    surveys.subprogrammes.id
+    # surveys = [Survey(name='wl'), Survey(name='wl2')]
     subprogramme = Subprogramme(id='prog001', name='prog', surveys=surveys)
-    # cat = SurveyCatalogue(name='cat', subprogramme=subprogramme)
-    #
-    #
+    cat = SurveyCatalogue(name='cat', subprogramme=subprogramme)
+
+

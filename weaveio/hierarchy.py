@@ -464,8 +464,7 @@ class Hierarchy(metaclass=HierarchyMeta):
             previous = inputs[0]
         else:
             previous = G.latest_object_node(*inputs)
-        inputs = {input: G.collect_or_not(previous._node, input._node, False) for input in inputs}
-        n = G.add_write(hierarchy, inputs)
+        n = G.add_write(hierarchy, previous, inputs)
         # make a ObjectQuery with shared hierarchy
         return ObjectQuery._spawn(previous, n, cls.__name__, single=True, hierarchy=hierarchy)  # insert Hierarchy into ObjectQuery
 

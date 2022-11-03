@@ -15,7 +15,7 @@ if typing.TYPE_CHECKING:
 from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, ApplyToList
-from .writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships, MergeRel
+from .writing.statements import MergeNode, MergeSimpleNodeAndRelationships, AdvancedMergeNodeAndRelationships, MergeRel, MergeRelCollection
 
 
 class ParserError(Exception):
@@ -369,27 +369,43 @@ class QueryGraph:
         statement = Traversal(self.G.nodes[parent_node]['variables'][0], end_node_type, paths, unwound, self)
         return add_traversal(self.G, parent_node, statement, single=single, unwound=unwound)
 
-    def add_merge_node(self, hierarchy, parent, inputs):
-        from weaveio.data import Writer
+    def add_merge_node(self, hierarchy: Hierarchy, wrt_node: int):
         props = {f: v for f, v in hierarchy.factors.items() if f not in hierarchy.identifier_builder}
+        id_props = {f: v for f, v in hierarchy.factors.items() if f in hierarchy.identifier_builder}
+        from weaveio.data import Writer
         writer = Writer.get_context()
-        statement = MergeNode(hierarchy.neotypes, hierarchy.identifier_builder, props,
-                              writer.on_collision, writer.data.query._G)
-        merge = add_traversal(self.G, parent, statement, single=True)
-        for input in inputs:
-            statement = MergeRel(parent, merge)
+        statement = MergeNode(hierarchy.neotypes, id_props, props, writer.on_collision, writer.data.query._G)
+        merged = add_traversal(self.G, wrt_node, statement, single=True)
+        statements = []
+        for parent in hierarchy.parents:
+            pnode = self.collect_or_not(wrt_node, parent.node._node, False)
+            pvar = self.G.nodes[pnode]['variables'][0]
+            props = {}
+            if parent.relation_idname is not None:
+                props['relation_id'] = parent.relation_id
+            statement = MergeRelCollection(pvar, merged, ['IS_REQUIRED_BY'], props, {}, writer.on_collision, self)
+            statements.append(statement)
+        for child in hierarchy.children:
+            cnode = self.collect_or_not(wrt_node, child.node._node, False)
+            cvar = self.G.nodes[cnode]['variables'][0]
+            props = {}
+            if child.relation_idname is not None:
+                props['relation_id'] = child.relation_id
+            statement = MergeRelCollection(merged, cvar, ['IS_REQUIRED_BY'], props, {}, writer.on_collision, self)
+            statements.append(statement)
+        add_combined_statements(merged, statements)
+
         # todo: make sure all lower numbered nodes are executed before this write.
 
-    def add_write(self, hierarchy: Hierarchy, parent: int, inputs: Dict['ObjectQuery', int]):
-        parent = self.G.nodes[parent]['variables'][0]
-        inputs = {k: self.G.nodes[v]['variables'][0] for k, v in inputs.items()}
+    def add_write(self, hierarchy: Hierarchy, wrt_node: int):
+        wrt_node = self.G.nodes[wrt_node]['variables'][0]
         strategy = hierarchy.merge_strategy()
         if strategy == 'NODE FIRST':
-            return self.add_merge_node(hierarchy, parent, inputs)
+            return self.add_merge_node(hierarchy, wrt_node)
         elif strategy == 'NODE+RELATIONSHIP_SIMPLE':
-            return self.merge_node_and_relationship_simple(hierarchy, parent, inputs)
+            return self.merge_node_and_relationship_simple(hierarchy, wrt_node)
         elif strategy == 'NODE+RELATIONSHIP_ADVANCED':
-            return self.merge_node_and_relationship_advanced(hierarchy, parent, inputs)
+            return self.merge_node_and_relationship_advanced(hierarchy, wrt_node)
         else:
             raise ValueError('Unknown strategy: {}'.format(strategy))
 
