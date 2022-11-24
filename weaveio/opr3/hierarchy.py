@@ -233,18 +233,6 @@ class Progtemp(Hierarchy):
                    instrument_configuration=config)
 
 
-class FibreTarget(Hierarchy):
-    """
-    A fibretarget is the combination of fibre and surveytarget which is created after submission when
-    the fibres are assigned.
-    This object describes where the fibre is placed and what its status is.
-    """
-    factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition',
-               'targx', 'targy']
-    parents = [Fibre, SurveyTarget]
-    identifier_builder = ['fibre', 'survey_target', 'xposition', 'yposition']
-
-
 class OBSpec(Hierarchy):
     """
     When an xml observation specification is submitted to WEAVE, an OBSpec is created containing all
@@ -253,9 +241,20 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [Obstemp, Progtemp, Multiple(FibreTarget, maxnumber=1000, one2one=True),  # each OB has a defined number of fibre_targets
-               Multiple(SurveyCatalogue, maxnumber=10), Multiple(Subprogramme, maxnumber=10), Multiple(Survey, maxnumber=5)]
+    parents = [Obstemp, Progtemp, Multiple(SurveyCatalogue, maxnumber=10), Multiple(Subprogramme, maxnumber=10), Multiple(Survey, maxnumber=5)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
+
+
+class FibreTarget(Hierarchy):
+    """
+    A fibretarget is the combination of fibre and surveytarget which is created after submission when
+    the fibres are assigned.
+    This object describes where the fibre is placed and what its status is.
+    """
+    factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition',
+               'targx', 'targy']
+    parents = [Fibre, SurveyTarget, OneOf(OBSpec, one2one=True)]
+    identifier_builder = ['fibre', 'survey_target', 'obspec', 'xposition', 'yposition']
 
 
 class OB(Hierarchy):
@@ -315,7 +314,7 @@ class Run(Hierarchy):
     """
     idname = 'id'
     parents = [Exposure, ArmConfig]
-    children = [Optional('self', idname='adjunct')]
+    children = [Optional('self', idname='adjunct', one2one=True)]
 
 
 class RawSpectrum(Spectrum2D):
@@ -324,7 +323,7 @@ class RawSpectrum(Spectrum2D):
     """
     parents = [CASU, OneOf(Run, one2one=True)]
     products = ['counts1', 'counts2']
-    children = [Optional('self', idname='adjunct')]
+    children = [Optional('self', idname='adjunct', one2one=True)]
     identifier_builder = ['casu', 'run']
 
 

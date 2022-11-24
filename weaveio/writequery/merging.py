@@ -128,15 +128,15 @@ class MatchPatternNode(Statement):
         match = f'({self.out}: {labels} {self.properties})'
         extras = ', '.join([f'({self.out})<--({p})' for p in self.parents] +
                             [f'({self.out})-->({c})' for c in self.children])
-        wheres = ' AND '.join([f"({self.out} <> {e})" for e in self.exclude] +
-                              [f"({self.out} <> {e})" for e in self.exclude_collection] +
+        wheres = ' AND '.join([f"({self.out} <> {e} or {e} is null)" for e in self.exclude] +
+                              [f"all(n in {e} where {self.out} <> n or n is null)" for e in self.exclude_collection] +
                               [f"all(p in {p} where exists( ({self.out})<--(p) ))" for p in self.collection_parents] +
                               [f"all(c in {c} where exists( ({self.out})-->(c) ))" for c in self.collection_children])
         if len(extras):
             extras = f',{extras}'
         if len(wheres):
             wheres = f' WHERE {wheres}'
-        call_vars = [v for v in self.input_variables if not isinstance(v, CypherData)]
+        call_vars = {v for v in self.input_variables if not isinstance(v, CypherData)}
         if not len(call_vars):
             return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
         return f"""CALL {{WITH {','.join(map(str, call_vars))}
@@ -377,10 +377,10 @@ class MergeDependentNode(CollisionManager):
         parent_list = []
         for i, (parent, reltype, relidentprop, dummyrelvar, relvar) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties, self.dummyrelvars, self.relvars)):
             if i == 0:
-                child = f'({self.dummy}: {labels} {self.identproperties})'
-            else:
-                child = f'({self.dummy})'
+                first_child = f'({self.dummy}: {labels} {self.identproperties})'
+            child = f'({self.dummy})'
             rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
+            # test_rel = f'({parent})-[:{reltype} {relidentprop}]->'
             real_rel = f'({parent})-[{relvar}:{reltype} {relidentprop}]->'
             real_child = f'({self.out})'
             real_relations.append(real_rel + real_child)
@@ -407,36 +407,34 @@ class MergeDependentNode(CollisionManager):
                     pass
                 if not isinstance(v, CypherData):
                     variables.add(v)
-        merge_temp_relations = '\n'.join([f'MERGE {r}' for r in temp_relations])
-        merge_final_temp_relation = f"MERGE (temp)-[:TemporaryMerge]->({self.out}: {labels} {self.identproperties})"
-        merge_real_relations = '\n'.join([f'MERGE {r}' for r in real_relations])
+        # merge_temp_relations = '\n'.join([f'MERGE {r}' for r in temp_relations])
+        # merge_final_temp_relation = f"MERGE (temp)-[:TemporaryMerge]->({self.out}: {labels} {self.identproperties})"
+        merge_real_relations = '\n'.join([f'CREATE ({self.out}: {labels} {self.identproperties})'] + [f'CREATE {r}' for r in real_relations])
         on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
-        on_match_rel_returns = ', '.join([f'${dummy}[0] as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
+        on_match_rel_returns = ', '.join([f'${dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
-        optional_match = f'OPTIONAL MATCH {test_relations[0]}'
-        matches = '\n'.join([f'MATCH {t}' for t in test_relations])
-        rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
+        # optional_match = f'OPTIONAL MATCH {test_relations[0]}'
+        # matches = '\n'.join([f'MATCH {t}' for t in test_relations])
+        # rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
         # include the optional match?
-        collection = f'CALL {{ WITH {", ".join(map(str, variables))}\n' \
-                     f'{optional_match}\n' \
-                     f'{matches}\n' \
-                     f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}\n' \
-                     f'}}'
-        condition = f"size({self.dummy}) = 0"
+        # collection = f'CALL {{ WITH {", ".join(map(str, variables))}\n' \
+        #              f'{optional_match}\n' \
+        #              f'{matches}\n' \
+        #              f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}\n' \
+        #              f'}}'
+        exists = ','.join([f'{tr}' for tr in test_relations])
+        already_exists = f"OPTIONAL MATCH {first_child},{exists}"
+        condition = f"{self.dummy} is null"
         iftrue = f"""
         WITH {aliases}
-        MERGE (temp: TemporaryMerge {{id: $time0}})
-        {merge_temp_relations}
-        {merge_final_temp_relation}
         {merge_real_relations}
-        DETACH DELETE temp
         SET {self.out} += ${self.propvar}
         RETURN {self.out}, {on_create_rel_returns}
         """
-        iffalse = f"RETURN ${self.dummy}[0] as {self.out}, {on_match_rel_returns}"
+        iffalse = f"RETURN ${self.dummy} as {self.out}, {on_match_rel_returns}"
         when = f'CALL apoc.do.when({condition}, "{iftrue}", "{iffalse}", {{ {dct}, time0:time0}}) yield value as {self.child_holder}'
         when += f"\n WITH *, {rel_expansion}"
-        return dedent(f"CALL apoc.lock.nodes({self.parents})\n{collection}\n{when}")
+        return dedent(f"CALL apoc.lock.nodes({self.parents})\n{already_exists}\n{when}")
 
     @property
     def on_match(self):  # remember, we are in a call context
@@ -485,7 +483,7 @@ class MergeDependentNode(CollisionManager):
         aliases = expand_to_cypher_alias(self.out, self.propvar, *self.relvars+self.relpropsvars)
         return dedent(f"""
         // post merge
-        call apoc.do.when(size({self.dummy}) = 0,
+        call apoc.do.when({self.dummy} is null,
         "WITH {aliases}\n{self.on_create}\n RETURN $time0",
         "WITH {aliases}\n{self.on_match}\n RETURN $time0",
         {{ {dct} }}) yield value as {self.unnamed}

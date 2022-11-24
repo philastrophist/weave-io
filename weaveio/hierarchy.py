@@ -605,18 +605,25 @@ class Hierarchy(Graphable):
             names = names[0]
         return [cls.from_name(name) for name in names]
 
-    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str], Dict[str, Type[Graphable]]]:
+    def make_specification(self) -> Tuple[Dict[str, Type[Graphable]], Dict[str, str], Dict[str, Type[Graphable]], Dict[str, Type[Graphable]]]:
         """
         Make a dictionary of {name: HierarchyClass} and a similar dictionary of factors
         """
         # ordered here since we need to use the first parent as a match point in merge_dependent_node
-        parents = OrderedDict([(getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name, p) for p in self.parents])
-        children = OrderedDict([(getattr(c, 'relation_idname', None) or getattr(c, 'name', None) or c.singular_name, c) for c in self.children])
+        parents = OrderedDict()
+        children = OrderedDict()
+        for inl, outl, mirrorl in ([self.parents, parents, children], [self.children, children, parents]):
+            for p in inl:
+                name = getattr(p, 'relation_idname', None) or getattr(p, 'name', None) or p.singular_name
+                outl[name] = p
+                if isinstance(p, Multiple):
+                    if p.one2one:
+                        mirrorl[name] = p
         factors = {f.lower(): f for f in self.factors}
         specification = parents.copy()
         specification.update(factors)
         specification.update(children)
-        return specification, factors, children
+        return specification, factors, parents, children
 
     @classmethod
     def instantate_nodes(cls, hierarchies=None):
@@ -641,15 +648,12 @@ class Hierarchy(Graphable):
         else:
             self.uses_tables = True
         self.identifier = kwargs.pop(self.idname, None)
-        self.specification, factors, children = self.make_specification()
+        self.specification, factors, parents, children = self.make_specification()
         # add any data held in a neo4j unwind table
-        for k, v in self.specification.items():
-            if k not in kwargs:
-                if isinstance(v, Multiple) and (v.minnumber == 0 or v.notreal):  # i.e. optional
-                    continue
-                if tables is not None:
-                    kwargs[k] = tables.get(tables_replace.get(k, k), alias=False)
-        self._kwargs = kwargs.copy()
+        if tables is not None:
+            for k, v in factors.items():
+                if k not in kwargs:
+                        kwargs[k] = tables.get(tables_replace.get(k, k), alias=False)
         # Make predecessors a dict of {name: [instances of required Factor/Hierarchy]}
         predecessors = {}
         successors = {}
@@ -670,10 +674,11 @@ class Hierarchy(Graphable):
                                 raise TypeError(f"{name} expects multiple elements")
             else:
                 value = [value]
-            if name in children:
-                successors[name] = value
-            elif name not in factors:
-                predecessors[name] = value
+            if name not in factors:
+                if name in children:
+                    successors[name] = value
+                if name in parents:
+                    predecessors[name] = value
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors

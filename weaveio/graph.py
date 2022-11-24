@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from time import sleep
 from warnings import warn
@@ -29,6 +30,16 @@ def is_null(x):
         pass
     return x is None
 
+def stringify(x):
+    if isinstance(x, Mapping):
+        vars = ', '.join([f"{k}:{stringify(v)}" if isinstance(k, str) else f"{stringify(k)}:{stringify(v)}" for k, v in x.items()])
+        return f"{{{vars}}}"
+    elif isinstance(x, Iterable) and not isinstance(x, str):
+        return "[" + ', '.join([stringify(i) for i in x]) + "]"
+    elif isinstance(x, str):
+        return f'"{x}"'
+    else:
+        return str(x)
 
 def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=None):
     if isinstance(x, (tuple, list)):
@@ -103,20 +114,6 @@ class Graph(metaclass=ContextMeta):
 
     def _execute(self, cypher, parameters, backoff=1, limit=10):
         return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
-        # try:
-        #     pass
-        # except (ConnectionError) as e:
-        #     logging.info(f'Connection possibly busy, waiting {backoff} seconds to retry. Actual error was {e}')
-        #     if backoff >= limit:
-        #         raise e
-        #     sleep(backoff)
-        #     backoff *= 2
-        # except (RuntimeError, IndexError) as e:
-        #     logging.info(f'Connection failed with an undefined py2neo error, waiting {backoff} seconds to retry. Actual error was {e}')
-        #     if backoff >= limit:
-        #         raise e
-        #     backoff *= 2  # dont sleep retry immediately
-        #     return self._execute(cypher, parameters, backoff, limit)
 
     def execute(self, cypher, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
@@ -126,11 +123,15 @@ class Graph(metaclass=ContextMeta):
             raise ConnectionResetError(f"Py2neo dropped the connection because it was taking too long. "
                                        f"Split up your query using batch_size=??")
 
-    def output_for_debug(self,  silent=False, **payload):
+    def output_for_debug(self,  arrow=False, cmdline=False, silent=False, **payload):
         d = _convert_datatypes(payload, nan2missing=True, none2missing=True)
         if not silent:
             warn(f"When parameters are output for debug in the neo4j desktop, it cannot be guaranteed the data types will remain the same. "
                  f"For certain, infs/nans/None are converted to strings (to avoid this, run your query without using `output_for_debug`)")
+        if arrow:
+            if cmdline:
+                return ' '.join([f'-P "{k} => {stringify(v)}"' for k, v in d.items()])
+            return '\n'.join([f':param {k} => {stringify(v)}' for k, v in d.items()])
         return f':params {d}'
 
 Graph._context_class = Graph

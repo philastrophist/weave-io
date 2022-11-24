@@ -484,7 +484,7 @@ class Data:
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False, test_one=False, infile_slc: slice = None,
-                    debug=False, debug_time=False) -> pd.DataFrame:
+                    debug=False, debug_time=False, timeout=None) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -515,7 +515,9 @@ class Data:
         if test_one:
             batches = batches[:1]
         _, path, slc, part = batches[0]
-        bar = tqdm(batches, desc=f'{path}[{slc.start}:{slc.stop}:{part}]')
+        desc_size = max(len(f'{path}[{slc.start}:{slc.stop}:{part}]') for filetype, path, slc, part in batches)
+        first = f"{path}[{slc.start}:{slc.stop}:{part}]"
+        bar = tqdm(batches, desc=first.ljust(desc_size))
         if debug or debug_time:
             with open('debug-timestamp.log', 'w') as f:
                 pass
@@ -530,38 +532,62 @@ class Data:
                 cypher, params = query.render_query()
                 uuid = f"//{uuid4()}"
                 cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
+                ls = cypher.split('\n')
+                # del ls[514:520]
+                # del ls[493:513]
+                # del ls[490:]
+                # del ls[-14:]
+                # ls[-2] = 'RETURN 1'
+                # ls.append('return time0')
+                # del ls[-8:-1]
+                # ls.insert(-1, 'CALL {return 1 as x_}')
+                # ls.insert(-1, 'MATCH (ob {id:3653})--(:OBSpec)--(ft:FibreTarget)')
+                # del ls[472:-1]
+                cypher = '\n'.join(ls)
                 if debug:
                     with open('debug-query.log', 'w') as f:
                         f.write(cypher)
                     with open('debug-params.log', 'w') as f:
-                        f.write(self.graph.output_for_debug(**params, silent=True))
+                        f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
                 start = time.time()
+                timed_out = False
                 if not dryrun:
                     try:
                         results = self.graph.execute(cypher, **params)
                         stats.append(results.stats())
                         timestamp = results.evaluate()
+                        successful = True
                     except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
                         is_running = True
                         while is_running:
                             is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
                             time.sleep(1)
-                            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}] (waiting for query to finish)')
+                            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
+                            if timeout is not None:
+                                if time.time() - start > timeout:
+                                    timed_out = True
+                                    break
                         r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
-                        successful = r.evaluate()
-                        timestamp = successful
-                        if not successful:
-                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
+                        if not timed_out:
+                            successful = r.evaluate()
+                            timestamp = successful
+                        else:
+                            successful = False
+                            timestamp = None
                         stats.append(r.stats())
+                        if not successful and halt_on_error:
+                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
                     if timestamp is None:
                         logging.warning(f"This query terminated early due to either an empty input table/data or "
-                                        f"a match within the query returned no matches. "
+                                        f"a match within the query returned no matches or it timed-out. "
                                         f"Adjust your `.read` method and query to allow for empty tables/data")
                     timestamps.append(timestamp)
                 else:
                     continue
-                    # self.graph.execute('EXPLAIN\n' + 'CYPHER runtime=interpreted\n' + cypher, **params)
-                elapsed_times.append(time.time() - start)
+                if successful:
+                    elapsed_times.append(time.time() - start)
+                else:
+                    elapsed_times.append(-1)
                 if debug or debug_time:
                     with open('debug-timestamp.log', 'a') as f:
                         f.write(str(elapsed_times[-1]) + '\n')
@@ -609,10 +635,10 @@ class Data:
         return [f for f in tqdm(filtered_filelist, desc='getting MOS files') if File.check_mos(f)]
 
     def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
-                        batch_size=None, parts=None, dryrun=False) -> pd.DataFrame:
+                        batch_size=None, parts=None, dryrun=False, **kwargs) -> pd.DataFrame:
         filtered_filelist = self.find_files(*filetype_names, skip_extant_files=skip_extant_files)
         return self.write_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
-                                dryrun=dryrun, batch_size=batch_size, parts=parts)
+                                dryrun=dryrun, batch_size=batch_size, parts=parts, **kwargs)
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
