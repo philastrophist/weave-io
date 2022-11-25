@@ -126,26 +126,15 @@ class MatchPatternNode(Statement):
     def to_cypher(self):
         labels = ':'.join(self.labels)
         match = f'({self.out}: {labels} {self.properties})'
-        extras = ', '.join([f'({self.out})<--({p})' for p in self.parents] +
-                            [f'({self.out})-->({c})' for c in self.children])
-        wheres = ' AND '.join([f"({self.out} <> {e} or {e} is null)" for e in self.exclude] +
+        extras = ' AND '.join([f'({self.out})<--({p})' for p in self.parents] +
+                            [f'({self.out})-->({c})' for c in self.children] +
+                            [f"({self.out} <> {e} or {e} is null)" for e in self.exclude] +
                               [f"all(n in {e} where {self.out} <> n or n is null)" for e in self.exclude_collection] +
                               [f"all(p in {p} where exists( ({self.out})<--(p) ))" for p in self.collection_parents] +
                               [f"all(c in {c} where exists( ({self.out})-->(c) ))" for c in self.collection_children])
-        if len(extras):
-            extras = f',{extras}'
-        if len(wheres):
-            wheres = f' WHERE {wheres}'
-        call_vars = {v for v in self.input_variables if not isinstance(v, CypherData)}
-        if not len(call_vars):
-            return f'WITH * OPTIONAL MATCH {match}{extras}{wheres}'
-        return f"""CALL {{WITH {','.join(map(str, call_vars))}
-         MATCH {match}{extras}{wheres}
-         WITH collect({self.out}) as {self.out}
-         RETURN CASE WHEN SIZE({self.out})=0 THEN [null] ELSE {self.out} END as _{self.out}
-         }}
-         UNWIND _{self.out} as {self.out}
-        """
+        if extras:
+            return f"WITH * OPTIONAL MATCH {match} WHERE {extras}"
+        return f"WITH * OPTIONAL MATCH {match}"
 
 class MatchBranchNode(Statement):
     def __init__(self, *nodes_or_labels):
