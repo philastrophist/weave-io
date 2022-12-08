@@ -593,6 +593,9 @@ class Data:
                             stats.append(r.stats())
                             if not successful and halt_on_error:
                                 raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
+                        finally:
+                            self.graph.execute('MATCH (n) remove n._query_hash')
+                            self.graph.execute('MATCH ()-[r]-() remove r._query_hash')
                         if timestamp is None:
                             logging.warning(f"This query terminated early due to either an empty input table/data or "
                                             f"a match within the query returned no matches or it timed-out. "
@@ -659,44 +662,55 @@ class Data:
 
     def _validate_one_required(self, hierarchy_name):
         hierarchy = self.singular_hierarchies[hierarchy_name]
+        if hierarchy.is_template:
+            return
         parents = [h for h in hierarchy.parents]
         qs = []
         for parent in parents:
             if isinstance(parent, Multiple):
                 mn, mx = parent.minnumber, parent.maxnumber
                 b = parent.node.__name__
+                reflected = parent.one2one
             else:
                 mn, mx = 1, 1
                 b = parent.__name__
+                reflected = False
             mn = 0 if mn is None else mn
             mx = 9999999 if mx is None else mx
             a = hierarchy.__name__
             q = f"""
             MATCH (n:{a})
-            WITH n, SIZE([(n)<-[]-(m:{b}) | m ])  AS nodeCount
-            WHERE NOT (nodeCount >= {mn} AND nodeCount <= {mx})
-            RETURN "{a}", "{b}", {mn} as mn, {mx} as mx, n.id, nodeCount
+            OPTIONAL MATCH (n)<-[r1:is_required_by]-(m:{b})
+            WITH n, count(n) AS nodeCount, count(r1) as forwardCount
+            OPTIONAL MATCH (n)-[r2:is_required_by]->(m:{b})
+            WITH n, nodeCount, forwardCount, count(r2) as reflCount           
+            WITH *
+            WHERE forwardCount < {mn} OR forwardCount > {mx} OR (reflCount <> forwardCount AND {reflected})
+            RETURN "{a}" as child, "{b}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), nodeCount, forwardCount, reflCount            
             """
             qs.append(q)
         if not len(parents):
             qs = [f"""
-            MATCH (n:{hierarchy.__name__})
-            WITH n, SIZE([(n)<-[:IS_REQUIRED_BY]-(m) | m ])  AS nodeCount
-            WHERE nodeCount > 0
-            RETURN "{hierarchy.__name__}", "none", 0 as mn, 0 as mx, n.id, nodeCount
-            """]
+                MATCH (n:{hierarchy.__name__})
+                WITH n, SIZE([(n)<-[:is_required_by]-(m) | m ])  AS forwardCount, count(n) as nodeCount
+                WHERE forwardCount > 0
+                RETURN "{hierarchy.__name__}" as child, "none" as parent, 0 as mn, 0 as mx, False as reflected, id(n), nodeCount, forwardCount, 0 as reflCount
+                """]
         dfs = []
         for q in qs:
             dfs.append(self.graph.neograph.run(q).to_data_frame())
         df = pd.concat(dfs)
-        return df
+        try:
+            return df, df.groupby(['child', 'parent']).apply(len).astype(int)
+        except KeyError:
+            return df, pd.Series()
 
     def _validate_no_duplicate_relation_ordering(self):
         q = """
         MATCH (a)-[r1]->(b)<-[r2]-(a)
         WHERE TYPE(r1) = TYPE(r2) AND r1.order <> r2.order
         WITH a, b, apoc.coll.union(COLLECT(r1), COLLECT(r2))[1..] AS rs
-        RETURN DISTINCT labels(a), a.id, labels(b), b.id, count(rs)+1
+        RETURN DISTINCT labels(a), id(a), labels(b), id(b), count(rs)+1
         """
         return self.graph.neograph.run(q).to_data_frame()
 
@@ -705,9 +719,12 @@ class Data:
         MATCH (a)-[r1]->(b)<-[r2]-(a)
         WHERE TYPE(r1) = TYPE(r2) AND PROPERTIES(r1) = PROPERTIES(r2)
         WITH a, b, apoc.coll.union(COLLECT(r1), COLLECT(r2))[1..] AS rs
-        RETURN DISTINCT labels(a), a.id, labels(b), b.id, count(rs)+1
+        RETURN DISTINCT labels(a), id(a), labels(b), id(b), count(rs)+1
         """
         return self.graph.neograph.run(q).to_data_frame()
+
+    def _validate_rel_unique_ids(self):
+
 
     def validate(self):
         duplicates = self._validate_no_duplicate_relationships()
@@ -719,12 +736,19 @@ class Data:
         if len(duplicates):
             print(duplicates)
         schema_violations = []
-        for h in tqdm(list(self.singular_hierarchies.keys())):
-            schema_violations.append(self._validate_one_required(h))
+        label_instances = []
+        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema violations'):
+            df = self._validate_one_required(h)
+            if df is not None:
+                df, label_instance = df
+                schema_violations.append(df)
+                label_instances.append(label_instance)
         schema_violations = pd.concat(schema_violations)
-        print(f'There are {len(schema_violations)} violations of expected relationship number')
+        label_instances = pd.concat(label_instances)
+        print(f'There are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
         if len(schema_violations):
             print(schema_violations)
+            print(label_instances)
         return duplicates, schema_violations
 
     def is_product(self, factor_name, hierarchy_name):

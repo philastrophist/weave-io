@@ -241,7 +241,7 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [Obstemp, Progtemp, Multiple(SurveyCatalogue, maxnumber=10), Multiple(Subprogramme, maxnumber=10), Multiple(Survey, maxnumber=5)]
+    parents = [Obstemp, Progtemp, Multiple(SurveyCatalogue, maxnumber=20), Multiple(Subprogramme, maxnumber=20), Multiple(Survey, maxnumber=10)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 

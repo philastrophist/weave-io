@@ -412,8 +412,8 @@ class Graphable(metaclass=GraphableMeta):
                     if k in self.version_on:
                         raise RuleBreakingException(f"Cannot version on a collection of nodes")
                 else:
-                    for parent in parent_list:
-                        props = {'order': 0, 'relation_id': k}
+                    for i, parent in enumerate(parent_list):
+                        props = {'order': i, 'relation_id': k}
                         merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
                         if k in self.version_on:
                             version_parents.append(parent)
@@ -431,7 +431,7 @@ class Graphable(metaclass=GraphableMeta):
                 if k in self.version_on:
                     version_parents += parent_list
             reltype = 'is_required_by'
-            relparents = {p: (reltype, {'order': 0}, {}) for p in parents}
+            relparents = {p: (reltype, {'order': i}, {}) for i, p in enumerate(parents)}
             child = self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            parents=relparents, collision_manager=collision_manager)
             for i, k, other in others:
@@ -452,7 +452,7 @@ class Graphable(metaclass=GraphableMeta):
                                        collision_manager=collision_manager)
                 collect(child)
             else:
-                for child in child_list:
+                for i, child in enumerate(child_list):
                     props =  {'relation_id': k, 'order': 0}
                     merge_relationship(self.node, child, type, {},
                                        props, collision_manager=collision_manager)

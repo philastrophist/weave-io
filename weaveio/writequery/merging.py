@@ -367,18 +367,22 @@ class MergeDependentNode(CollisionManager):
         test_relations = []
         parent_list = []
         for i, (parent, reltype, relidentprop, dummyrelvar, relvar) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties, self.dummyrelvars, self.relvars)):
-            if i == 0:
-                first_child = f'({self.dummy}: {labels} {self.identproperties})'
             child = f'({self.dummy})'
             rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
+            relidentprop[Varname('_query_hash')] = self.hashvar
             real_rel = f'({parent})-[{relvar}:{reltype} {relidentprop}]->'
-            real_child = f'({self.out})'
+            if i == 0:
+                first_child = f'({self.dummy}: {labels} {self.identproperties})'
+                real_child = f'({self.out}: {labels} {self.identproperties})'
+            else:
+                real_child = f'({self.out})'
             real_relations.append(real_rel + real_child)
             temp_relations.append(rel + '(temp)')
             test_relations.append(rel + child)
             parent_list.append(f"{parent}")
-        dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents + self.relidentproperties + self.dummyrelvars)
-        aliases = expand_to_cypher_alias(self.identproperties, *self.parents + self.relidentproperties)
+        r = [{k: v for k, v in r.items() if k != Varname('_query_hash')} for r in self.relidentproperties]
+        dct = expand_to_cypher_dict(self.dummy, self.propvar, self.identproperties, *self.parents + r + self.dummyrelvars)
+        aliases = expand_to_cypher_alias(self.identproperties, *self.parents + r)
         variables = set()
         for p in self.parents:
             variables.add(p)
@@ -397,13 +401,12 @@ class MergeDependentNode(CollisionManager):
                     pass
                 if not isinstance(v, CypherData):
                     variables.add(v)
-        merge_properties = self.identproperties.copy()
-
-        hashes = [f"apoc.hashing.fingerprinting([{i}, '{rt}', {ri}], {{strategy: 'EAGER'}})" for i, (rt, ri) in enumerate(zip(self.reltypes, self.relidentproperties))]
-        hashes.append(f"apoc.hashing.fingerprinting({merge_properties}, {{strategy: 'EAGER'}})")
+        hashes = [f"apoc.hashing.fingerprinting([{i}, '{rt}', {ri}], {{strategy: 'EAGER'}})" for i, (rt, ri) in enumerate(zip(self.reltypes, r))]
+        hashes.append(f"apoc.hashing.fingerprinting({self.identproperties}, {{strategy: 'EAGER'}})")
         hashes = "with *, apoc.hashing.fingerprinting([" + ",  ".join(hashes) + f"], {{strategy: 'EAGER'}}) as {self.hashvar}"
-        merge_properties[Varname('_query_hash')] = self.hashvar
-        merge_real_relations = '\n'.join([f'MERGE ({self.out}: {labels} {merge_properties})'] + [f'MERGE {r}' for r in real_relations])
+
+        # merge_real_relations = '\n'.join([f'MERGE ({self.out}: {labels} {self.identproperties})'] + [f'MERGE {r}' for r in real_relations])
+        merge_real_relations = '\n'.join([f'MERGE {r}' for r in real_relations])
         on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
         on_match_rel_returns = ', '.join([f'${dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
@@ -419,7 +422,6 @@ class MergeDependentNode(CollisionManager):
         """
         iffalse = f"RETURN ${self.dummy} as {self.out}, {on_match_rel_returns}"
         when = f'CALL apoc.do.when({condition}, "{iftrue}", "{iffalse}", {{ {dct}, time0:time0}}) yield value as {self.child_holder}'
-        when += f'\n REMOVE {self.child_holder}.{self.out}._query_hash'
         when += f"\n WITH *, {rel_expansion}"
         return dedent(f"CALL apoc.lock.nodes({self.parents})\n{already_exists}\n{when}")
 
