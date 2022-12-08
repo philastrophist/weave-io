@@ -248,8 +248,9 @@ class OBSpec(Hierarchy):
 class FibreTarget(Hierarchy):
     """
     A fibretarget is the combination of fibre and surveytarget which is created after submission when
-    the fibres are assigned.
+    the fibres are assigned to a target.
     This object describes where the fibre is placed and what its status is.
+    It uniquely belongs to a surveytarget, fibre, and obspec
     """
     factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition',
                'targx', 'targy']

@@ -330,6 +330,7 @@ class MergeDependentNode(CollisionManager):
         super().__init__(self.outnode, identproperties, properties, collision_manager)
         self.child_holder = CypherVariable('child_holder')
         self.unnamed = CypherVariable('unnamed')
+        self.hashvar = CypherVariable('hash')
         self.input_variables += parents
         self.input_variables += relidentpropins
         self.input_variables += relpropins
@@ -340,6 +341,7 @@ class MergeDependentNode(CollisionManager):
         self.output_variables.append(self.dummy)
         self.output_variables.append(self.child_holder)
         self.output_variables.append(self.unnamed)
+        self.hidden_variables.append(self.hashvar)
 
     def validate_properties(self):
         super(MergeDependentNode, self).validate_properties()
@@ -369,7 +371,6 @@ class MergeDependentNode(CollisionManager):
                 first_child = f'({self.dummy}: {labels} {self.identproperties})'
             child = f'({self.dummy})'
             rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
-            # test_rel = f'({parent})-[:{reltype} {relidentprop}]->'
             real_rel = f'({parent})-[{relvar}:{reltype} {relidentprop}]->'
             real_child = f'({self.out})'
             real_relations.append(real_rel + real_child)
@@ -396,32 +397,29 @@ class MergeDependentNode(CollisionManager):
                     pass
                 if not isinstance(v, CypherData):
                     variables.add(v)
-        # merge_temp_relations = '\n'.join([f'MERGE {r}' for r in temp_relations])
-        # merge_final_temp_relation = f"MERGE (temp)-[:TemporaryMerge]->({self.out}: {labels} {self.identproperties})"
-        merge_real_relations = '\n'.join([f'CREATE ({self.out}: {labels} {self.identproperties})'] + [f'CREATE {r}' for r in real_relations])
+        merge_properties = self.identproperties.copy()
+
+        hashes = [f"apoc.hashing.fingerprinting([{i}, '{rt}', {ri}], {{strategy: 'EAGER'}})" for i, (rt, ri) in enumerate(zip(self.reltypes, self.relidentproperties))]
+        hashes.append(f"apoc.hashing.fingerprinting({merge_properties}, {{strategy: 'EAGER'}})")
+        hashes = "with *, apoc.hashing.fingerprinting([" + ",  ".join(hashes) + f"], {{strategy: 'EAGER'}}) as {self.hashvar}"
+        merge_properties[Varname('_query_hash')] = self.hashvar
+        merge_real_relations = '\n'.join([f'MERGE ({self.out}: {labels} {merge_properties})'] + [f'MERGE {r}' for r in real_relations])
         on_create_rel_returns = ', '.join([f'{relvar}' for relvar in self.relvars])
         on_match_rel_returns = ', '.join([f'${dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
-        # optional_match = f'OPTIONAL MATCH {test_relations[0]}'
-        # matches = '\n'.join([f'MATCH {t}' for t in test_relations])
-        # rel_collection = ', '.join([f'collect({drel}) as {drel}' for rel, drel in zip(self.relvars, self.dummyrelvars)])
-        # include the optional match?
-        # collection = f'CALL {{ WITH {", ".join(map(str, variables))}\n' \
-        #              f'{optional_match}\n' \
-        #              f'{matches}\n' \
-        #              f'RETURN collect({self.dummy}) as {self.dummy}, {rel_collection}\n' \
-        #              f'}}'
         exists = ','.join([f'{tr}' for tr in test_relations])
         already_exists = f"OPTIONAL MATCH {first_child},{exists}"
         condition = f"{self.dummy} is null"
         iftrue = f"""
-        WITH {aliases}
+        WITH {aliases}, $time0 as time0
+        {hashes}
         {merge_real_relations}
         SET {self.out} += ${self.propvar}
         RETURN {self.out}, {on_create_rel_returns}
         """
         iffalse = f"RETURN ${self.dummy} as {self.out}, {on_match_rel_returns}"
         when = f'CALL apoc.do.when({condition}, "{iftrue}", "{iffalse}", {{ {dct}, time0:time0}}) yield value as {self.child_holder}'
+        when += f'\n REMOVE {self.child_holder}.{self.out}._query_hash'
         when += f"\n WITH *, {rel_expansion}"
         return dedent(f"CALL apoc.lock.nodes({self.parents})\n{already_exists}\n{when}")
 

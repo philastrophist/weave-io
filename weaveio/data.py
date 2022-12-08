@@ -21,7 +21,7 @@ from py2neo import ClientError, DatabaseError
 from tqdm import tqdm
 
 from .file import File, HDU
-from .graph import Graph
+from .graph import Graph, _convert_datatypes
 from .hierarchy import Multiple, Hierarchy, Graphable, OneOf
 from .path_finding import HierarchyGraph, get_all_class_bases
 from .readquery import Query
@@ -408,30 +408,44 @@ class Data:
             d['user'] = self.user
         return Graph(host=self.host, port=self.port, name=self.dbname, write=self.write_allowed, **d)
 
-    def make_constraints_cypher(self):
+    def make_constraints_cypher(self) -> Dict[str, List[str]]:
         d = {hierarchy: hierarchy.make_schema() for hierarchy in self.hierarchies}
         d['temporary'] = ['CREATE CONSTRAINT ON (t:TemporaryMerge) ASSERT t.id IS UNIQUE']
+        d['dbcreated'] = ['CREATE INDEX n_dbcreated FOR (n:Hierarchy) ON n.`_dbcreated`']
+        d['dbupdated'] = ['CREATE INDEX n_dbupdated FOR (n:Hierarchy) ON n.`_dbupdated`']
         return d
 
     def apply_constraints(self):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
-        templates = []
-        equivalencies = []
+        templates = set()
+        equivalencies = set()
         for hier, qs in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
             if not qs:
-                templates.append(hier)
+                templates.add(hier)
             for q in qs:
                 try:
                     self.graph.neograph.run(q)
                 except py2neo.ClientError as e:
                     if '[Schema.EquivalentSchemaRuleAlreadyExists]' in str(e):
-                       equivalencies.append(hier)
-                       templates.append(hier)
-        if len(templates):
-            logging.info(f'No index/constraint was made for {templates}')
+                        equivalencies.add(hier)
+                        templates.add(hier)
+        total = len(templates)
+        templates -= equivalencies
         if len(equivalencies):
-            logging.info(f'EquivalentSchemaRuleAlreadyExists for {equivalencies}')
+            n = f'({len(equivalencies)}/{total})'
+            equivalencies = ', '.join(sorted([getattr(t, '__name__', str(t)) for t in equivalencies]))
+            logging.info(f'EquivalentSchemaRuleAlreadyExists for {n}: {equivalencies}')
+        if len(templates):
+            n = f'({len(templates)}/{total})'
+            templates = ', '.join(sorted([getattr(t, '__name__', str(t)) for t in templates]))
+            logging.info(f'No index/constraint exists for {n}: {templates}')
+        self.await_indexes()
+
+    def await_indexes(self, timeout=300):
+        logging.info("Waiting for indexes to come online...")
+        self.graph.neograph.run(f'call db.awaitIndexes({timeout})')
+        logging.info("Indexes are online")
 
     def drop_all_constraints(self, indexes=True):
         if not self.write_allowed:
@@ -484,7 +498,8 @@ class Data:
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False, test_one=False, infile_slc: slice = None,
-                    debug=False, debug_time=False, timeout=None) -> pd.DataFrame:
+                    debug=False, debug_time=False, debug_plan=False, timeout=None,
+                    statement_batch_size=None, statement_batch_i_start=0) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -516,86 +531,88 @@ class Data:
             batches = batches[:1]
         _, path, slc, part = batches[0]
         desc_size = max(len(f'{path}[{slc.start}:{slc.stop}:{part}]') for filetype, path, slc, part in batches)
-        first = f"{path}[{slc.start}:{slc.stop}:{part}]"
-        bar = tqdm(batches, desc=first.ljust(desc_size))
+        first = f"{0}~{path}[{slc.start}:{slc.stop}:{part}]"
+
+        filetype, path, slc, part = batches[0]
+        with self.write_cypher(collision_manager) as query:
+            filetype.read(self.rootdir, path, slc, part)
+        if statement_batch_size is not None:
+            import numpy as np
+            n_statement_batches = int(np.ceil(len(query.statements) / statement_batch_size))
+        else:
+            n_statement_batches = 1
+        bar = tqdm(batches*(n_statement_batches-statement_batch_i_start), desc=first.ljust(desc_size))
         if debug or debug_time:
             with open('debug-timestamp.log', 'w') as f:
                 pass
-        for filetype, path, slc, part in bar:
-            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
-            try:
-                if raise_on_duplicate_file:
-                    if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=path.name)) != 0:
-                        raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
-                with self.write_cypher(collision_manager) as query:
-                    filetype.read(self.rootdir, path, slc, part)
-                cypher, params = query.render_query()
-                uuid = f"//{uuid4()}"
-                cypher = '\n'.join([uuid, 'CYPHER runtime=interpreted', cypher])  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
-                ls = cypher.split('\n')
-                # del ls[514:520]
-                # del ls[493:513]
-                # del ls[490:]
-                # del ls[-14:]
-                # ls[-2] = 'RETURN 1'
-                # ls.append('return time0')
-                # del ls[-8:-1]
-                # ls.insert(-1, 'CALL {return 1 as x_}')
-                # ls.insert(-1, 'MATCH (ob {id:3653})--(:OBSpec)--(ft:FibreTarget)')
-                # del ls[472:-1]
-                cypher = '\n'.join(ls)
-                if debug:
-                    with open('debug-query.log', 'w') as f:
-                        f.write(cypher)
-                    with open('debug-params.log', 'w') as f:
-                        f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
-                start = time.time()
-                timed_out = False
-                if not dryrun:
-                    try:
-                        results = self.graph.execute(cypher, **params)
-                        stats.append(results.stats())
-                        timestamp = results.evaluate()
-                        successful = True
-                    except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
-                        is_running = True
-                        while is_running:
-                            is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
-                            time.sleep(1)
-                            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
-                            if timeout is not None:
-                                if time.time() - start > timeout:
-                                    timed_out = True
-                                    break
-                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
-                        if not timed_out:
-                            successful = r.evaluate()
-                            timestamp = successful
-                        else:
-                            successful = False
-                            timestamp = None
-                        stats.append(r.stats())
-                        if not successful and halt_on_error:
-                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
-                    if timestamp is None:
-                        logging.warning(f"This query terminated early due to either an empty input table/data or "
-                                        f"a match within the query returned no matches or it timed-out. "
-                                        f"Adjust your `.read` method and query to allow for empty tables/data")
-                    timestamps.append(timestamp)
-                else:
-                    continue
-                if successful:
-                    elapsed_times.append(time.time() - start)
-                else:
-                    elapsed_times.append(-1)
-                if debug or debug_time:
-                    with open('debug-timestamp.log', 'a') as f:
-                        f.write(str(elapsed_times[-1]) + '\n')
-            except (ClientError, DatabaseError, FileExistsError, ConnectionError) as e:
-                logging.exception('ClientError:', exc_info=True)
-                if halt_on_error:
-                    raise e
-                print(e)
+        for statement_batch_i in range(statement_batch_i_start, n_statement_batches):
+            for i, (filetype, path, slc, part) in enumerate(batches):
+                bar.set_description(f'{statement_batch_i}~{path}[{slc.start}:{slc.stop}:{part}]')
+                try:
+                    if raise_on_duplicate_file:
+                        if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=path.name)) != 0:
+                            raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
+                    with self.write_cypher(collision_manager) as query:
+                        filetype.read(self.rootdir, path, slc, part)
+                        cypher, params = query.render_query(statement_batch_size=statement_batch_size, statement_batch_i=statement_batch_i)
+                        uuid = f"//{uuid4()}"
+                        lines = [uuid, 'CYPHER runtime=interpreted', cypher]
+                        if debug_plan:
+                            lines = ['PROFILE'] + lines
+                        cypher = '\n'.join(lines)  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
+                    if debug:
+                        with open('debug-query.log', 'w') as f:
+                            f.write(cypher)
+                        with open('debug-params.log', 'w') as f:
+                            f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
+                    start = time.time()
+                    timed_out = False
+                    if not dryrun:
+                        try:
+                            results = self.graph.execute(cypher, **params)
+                            stats.append(results.stats())
+                            timestamp = results.evaluate()
+                            successful = True
+                        except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
+                            is_running = True
+                            while is_running:
+                                is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
+                                time.sleep(1)
+                                bar.set_description(f'{statement_batch_i}~{path}[{slc.start}:{slc.stop}:{part}]')
+                                if timeout is not None:
+                                    if time.time() - start > timeout:
+                                        timed_out = True
+                                        break
+                            r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
+                            if not timed_out:
+                                successful = r.evaluate()
+                                timestamp = successful
+                            else:
+                                successful = False
+                                timestamp = None
+                            stats.append(r.stats())
+                            if not successful and halt_on_error:
+                                raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
+                        if timestamp is None:
+                            logging.warning(f"This query terminated early due to either an empty input table/data or "
+                                            f"a match within the query returned no matches or it timed-out. "
+                                            f"Adjust your `.read` method and query to allow for empty tables/data")
+                        timestamps.append(timestamp)
+                    else:
+                        continue
+                    if successful:
+                        elapsed_times.append(time.time() - start)
+                    else:
+                        elapsed_times.append(-1)
+                    if debug or debug_time:
+                        with open('debug-timestamp.log', 'a') as f:
+                            f.write(str(elapsed_times[-1]) + '\n')
+                except (ClientError, DatabaseError, FileExistsError, ConnectionError) as e:
+                    logging.exception('ClientError:', exc_info=True)
+                    if halt_on_error:
+                        raise e
+                    print(e)
+                bar.update(1)
         if len(batches) and not dryrun:
             df = pd.DataFrame(stats)
             df['timestamp'] = timestamps

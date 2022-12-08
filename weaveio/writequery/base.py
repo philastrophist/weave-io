@@ -68,17 +68,28 @@ class CypherQuery(metaclass=ContextMeta):
                     d[namehint] += 1
                     v._name = f'{namehint}{i}'
 
-    def render_query(self, procedure_tag='', as_lines=False):
+    def render_query(self, procedure_tag='', as_lines=False, statement_batch_size=None, statement_batch_i=None):
         if not isinstance(self.statements[-1], Returns):
             self.returns(self.timestamp)
         self.make_variable_names()
         qs = [s.to_cypher() for s in self.statements]
+        time = qs[-1]
+        if statement_batch_size is not None:
+            if statement_batch_i is None:
+                raise ValueError('statement_batch_i must be an integer')
+            elif statement_batch_i > len(self.statements) or statement_batch_i < 0:
+                raise ValueError('statement_batch_i must be < len(statements) and >= 0')
+            else:
+                end = statement_batch_size*(statement_batch_i+1)
+                qs = qs[:end]
+                if qs[-1] != time:
+                    qs.append(time)
         for i, q in enumerate(qs):
             if q.lower().startswith('with') and '$' in q:
                 q = re.sub('\$[\w\d]+ as \$[\w\d]+,', '', q)
                 qs[i] = q
         # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
-        datadict = {d.name: d.data for d in self.data}
+        datadict = {d.name: d.data for d in self.data if any(d.name in q for q in qs)}
         if as_lines:
             return qs, datadict
         q = '\n'.join(qs)

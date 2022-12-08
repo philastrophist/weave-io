@@ -210,45 +210,44 @@ class L1SingleFile(L1File):
         fname = Path(fname)
         directory = Path(directory)
         absolute_path = directory / fname
-        cls.read_schema(absolute_path, slc)
-        # hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
-        # casu = hiers['casu']
-        # inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
-        # matched_files = list(directory.rglob(inferred_raw_fname.name))
-        # if not matched_files:
-        #     logging.warning(f"{fname} does not have a matching raw file. "
-        #                     f"The database will create the link but the rawspectra will not be available until the missing file is.")
-        #     inferred_raw_fname = inferred_raw_fname.name
-        # elif len(matched_files) > 1:
-        #     raise FileExistsError(f"Whilst searching for {inferred_raw_fname}, we found more than one match:"
-        #                           f"\n{matched_files}")
-        # else:
-        #     inferred_raw_fname = str(matched_files[0].name)
-        # adjunct_run = hiers['adjunct_run']
-        # adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
-        # adjunct_raw_file = RawFile.find(anonymous_parents=[adjunct_raw])
-        # adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
-        # raw = RawSpectrum(run=hiers['run'], casu=casu)
-        # rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file, path='<MISSING>')  # merge this one instead of finding, then we can start from single or raw files
-        # wavelengths = cls.wavelengths(directory, fname)
-        # with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
-        #     adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)
-        #     adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
-        #     single_spectrum = L1SingleSpectrum(raw_spectrum=raw, fibre_target=fibretarget,
-        #                                        wavelength_holder=wavelengths, arm_config=hiers['arm_config'],
-        #                                        tables=fibrow, adjunct=adjunct)
-        #     noss = NoSS(adjunct=adjunct_noss, l1_spectrum=single_spectrum)
-        # single_spectra, nosses, fibrows = collect(single_spectrum, noss, fibrow)
-        # hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
-        #                               l1single_spectra=single_spectra,
-        #                               casu=casu)
-        # with unwind(single_spectra, nosses, fibrows) as (single_spectrum, noss, fibrow):
-        #     spec = L1SingleSpectrum.from_cypher_variable(single_spectrum)
-        #     noss = NoSS.from_cypher_variable(noss)
-        #     cls.attach_products_to_spectrum(spec, fibrow['spec_index'], hdus, {'flux': 1, 'ivar': 2, 'sensfunc': 5})
-        #     cls.attach_products_to_spectrum(noss, fibrow['spec_index'], hdus, {'flux': 3, 'ivar': 4, 'sensfunc': 5})
-        # single_spectra = collect(single_spectrum)  # must collect at the end
-        # return file
+        hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
+        casu = hiers['casu']
+        inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
+        matched_files = list(directory.rglob(inferred_raw_fname.name))
+        if not matched_files:
+            logging.warning(f"{fname} does not have a matching raw file. "
+                            f"The database will create the link but the rawspectra will not be available until the missing file is.")
+            inferred_raw_fname = inferred_raw_fname.name
+        elif len(matched_files) > 1:
+            raise FileExistsError(f"Whilst searching for {inferred_raw_fname}, we found more than one match:"
+                                  f"\n{matched_files}")
+        else:
+            inferred_raw_fname = str(matched_files[0].name)
+        adjunct_run = hiers['adjunct_run']
+        adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
+        adjunct_raw_file = RawFile.find(anonymous_parents=[adjunct_raw])
+        adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
+        raw = RawSpectrum(run=hiers['run'], casu=casu)
+        rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file, path='<MISSING>')  # merge this one instead of finding, then we can start from single or raw files
+        wavelengths = cls.wavelengths(directory, fname)
+        with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
+            adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)
+            adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
+            single_spectrum = L1SingleSpectrum(raw_spectrum=raw, fibre_target=fibretarget,
+                                               wavelength_holder=wavelengths, arm_config=hiers['arm_config'],
+                                               tables=fibrow, adjunct=adjunct)
+            noss = NoSS(adjunct=adjunct_noss, l1_spectrum=single_spectrum)
+        single_spectra, nosses, fibrows = collect(single_spectrum, noss, fibrow)
+        hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
+                                      l1single_spectra=single_spectra,
+                                      casu=casu)
+        with unwind(single_spectra, nosses, fibrows) as (single_spectrum, noss, fibrow):
+            spec = L1SingleSpectrum.from_cypher_variable(single_spectrum)
+            noss = NoSS.from_cypher_variable(noss)
+            cls.attach_products_to_spectrum(spec, fibrow['spec_index'], hdus, {'flux': 1, 'ivar': 2, 'sensfunc': 5})
+            cls.attach_products_to_spectrum(noss, fibrow['spec_index'], hdus, {'flux': 3, 'ivar': 4, 'sensfunc': 5})
+        single_spectra = collect(single_spectrum)  # must collect at the end
+        return file
 
 
 class L1StackedFile(L1File):
