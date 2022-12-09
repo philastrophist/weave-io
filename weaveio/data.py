@@ -724,6 +724,67 @@ class Data:
         return self.graph.neograph.run(q).to_data_frame()
 
     def _validate_rel_unique_ids(self):
+        """
+        For each hierarchy which defines an identifier builder based on parent hierarchies,
+        check that the parents+self is unique in the db since this is not guaranteed by neo4j indexes
+        """
+        instance_duplications = []
+        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema violations'):
+            hierarchy = self.singular_hierarchies[h]
+            if hierarchy.has_rel_identity():
+                id_factors = [f for f in hierarchy.factors if f in hierarchy.identifier_builder]
+                id_parents = [p if isinstance(p, Multiple) else OneOf(p) for p in hierarchy.parents]
+                id_parents = {p.node.__name__: (p.minnumber, p.maxnumber) for p in id_parents}
+                parent_nodes = [f"<-[r{i}:is_required_by]-(p{i}:{p})" for i, p in enumerate(id_parents)]
+                parent_nodes2 = [f"<-[r{i}2:is_required_by]-(p{i})" for i, p in enumerate(id_parents)]
+                node = f"(n:{hierarchy.__name__})"
+                node2 = f"(m:{hierarchy.__name__})"
+                first = f"{node}{parent_nodes[0]}"
+                first2 = f"{node2}{parent_nodes2[0]}"
+                others = ','.join([f"(n){p}" for p in parent_nodes[1:]])
+                others2 = ','.join([f"(m){p}" for p in parent_nodes2[1:]])
+                parent_vars = ','.join([f"p{i}" for i in range(len(parent_nodes))])
+                rel_vars = ','.join([f"r{i}.order" for i in range(len(parent_nodes))])
+                rel_vars2 = ','.join([f"r{i}2.order" for i in range(len(parent_nodes))])
+                property_eq = ' and '.join([f"m.{f} = n.{f}" for f in id_factors])
+                if property_eq:
+                    property_eq = f' and {property_eq}'
+                if others:
+                    first = f"{first},{others}"
+                if others2:
+                    first2 = f"{first2},{others2}"
+                q = f"""
+                MATCH {first}
+                WITH n, {parent_vars}, [{rel_vars}] as coll1
+                OPTIONAL MATCH {first2}
+                where n <> m {property_eq} and [{rel_vars2}] = coll1
+                WITH n, count(m) as nduplicates, count(*) as cnt_rels
+                where nduplicates = cnt_rels  // if even 1 is different, then it's not a duplicate
+                return labels(n)[0] as child, id(n)
+                """
+                duplicates = self.graph.neograph.run(q).to_data_frame()
+                if len(duplicates):
+                    instance_duplications.append(duplicates)
+        try:
+            instance_duplications = pd.concat(instance_duplications)
+            class_duplications = instance_duplications.groupby('child').apply(len)
+            return instance_duplications, class_duplications
+        except ValueError:
+            return None, None
+
+
+    def _validate_expected_number_schema(self):
+        schema_violations = []
+        label_instances = []
+        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema violations'):
+            df = self._validate_one_required(h)
+            if df is not None:
+                df, label_instance = df
+                schema_violations.append(df)
+                label_instances.append(label_instance)
+        schema_violations = pd.concat(schema_violations)
+        label_instances = pd.concat(label_instances)
+        return schema_violations, label_instances
 
 
     def validate(self):
@@ -735,21 +796,17 @@ class Data:
         print(f'There are {len(duplicates)} relations with different orderings')
         if len(duplicates):
             print(duplicates)
-        schema_violations = []
-        label_instances = []
-        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema violations'):
-            df = self._validate_one_required(h)
-            if df is not None:
-                df, label_instance = df
-                schema_violations.append(df)
-                label_instances.append(label_instance)
-        schema_violations = pd.concat(schema_violations)
-        label_instances = pd.concat(label_instances)
+        schema_violations, label_instances = self._validate_expected_number_schema()
         print(f'There are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
         if len(schema_violations):
             print(schema_violations)
             print(label_instances)
-        return duplicates, schema_violations
+        unique_rel_id_duplicates, label_rel_id_duplicates = self._validate_rel_unique_ids()
+        if unique_rel_id_duplicates is not None:
+            print(f"There are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
+            print(unique_rel_id_duplicates)
+            print(label_rel_id_duplicates)
+        return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 
     def is_product(self, factor_name, hierarchy_name):
         return self.singular_name(factor_name) in self.singular_hierarchies[self.singular_name(hierarchy_name)].products
