@@ -787,7 +787,13 @@ class Data:
         return schema_violations, label_instances
 
 
-    def validate(self):
+    def validate(self, file_paths=None):
+        if file_paths is not None:
+            extant = {path: fname for path, fname in self.graph.execute(f'MATCH (n:File) return n.path as path, n.fname as fname')}
+            missing = [str(path) for path in file_paths if path in extant]
+            print(f"Missing {len(missing)} files from db")
+            if missing:
+                print(f"Missing the following files {missing} in the database")
         duplicates = self._validate_no_duplicate_relationships()
         print(f'There are {len(duplicates)} duplicate relations')
         if len(duplicates):
