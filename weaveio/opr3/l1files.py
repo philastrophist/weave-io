@@ -294,10 +294,10 @@ class L1StackedFile(L1File):
             single_file = L1SingleFile.find(fname=single_fname)
             adjunct_single_file = L1SingleFile.find(anonymous_parents=[single_file], exclude=[single_file])
         single_files, adjunct_single_files = collect(single_file, adjunct_single_file)
-        adjunct_file = cls.find(anonymous_parents=[adjunct_single_files])  # bit of a hack but ok
+        adjunct_file = cls.find(anonymous_parents=[adjunct_single_files])
         wavelengths = cls.wavelengths(directory, fname)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
-            adjunct = L1StackedSpectrum.find(anonymous_parents=[fibretarget], anonymous_children=[adjunct_file])
+            adjunct = cls.SpectrumType.find(anonymous_parents=[fibretarget], anonymous_children=[adjunct_file])
             adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
             with unwind(single_files) as single_file:
                 single_spectrum = L1SingleSpectrum.find(anonymous_parents=[fibretarget], anonymous_children=[single_file])

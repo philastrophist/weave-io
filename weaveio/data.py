@@ -823,7 +823,7 @@ class Data:
             print(unique_rel_id_duplicates)
             print(label_rel_id_duplicates)
         else:
-            print(f"There are 0 unique rel id violations (0) class definitions)")
+            print(f"There are 0 unique rel id violations (0 class definitions)")
         return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 
     def is_product(self, factor_name, hierarchy_name):

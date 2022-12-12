@@ -126,15 +126,18 @@ class MatchPatternNode(Statement):
     def to_cypher(self):
         labels = ':'.join(self.labels)
         match = f'({self.out}: {labels} {self.properties})'
-        extras = ' AND '.join([f'({self.out})<--({p})' for p in self.parents] +
-                            [f'({self.out})-->({c})' for c in self.children] +
-                            [f"({self.out} <> {e} or {e} is null)" for e in self.exclude] +
+        relations = ', '.join([f'({self.out})<--({p})' for p in self.parents] +
+                                [f'({self.out})-->({c})' for c in self.children])
+        extras = ' AND '.join([f"({self.out} <> {e} or {e} is null)" for e in self.exclude] +
                               [f"all(n in {e} where {self.out} <> n or n is null)" for e in self.exclude_collection] +
                               [f"all(p in {p} where exists( ({self.out})<--(p) ))" for p in self.collection_parents] +
                               [f"all(c in {c} where exists( ({self.out})-->(c) ))" for c in self.collection_children])
+        s = f'WITH * OPTIONAL MATCH {match}'
+        if relations:
+            s += f',{relations}'
         if extras:
-            return f"WITH * OPTIONAL MATCH {match} WHERE {extras}"
-        return f"WITH * OPTIONAL MATCH {match}"
+            s += f' WHERE {extras}'
+        return s
 
 class MatchBranchNode(Statement):
     def __init__(self, *nodes_or_labels):
