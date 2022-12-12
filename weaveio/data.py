@@ -665,45 +665,55 @@ class Data:
         if hierarchy.is_template:
             return
         parents = [h for h in hierarchy.parents]
+        children = [h for h in hierarchy.children]
         qs = []
-        for parent in parents:
-            if isinstance(parent, Multiple):
-                mn, mx = parent.minnumber, parent.maxnumber
-                b = parent.node.__name__
-                reflected = parent.one2one
+        for relation in parents+children:
+            if isinstance(relation, Multiple):
+                mn, mx = relation.minnumber, relation.maxnumber
+                b = relation.node.__name__
+                reflected = relation.one2one
             else:
                 mn, mx = 1, 1
-                b = parent.__name__
+                b = relation.__name__
                 reflected = False
             mn = 0 if mn is None else mn
             mx = 9999999 if mx is None else mx
             a = hierarchy.__name__
+            if relation in parents:
+                arrows = ['<-', '-']
+                reldef = [a, b]
+            else:
+                arrows = ['-', '->']
+                reldef = [b, a]
             q = f"""
             MATCH (n:{a})
-            OPTIONAL MATCH (n)<-[r1:is_required_by]-(m:{b})
+            OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{b})
             WITH n, count(n) AS nodeCount, count(r1) as forwardCount
-            OPTIONAL MATCH (n)-[r2:is_required_by]->(m:{b})
+            OPTIONAL MATCH (n){arrows[0]}[r2:is_required_by]{arrows[1]}(m:{b})
             WITH n, nodeCount, forwardCount, count(r2) as reflCount           
             WITH *
             WHERE forwardCount < {mn} OR forwardCount > {mx} OR (reflCount <> forwardCount AND {reflected})
-            RETURN "{a}" as child, "{b}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), nodeCount, forwardCount, reflCount            
+            RETURN "{reldef[0]}" as child, "{reldef[1]}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), nodeCount, forwardCount, reflCount            
             """
             qs.append(q)
-        if not len(parents):
-            qs = [f"""
-                MATCH (n:{hierarchy.__name__})
-                WITH n, SIZE([(n)<-[:is_required_by]-(m) | m ])  AS forwardCount, count(n) as nodeCount
-                WHERE forwardCount > 0
-                RETURN "{hierarchy.__name__}" as child, "none" as parent, 0 as mn, 0 as mx, False as reflected, id(n), nodeCount, forwardCount, 0 as reflCount
-                """]
+        # if not len(parents):
+        #     # violation is "allowed" if the relation is part of a one-to-one relation for another hierarchy
+        #     qs = [f"""
+        #         MATCH (n:{hierarchy.__name__})
+        #         WITH n, SIZE([(n)<-[:is_required_by]-(m) where NOT (m)<-[:is_required_by]-(n) | m ])  AS forwardCount, count(n) as nodeCount
+        #         WHERE forwardCount > 0
+        #         RETURN "{hierarchy.__name__}" as child, "none" as parent, 0 as mn, 0 as mx, False as reflected, id(n), nodeCount, forwardCount, 0 as reflCount
+        #         """]
         dfs = []
         for q in qs:
             dfs.append(self.graph.neograph.run(q).to_data_frame())
-        df = pd.concat(dfs)
         try:
+            df = pd.concat(dfs)
             return df, df.groupby(['child', 'parent']).apply(len).astype(int)
         except KeyError:
             return df, pd.Series()
+        except ValueError:
+            return pd.DataFrame(), pd.Series()
 
     def _validate_no_duplicate_relation_ordering(self):
         q = """
@@ -812,6 +822,8 @@ class Data:
             print(f"There are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
             print(unique_rel_id_duplicates)
             print(label_rel_id_duplicates)
+        else:
+            print(f"There are 0 unique rel id violations (0) class definitions)")
         return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 
     def is_product(self, factor_name, hierarchy_name):

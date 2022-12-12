@@ -80,6 +80,7 @@ try:
                 logging.info(f'Skipping version checking since its has not been {self.freq} hour since the last check.')
                 return
             if self.is_latest_version():
+                self.update_last_checked()
                 return
             action, arg = print, self.default_message()
             action(arg) if arg else action()

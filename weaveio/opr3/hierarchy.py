@@ -278,7 +278,7 @@ class Exposure(Hierarchy):
     factors = ['exptime', 'seeingb', 'seeinge', 'windspb', 'windspe', 'telhumb', 'telhume',
                'winddirb', 'winddire', 'airmass',
                'teltempb', 'teltempe', 'skybrtel', 'observer', 'obstype']
-    parents = [OB, CASU, System]
+    parents = [OB]
 
 
     @classmethod
@@ -286,9 +286,7 @@ class Exposure(Hierarchy):
         factors = {f: header.get(f) for f in cls.factors}
         factors['mjd'] = np.round(float(header['MJD-OBS']), 6)
         factors['obstype'] = header['obstype'].lower()
-        casu = CASU(id=header.get('casuvers', header.get('casuid')))
-        sys = System(version=header['sysver'])
-        return cls(ob=ob, casu=casu, system=sys, **factors)
+        return cls(ob=ob, **factors)
 
 
 class Spectrum(Hierarchy):
@@ -322,10 +320,10 @@ class RawSpectrum(Spectrum2D):
     """
     A 2D spectrum containing two counts arrays, this is not wavelength calibrated.
     """
-    parents = [CASU, OneOf(Run, one2one=True)]
+    parents = [OneOf(Run, one2one=True)]
     products = ['counts1', 'counts2']
     children = [Optional('self', idname='adjunct', one2one=True)]
-    identifier_builder = ['casu', 'run']
+    identifier_builder = ['run']
 
 
 class Single(Hierarchy):

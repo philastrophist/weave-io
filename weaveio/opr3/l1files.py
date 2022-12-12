@@ -14,7 +14,7 @@ from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
 from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf, Optional
 from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
-    OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder
+    OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder, System
 from weaveio.opr3.l1 import L1SingleSpectrum, L1StackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, L1Spectrum, L1StackedSpectrum, NoSS
 from weaveio.writequery import groupby, CypherData
 
@@ -102,6 +102,7 @@ class HeaderFibinfoFile(File):
         xml = str(header['CAT-NAME']).replace('./', '') if 'xml' in header['CAT-NAME'] else str(header['INFILE'])  # stack files do this
         obid = float(header['OBID'])
         casu = CASU(id=header['CASUID'])
+        sys = System(version=header['sysver'])
 
         progtemp = Progtemp.from_progtemp_code(header['PROGTEMP'])
         vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrument_configuration.mode)
@@ -114,7 +115,7 @@ class HeaderFibinfoFile(File):
         exposure = Exposure.from_header(ob, header)
         adjunct_run = Run.find(anonymous_parents=[exposure], exclude=[Run.find(id=runid)])
         run = Run(id=runid, arm_config=arm, exposure=exposure, adjunct=adjunct_run)
-        return {'ob': ob, 'obspec': obspec, 'arm_config': arm, 'exposure': exposure, 'run': run, 'adjunct_run': adjunct_run, 'casu': casu}
+        return {'ob': ob, 'obspec': obspec, 'arm_config': arm, 'exposure': exposure, 'run': run, 'adjunct_run': adjunct_run, 'casu': casu, 'system': sys}
 
     @classmethod
     def read_schema(cls, path: Path, slc: slice = None):
@@ -142,9 +143,9 @@ class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
             'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
-    parents = [CASU, RawSpectrum]
-    produces = [CASU]  # extra things which are not necessarily children of this object, cannot include parents
-    children = [Optional('self', idname='adjunct', one2one=True)]
+    parents = [RawSpectrum]
+    produces = [CASU, System]  # extra things which are not necessarily children of this object, cannot include parents
+    children = [Optional('self', idname='adjunct', one2one=True), CASU, System]
 
     @classmethod
     def fname_from_runid(cls, runid):
@@ -157,8 +158,9 @@ class RawFile(HeaderFibinfoFile):
         adjunct_run = hiers['adjunct_run']
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_rawfile = RawFile.find(anonymous_children=[adjunct_raw])
-        raw = RawSpectrum(run=hiers['run'], casu=hiers['casu'], adjunct=adjunct_raw)
-        hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'], adjunct=adjunct_rawfile)
+        raw = RawSpectrum(run=hiers['run'], adjunct=adjunct_raw)
+        hdus, file, _ = cls.read_hdus(directory, fname, raw_spectrum=raw, casu=hiers['casu'],
+                                      system=hiers['system'], adjunct=adjunct_rawfile)
         where = {'counts1': 1, 'counts2': 2}
         for product in raw.products:
             raw.attach_product(product, hdus[where[product]])
@@ -171,9 +173,9 @@ class L1File(HeaderFibinfoFile):
     hdus = {'primary': PrimaryHDU, 'flux': BinaryHDU, 'ivar': BinaryHDU,
             'flux_noss': BinaryHDU, 'ivar_noss': BinaryHDU,
             'sensfunc': BinaryHDU, 'fibtable': TableHDU}
-    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
-    parents = [Multiple(L1Spectrum, maxnumber=1000, one2one=True), CASU]
-    produces = [CASU, NoSS]  # extra things which are not necessarily children of this object, cannot include parents
+    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder, CASU, System]
+    parents = [Multiple(L1Spectrum, maxnumber=1000, one2one=True)]
+    produces = [CASU, System, NoSS]  # extra things which are not necessarily children of this object, cannot include parents
 
     @classmethod
     def wavelengths(cls, rootdir: Path, fname: Union[Path, str]):
@@ -197,8 +199,8 @@ class L1File(HeaderFibinfoFile):
 class L1SingleFile(L1File):
     singular_name = 'l1single_file'
     match_pattern = 'single_\d+\.fit'
-    parents = [CASU, OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000, one2one=True)]
-    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
+    parents = [OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000, one2one=True)]
+    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder, CASU, System]
     version_on = ['raw_file']
 
     @classmethod
@@ -212,6 +214,7 @@ class L1SingleFile(L1File):
         absolute_path = directory / fname
         hiers, header, fibinfo, fibretarget_collection, fibrow_collection = cls.read_schema(absolute_path, slc)
         casu = hiers['casu']
+        system = hiers['system']
         inferred_raw_fname = fname.with_name(fname.name.replace('single_', 'r'))
         matched_files = list(directory.rglob(inferred_raw_fname.name))
         if not matched_files:
@@ -227,20 +230,20 @@ class L1SingleFile(L1File):
         adjunct_raw = RawSpectrum.find(anonymous_parents=[adjunct_run])
         adjunct_raw_file = RawFile.find(anonymous_parents=[adjunct_raw])
         adjunct_file = cls.find(anonymous_parents=[adjunct_raw_file])
-        raw = RawSpectrum(run=hiers['run'], casu=casu)
-        rawfile = RawFile(fname=inferred_raw_fname, casu=casu, raw_spectrum=raw, adjunct=adjunct_raw_file, path='<MISSING>')  # merge this one instead of finding, then we can start from single or raw files
+        raw = RawSpectrum(run=hiers['run'])
+        rawfile = RawFile(fname=inferred_raw_fname, casu=casu, system=hiers['system'], raw_spectrum=raw, adjunct=adjunct_raw_file, path='<MISSING>')  # merge this one instead of finding, then we can start from single or raw files
         wavelengths = cls.wavelengths(directory, fname)
         with unwind(fibretarget_collection, fibrow_collection) as (fibretarget, fibrow):
-            adjunct = L1SingleSpectrum.find(raw_spectrum=adjunct_raw, fibre_target=fibretarget)
+            adjunct = L1SingleSpectrum.find(nspec=fibrow['nspec'], raw_spectrum=adjunct_raw, fibre_target=fibretarget)
             adjunct_noss = NoSS.find(anonymous_parents=[adjunct])
-            single_spectrum = L1SingleSpectrum(raw_spectrum=raw, fibre_target=fibretarget,
+            single_spectrum = L1SingleSpectrum(nspec=fibrow['nspec'], raw_spectrum=raw, fibre_target=fibretarget,
                                                wavelength_holder=wavelengths, arm_config=hiers['arm_config'],
                                                tables=fibrow, adjunct=adjunct)
             noss = NoSS(adjunct=adjunct_noss, l1_spectrum=single_spectrum)
         single_spectra, nosses, fibrows = collect(single_spectrum, noss, fibrow)
         hdus, file, _ = cls.read_hdus(directory, fname, raw_file=rawfile, adjunct=adjunct_file,
                                       l1single_spectra=single_spectra,
-                                      casu=casu)
+                                      casu=casu, system=system)
         with unwind(single_spectra, nosses, fibrows) as (single_spectrum, noss, fibrow):
             spec = L1SingleSpectrum.from_cypher_variable(single_spectrum)
             noss = NoSS.from_cypher_variable(noss)
@@ -323,14 +326,15 @@ class L1StackedFile(L1File):
 class L1StackFile(L1StackedFile):
     singular_name = 'l1stack_file'
     match_pattern = 'stack_[0-9]+\.fit'
-    parents = [CASU, Multiple(L1SingleFile, maxnumber=10, constrain=(OB, ArmConfig)),
+    parents = [Multiple(L1SingleFile, maxnumber=10, constrain=(OB, ArmConfig)),
                Multiple(L1StackSpectrum, maxnumber=1000, one2one=True)]
-    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
+    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder, CASU, System]
     SpectrumType =  L1StackSpectrum
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int, 'HDU'], 'File', List[_BaseHDU]]:
-        return super().read_hdus(directory, fname, casu=hierarchies['casu'], l1single_files=hierarchies['l1single_files'],
+        return super().read_hdus(directory, fname, casu=hierarchies['casu'], system=hierarchies['system'],
+                                 l1single_files=hierarchies['l1single_files'],
                                  ob=hierarchies['ob'], arm_config=hierarchies['arm_config'],
                                  l1stack_spectra=hierarchies['l1stack_spectra'], adjunct=hierarchies['adjunct'])
 
@@ -338,14 +342,15 @@ class L1StackFile(L1StackedFile):
 class L1SuperstackFile(L1StackedFile):
     singular_name = 'l1superstack_file'
     match_pattern = 'superstack_[0-9]+\.fit'
-    parents = [Multiple(L1SingleFile, maxnumber=5, constrain=(OBSpec, ArmConfig)), CASU,
+    parents = [Multiple(L1SingleFile, maxnumber=5, constrain=(OBSpec, ArmConfig)),
                Multiple(L1SuperstackSpectrum, maxnumber=1000, one2one=True)]
-    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
+    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder, CASU, System]
     SpectrumType = L1SuperstackSpectrum
 
     @classmethod
     def read_hdus(cls, directory: Union[Path, str], fname: Union[Path, str], **hierarchies: Union[Hierarchy, List[Hierarchy]]) -> Tuple[Dict[int, 'HDU'], 'File', List[_BaseHDU]]:
-        return super().read_hdus(directory, fname, casu=hierarchies['casu'], l1single_files=hierarchies['l1single_files'],
+        return super().read_hdus(directory, fname, casu=hierarchies['casu'], system=hierarchies['system'],
+                                 l1single_files=hierarchies['l1single_files'],
                                  obspec=hierarchies['obspec'], arm_config=hierarchies['arm_config'],
                                  l1stack_spectra=hierarchies['l1superstack_spectra'], adjunct=hierarchies['adjunct'])
 
@@ -357,9 +362,9 @@ class L1SuperstackFile(L1StackedFile):
 class L1SupertargetFile(L1StackedFile):
     singular_name = 'l1supertarget_file'
     match_pattern = 'WVE_.+\.fit'
-    parents = [Multiple(L1SingleFile, maxnumber=10, constrain=(WeaveTarget, ArmConfig)), CASU,
+    parents = [Multiple(L1SingleFile, maxnumber=10, constrain=(WeaveTarget, ArmConfig)),
                OneOf(L1SupertargetSpectrum, one2one=True)]
-    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder]
+    children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder, CASU, System]
     SpectrumType = L1SupertargetSpectrum
     recommended_batchsize = None
 
