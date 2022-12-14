@@ -634,6 +634,7 @@ class Data:
         return df.set_index(['fname', 'batch_start', 'batch_end', 'part'])
 
     def find_files(self, *filetype_names, skip_extant_files=True):
+        filetype_names = [x+'_file' if not x.endswith('_file') else x for x in filetype_names]
         filelist = []
         if len(filetype_names) == 0:
             filetypes = self.filetypes
@@ -643,7 +644,7 @@ class Data:
             raise KeyError(f"Some or all of the filetype_names are not understood. "
                            f"Allowed names are: {[i.singular_name for i in self.filetypes]}")
         for filetype in filetypes:
-            filelist += [i for i in filetype.match_files(self.rootdir, self.graph)]
+            filelist += sorted([i for i in filetype.match_files(self.rootdir, self.graph)], key=lambda f: f.name)
         if skip_extant_files:
             extant_fnames = self.get_extant_files() if skip_extant_files else []
             filtered_filelist = [i for i in filelist if str(i.name) not in extant_fnames]
@@ -739,7 +740,7 @@ class Data:
         check that the parents+self is unique in the db since this is not guaranteed by neo4j indexes
         """
         instance_duplications = []
-        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema violations'):
+        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema uniqueness violations'):
             hierarchy = self.singular_hierarchies[h]
             if hierarchy.has_rel_identity():
                 id_factors = [f for f in hierarchy.factors if f in hierarchy.identifier_builder]
@@ -786,7 +787,7 @@ class Data:
     def _validate_expected_number_schema(self):
         schema_violations = []
         label_instances = []
-        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema violations'):
+        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema parent/child # violations'):
             df = self._validate_one_required(h)
             if df is not None:
                 df, label_instance = df
@@ -796,6 +797,22 @@ class Data:
         label_instances = pd.concat(label_instances)
         return schema_violations, label_instances
 
+    def _validate_relation_constraints(self):
+        qs = []
+        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for rel constraint schema violations'):
+            hierarchy = self.singular_hierarchies[h]
+            if not hierarchy.is_template:
+                for rel in hierarchy.parents + hierarchy.children:
+                    if isinstance(rel, Multiple):
+                        for constraint in rel.constrain:
+                            q = f"""
+                            MATCH (h:{hierarchy.__name__})--(r:{rel.node.__name__})--(c:{constraint.__name__})
+                            WITH h, r, size(collect(c)) as size
+                            where size <> 1
+                            return h as node, r as dependent, "{constraint.__name__}" as constraint, size as ndifferent_constaints
+                            """
+                            qs.append(self.graph.neograph.run(q).to_data_frame())
+        return qs
 
     def validate(self, file_paths=None):
         if file_paths is not None:

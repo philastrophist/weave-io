@@ -72,7 +72,7 @@ class Multiple:
         if maxnumber is None:
             warn(f"maxnumber is None for {node}", RuntimeWarning)
         self.maxnumber = int_or_none(maxnumber)
-        self.constrain = [] if constrain is None else (constrain, ) if not isinstance(constrain, (list, tuple)) else tuple(constrain)
+        self.constrain = tuple() if constrain is None else (constrain, ) if not isinstance(constrain, (list, tuple)) else tuple(constrain)
         self.relation_idname = idname
         self.one2one = one2one
         self._isself = self.node == 'self'
@@ -80,6 +80,10 @@ class Multiple:
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
+
+    def to_reldict(self):
+        return {'relation_idname': self.relation_idname, 'maxnumber': self.maxnumber, 'minnumber': self.minnumber,
+                'constrain': self.constrain, 'one2one': self.one2one, 'notreal': self.notreal}
 
     @property
     def is_optional(self):

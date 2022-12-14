@@ -167,6 +167,28 @@ class HierarchyGraph(nx.MultiDiGraph):
         self.remove_node(Hierarchy)
         self._assign_edge_weights()
 
+    def to_neo4j(self, graph):
+        node_type = 'AbstractNode'
+        for node in self.nodes:
+            graph.execute(f"""MERGE (n:{node.__name__}{node_type}:{node_type}) ON CREATE 
+            SET n.factors = $factors, n.identifier_builder = $identifier_builder, n.singular_name=$singular_name,
+             n.plural_name = $plural_name, n.idname = $idname, n.products = $products""",
+                          factors=node.factors, singular_name=node.singular_name, plural_name=node.plural_name,
+                          idname=node.idname, identifier_builder=node.identifier_builder, products=node.products)
+        for edge in self.edges:
+            rel = {k: v for k, v in self.edges[edge].items() if not isinstance(v, Multiple)}
+            try:
+                rel.update(self.edges[edge]['relation'].to_reldict())
+            except KeyError:
+                rel['singular'] = False
+            if 'constrain' in rel:
+                rel['constrain'] = [i.__name__ for i in rel['constrain']]
+            graph.execute(f"""MATCH (a:{edge[0].__name__}{node_type}) 
+            MATCH (b:{edge[1].__name__}{node_type})
+            MERGE (a)-[r:{rel.pop('type')}]->(b)
+            ON CREATE SET r = $rel
+            """, rel=rel)
+
     def add_edge(self, u_for_edge, v_for_edge, idname=None, **attr):
         """
         Create an edge if the edge (uniquely identified by attributes) doesn't exist

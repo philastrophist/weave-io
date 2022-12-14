@@ -26,7 +26,7 @@ class NoSS(Spectrum1D):
     parents = [OneOf(L1Spectrum, one2one=True)]
     children = [Optional('self', idname='adjunct', one2one=True)]
     identifier_builder = ['l1_spectrum']
-    indexes = [None]
+    indexes = [None]  # removes nspec index
 
 
 class L1SingleSpectrum(L1Spectrum, Single):
