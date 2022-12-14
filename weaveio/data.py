@@ -667,7 +667,7 @@ class Data:
             return
         parents = [h for h in hierarchy.parents]
         children = [h for h in hierarchy.children]
-        qs = []
+        dfs = []
         for relation in parents+children:
             if isinstance(relation, Multiple):
                 mn, mx = relation.minnumber, relation.maxnumber
@@ -689,25 +689,28 @@ class Data:
             q = f"""
             MATCH (n:{a})
             OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{b})
-            WITH n, count(n) AS nodeCount, count(r1) as forwardCount
-            OPTIONAL MATCH (n){arrows[0]}[r2:is_required_by]{arrows[1]}(m:{b})
-            WITH n, nodeCount, forwardCount, count(r2) as reflCount           
+            WITH n, count(r1) as forwardCount
+            OPTIONAL MATCH (m:{b}){arrows[0]}[r2:is_required_by]{arrows[1]}(n)
+            WITH n, forwardCount, count(r2) as reflCount           
             WITH *
             WHERE forwardCount < {mn} OR forwardCount > {mx} OR (reflCount <> forwardCount AND {reflected})
-            RETURN "{reldef[0]}" as child, "{reldef[1]}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), nodeCount, forwardCount, reflCount            
+            RETURN "{reldef[0]}" as child, "{reldef[1]}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), forwardCount, reflCount            
             """
-            qs.append(q)
-        # if not len(parents):
-        #     # violation is "allowed" if the relation is part of a one-to-one relation for another hierarchy
-        #     qs = [f"""
-        #         MATCH (n:{hierarchy.__name__})
-        #         WITH n, SIZE([(n)<-[:is_required_by]-(m) where NOT (m)<-[:is_required_by]-(n) | m ])  AS forwardCount, count(n) as nodeCount
-        #         WHERE forwardCount > 0
-        #         RETURN "{hierarchy.__name__}" as child, "none" as parent, 0 as mn, 0 as mx, False as reflected, id(n), nodeCount, forwardCount, 0 as reflCount
-        #         """]
-        dfs = []
-        for q in qs:
-            dfs.append(self.graph.neograph.run(q).to_data_frame())
+            result = self.graph.neograph.run(q).to_data_frame()
+            dfs.append(result)
+            # commented out because one2one actually just means reciprocal not 1to1...
+            # if reflected and self.graph.execute(f'MATCH (n:{a}) return count(n) > 1').evaluate():
+                # q2 = f"""
+                # MATCH (n:{b})
+                # OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{a})
+                # WITH n, count(r1) as forwardCount
+                # OPTIONAL MATCH (m:{a}){arrows[0]}[r2:is_required_by]{arrows[1]}(n)
+                # WITH n, forwardCount, count(r2) as reflCount
+                # WITH *
+                # WHERE forwardCount < {mn} OR forwardCount > {mx} OR (reflCount <> forwardCount)
+                # RETURN "{reldef[0]}" as child, "{reldef[1]}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), forwardCount, reflCount
+                # """
+                # dfs.append(self.graph.neograph.run(q2).to_data_frame())
         try:
             df = pd.concat(dfs)
             return df, df.groupby(['child', 'parent']).apply(len).astype(int)
