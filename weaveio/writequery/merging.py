@@ -307,6 +307,7 @@ class MergeDependentNode(CollisionManager):
                  properties: Dict[str, Union[str, int, float, CypherVariable]],
                  parents: List[CypherVariable],
                  reltypes: List[str],
+                 reldirs: List[bool], # True if parent, False if child
                  relidentproperties: List[Dict[str, Union[str, int, float, CypherVariable]]],
                  relproperties: List[Dict[str, Union[str, int, float, CypherVariable]]],
                  collision_manager='track&flag'):
@@ -322,6 +323,7 @@ class MergeDependentNode(CollisionManager):
             self.relproperties.append(propdict)
             relidentpropins += identpropins
             relpropins += propins
+        self.reldirs = reldirs
         self.parents = parents
         self.outnode = CypherVariable(labels[0])
         self.relvars = [CypherVariable(reltype) for reltype in reltypes]
@@ -369,11 +371,12 @@ class MergeDependentNode(CollisionManager):
         temp_relations = []
         test_relations = []
         parent_list = []
-        for i, (parent, reltype, relidentprop, dummyrelvar, relvar) in enumerate(zip(self.parents, self.reltypes, self.relidentproperties, self.dummyrelvars, self.relvars)):
+        for i, (parent, reltype, reldir, relidentprop, dummyrelvar, relvar) in enumerate(zip(self.parents, self.reltypes, self.reldirs, self.relidentproperties, self.dummyrelvars, self.relvars)):
             child = f'({self.dummy})'
-            rel = f'({parent})-[{dummyrelvar}:{reltype} {relidentprop}]->'
+            arrows = ['-' if reldir else '<-', '->' if reldir else '-']
+            rel = f'({parent}){arrows[0]}[{dummyrelvar}:{reltype} {relidentprop}]{arrows[1]}'
             relidentprop[Varname('_query_hash')] = self.hashvar
-            real_rel = f'({parent})-[{relvar}:{reltype} {relidentprop}]->'
+            real_rel = f'({parent}){arrows[0]}[{relvar}:{reltype} {relidentprop}]{arrows[1]}'
             if i == 0:
                 first_child = f'({self.dummy}: {labels} {self.identproperties})'
                 real_child = f'({self.out}: {labels} {self.identproperties})'
@@ -433,6 +436,7 @@ class MergeDependentNode(CollisionManager):
         query = ''
         for i, (r, rprops, colliding_keys) in enumerate(zip(self.relvars+[self.out], self.relpropsvars+[self.propvar], self.colliding_rel_keys+[self.colliding_keys])):
             if self.collision_manager == 'track&flag':
+                raise NotImplementedError(f"This feature has not been adapted yet")
                 if r != self.out:  # handled by the base class above
                     query += dedent(f"""
                         WITH *, [x in apoc.coll.intersection(keys({rprops}), keys(properties({r}))) where ({rprops}[x] is null or {r}[x] is null) or {rprops}[x] <> {r}[x]] as {colliding_keys}
@@ -572,11 +576,11 @@ def merge_relationship(parent, child, reltype, identproperties, properties, coll
     return statement.out
 
 
-def merge_dependent_node(labels, identproperties, properties, parents, reltypes, relidentproperties, relproperties,
+def merge_dependent_node(labels, identproperties, properties, parents, reltypes, reldirs, relidentproperties, relproperties,
                          collision_manager='track&flag'):
     query = CypherQuery.get_context()  # type: CypherQuery
-    statement = MergeDependentNode(labels, identproperties, properties, parents, reltypes, relidentproperties, relproperties,
-                                   collision_manager)
+    statement = MergeDependentNode(labels, identproperties, properties, parents, reltypes, reldirs,
+                                   relidentproperties, relproperties, collision_manager)
     query.add_statement(statement)
     return statement.outnode
 
@@ -588,39 +592,41 @@ def set_version(parents, reltypes, childlabel, child, childproperties):
 
 
 def merge_node(labels, identproperties, properties=None,
-               parents: Dict[CypherVariable, Union[Tuple[str, Optional[Dict], Optional[Dict]], str]] = None,
+               id_rels: Dict[CypherVariable, Union[Tuple[str, bool, Optional[Dict], Optional[Dict]], str]] = None,
                versioned_label=None,
                versioned_properties=None,
                collision_manager='track&flag') -> CypherVariable:
     if properties is None:
         properties = {}
-    if parents is None:
-        parents = {}
-    parent_list = []
+    if id_rels is None:
+        id_rels = {}
+    rel_list = []
+    reldir_list = []
     reltype_list = []
     relidentproperties_list = []
     relproperties_list = []
-    for parent, reldata in parents.items():
+    for rel, reldata in id_rels.items():
         if isinstance(reldata, str):
-            reldata = [reldata]
-        parent_list.append(parent)
+            reldata = [True, *reldata]
+        rel_list.append(rel)
         reltype_list.append(reldata[0])
+        reldir_list.append(reldata[1])
         if len(reldata) > 1:
-            relidentproperties_list.append(reldata[1])
+            relidentproperties_list.append(reldata[2])
         else:
             relidentproperties_list.append({})
         if len(reldata) > 2:
-            relproperties_list.append(reldata[2])
+            relproperties_list.append(reldata[3])
         else:
             relproperties_list.append({})
-    if len(parents):
-        node = merge_dependent_node(labels, identproperties, properties, parent_list,
-                                    reltype_list, relidentproperties_list, relproperties_list,
+    if len(id_rels):
+        node = merge_dependent_node(labels, identproperties, properties, rel_list,
+                                    reltype_list, reldir_list, relidentproperties_list, relproperties_list,
                                     collision_manager)
     else:
         node = merge_single_node(labels, identproperties, properties, collision_manager)
     if versioned_label is not None:
         if versioned_properties is None:
             versioned_properties = {}
-        set_version(parent_list, reltype_list, versioned_label, node, versioned_properties)
+        set_version(rel_list, reltype_list, versioned_label, node, versioned_properties)
     return node

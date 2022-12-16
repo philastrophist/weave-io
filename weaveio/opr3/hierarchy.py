@@ -250,11 +250,12 @@ class FibreTarget(Hierarchy):
     A fibretarget is the combination of fibre and surveytarget which is created after submission when
     the fibres are assigned to a target.
     This object describes where the fibre is placed and what its status is.
-    It uniquely belongs to a surveytarget, fibre, and obspec
+    It uniquely belongs to a surveytarget, fibre, and obspec.
     """
     factors = ['fibrera', 'fibredec', 'status', 'orientation', 'nretries', 'xposition', 'yposition',
                'targx', 'targy']
-    parents = [Fibre, SurveyTarget, OneOf(OBSpec, one2one=True)]
+    parents = [Fibre, SurveyTarget]
+    children = [OBSpec]
     identifier_builder = ['fibre', 'survey_target', 'obspec', 'xposition', 'yposition']
 
 
@@ -296,7 +297,7 @@ class Spectrum(Hierarchy):
 
 class Spectrum1D(Spectrum):
     is_template = True
-    children = [OneOf(WavelengthHolder, one2one=True)]
+    children = [OneOf(WavelengthHolder, one2one=True)]  # one2one because wvl only has 1 single & vice versa
     products = ['flux', 'ivar']
     plural_name = 'spectra1d'
 

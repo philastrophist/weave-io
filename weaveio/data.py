@@ -748,18 +748,24 @@ class Data:
             if hierarchy.has_rel_identity():
                 id_factors = [f for f in hierarchy.factors if f in hierarchy.identifier_builder]
                 id_parents = [p if isinstance(p, Multiple) else OneOf(p) for p in hierarchy.parents]
-                id_parents = {p.node.__name__: (p.minnumber, p.maxnumber) for p in id_parents}
-                parent_nodes = [f"<-[r{i}:is_required_by]-(p{i}:{p})" for i, p in enumerate(id_parents)]
-                parent_nodes2 = [f"<-[r{i}2:is_required_by]-(p{i})" for i, p in enumerate(id_parents)]
+                id_children = [p if isinstance(p, Multiple) else OneOf(p) for p in hierarchy.children]
+                id_parents = {p.node.__name__: (p.minnumber, p.maxnumber) for p in id_parents if p.name in hierarchy.identifier_builder}
+                id_children = {p.node.__name__: (p.minnumber, p.maxnumber) for p in id_children if p.name in hierarchy.identifier_builder}
+                parent_nodes = [f"<-[rp{i}:is_required_by]-(p{i}:{p})" for i, p in enumerate(id_parents)]
+                parent_nodes2 = [f"<-[rp{i}2:is_required_by]-(p{i})" for i, p in enumerate(id_parents)]
+                child_nodes = [f"-[rc{i}:is_required_by]->(c{i}:{c})" for i, c in enumerate(id_children)]
+                child_nodes2 = [f"-[rc{i}2:is_required_by]->(c{i})" for i, c in enumerate(id_children)]
+                nodes = parent_nodes+child_nodes
+                nodes2 = parent_nodes2+child_nodes2
                 node = f"(n:{hierarchy.__name__})"
                 node2 = f"(m:{hierarchy.__name__})"
-                first = f"{node}{parent_nodes[0]}"
-                first2 = f"{node2}{parent_nodes2[0]}"
-                others = ','.join([f"(n){p}" for p in parent_nodes[1:]])
-                others2 = ','.join([f"(m){p}" for p in parent_nodes2[1:]])
-                parent_vars = ','.join([f"p{i}" for i in range(len(parent_nodes))])
-                rel_vars = ','.join([f"r{i}.order" for i in range(len(parent_nodes))])
-                rel_vars2 = ','.join([f"r{i}2.order" for i in range(len(parent_nodes))])
+                first = f"{node}{nodes[0]}"
+                first2 = f"{node2}{nodes2[0]}"
+                others = ','.join([f"(n){p}" for p in nodes[1:]])
+                others2 = ','.join([f"(m){p}" for p in nodes2[1:]])
+                parent_vars = ','.join([f"p{i}" for i in range(len(parent_nodes))]+[f"c{i}" for i in range(len(child_nodes))])
+                rel_vars = ','.join([f"rp{i}.order" for i in range(len(parent_nodes))]+[f"rc{i}.order" for i in range(len(child_nodes))])
+                rel_vars2 = ','.join([f"rp{i}2.order" for i in range(len(parent_nodes2))]+[f"rc{i}2.order" for i in range(len(child_nodes2))])
                 property_eq = ' and '.join([f"m.{f} = n.{f}" for f in id_factors])
                 if property_eq:
                     property_eq = f' and {property_eq}'
@@ -774,14 +780,14 @@ class Data:
                 where n <> m {property_eq} and [{rel_vars2}] = coll1
                 WITH n, count(m) as nduplicates, count(*) as cnt_rels
                 where nduplicates = cnt_rels  // if even 1 is different, then it's not a duplicate
-                return labels(n)[0] as child, id(n)
+                return labels(n)[0] as type, id(n)
                 """
                 duplicates = self.graph.neograph.run(q).to_data_frame()
                 if len(duplicates):
                     instance_duplications.append(duplicates)
         try:
             instance_duplications = pd.concat(instance_duplications)
-            class_duplications = instance_duplications.groupby('child').apply(len)
+            class_duplications = instance_duplications.groupby('type').apply(len)
             return instance_duplications, class_duplications
         except ValueError:
             return None, None

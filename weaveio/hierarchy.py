@@ -91,6 +91,8 @@ class Multiple:
 
     @property
     def name(self):
+        if self.relation_idname is not None:
+            return self.relation_idname
         if self.maxnumber == 1:
             return self.singular_name
         return self.plural_name
@@ -151,10 +153,6 @@ class OneOf(Multiple):
     def __repr__(self):
         return f"<OneOf({self.node})>"
 
-    @property
-    def name(self):
-        return self.singular_name
-
 
 class Optional(Multiple):
     def __init__(self, node, constrain=None, idname=None, one2one=False):
@@ -162,10 +160,6 @@ class Optional(Multiple):
 
     def __repr__(self):
         return f"<Optional({self.node})>"
-
-    @property
-    def name(self):
-        return self.singular_name
 
 
 class GraphableMeta(type):
@@ -391,6 +385,8 @@ class Graphable(metaclass=GraphableMeta):
     def __init__(self, predecessors, successors=None, do_not_create=False):
         if successors is None:
             successors = {}
+        if predecessors is None:
+            predecessors = {}
         self.predecessors = predecessors
         self.successors = successors
         self.data = None
@@ -404,62 +400,78 @@ class Graphable(metaclass=GraphableMeta):
         merge_strategy = self.__class__.merge_strategy()
         version_parents = []
         if  merge_strategy == 'NODE FIRST':
-            self.node = child = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
+            self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            collision_manager=collision_manager)
             for k, parent_list in predecessors.items():
                 type = 'is_required_by'
                 if isinstance(parent_list, Collection):
                     with unwind(parent_list, enumerated=True) as (parent, i):
                         props = {'order': i, 'relation_id': k}
-                        merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
+                        merge_relationship(parent, self.node, type, {}, props, collision_manager=collision_manager)
                     parent_list = collect(parent)
                     if k in self.version_on:
                         raise RuleBreakingException(f"Cannot version on a collection of nodes")
                 else:
                     for i, parent in enumerate(parent_list):
                         props = {'order': i, 'relation_id': k}
-                        merge_relationship(parent, child, type, {}, props, collision_manager=collision_manager)
+                        merge_relationship(parent, self.node, type, {}, props, collision_manager=collision_manager)
                         if k in self.version_on:
                             version_parents.append(parent)
+            # now the children
+            for k, child_list in successors.items():
+                type = 'is_required_by'
+                if isinstance(child_list, Collection):
+                    with unwind(child_list, enumerated=True) as (child, i):
+                        merge_relationship(self.node, child, type,
+                                           {}, {'relation_id': k, 'order': i},
+                                           collision_manager=collision_manager)
+                    collect(child)
+                else:
+                    for i, child in enumerate(child_list):
+                        props = {'relation_id': k, 'order': i}
+                        merge_relationship(self.node, child, type, {},
+                                           props, collision_manager=collision_manager)
         elif merge_strategy == 'NODE+RELATIONSHIP':
             parentnames = [p.name for p in self.parents]
+            childnames = [p.name for p in self.children]
             parents = []
-            others = []
-            for k, parent_list in predecessors.items():
+            children = []
+            other_parents = []
+            other_children = []
+            for k, parent_list in self.predecessors.items():
                 if isinstance(parent_list, Collection):
                     raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
-                if k in parentnames and k in self.identifier_builder:
+                if k in self.identifier_builder and k in parentnames:
                     parents += [p for p in parent_list]
                 else:
-                    others += [(i, k, p) for i, p in enumerate(parent_list)]
+                    other_parents += [(i, k, p) for i, p in enumerate(parent_list)]
                 if k in self.version_on:
                     version_parents += parent_list
+            for k, child_list in self.successors.items():
+                if isinstance(child_list, Collection):
+                    raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
+                if k in self.identifier_builder and k in childnames:
+                    children += [c for c in child_list]
+                else:
+                    other_children += [(i, k, c) for i, c in enumerate(child_list)]
+                if k in self.version_on:
+                    version_parents += child_list
             reltype = 'is_required_by'
-            relparents = {p: (reltype, {'order': i}, {}) for i, p in enumerate(parents)}
-            child = self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
-                                           parents=relparents, collision_manager=collision_manager)
-            for i, k, other in others:
+            rels = {p: (reltype, True, {'order': i}, {}) for i, p in enumerate(parents)}
+            rels.update({c: (reltype, False, {'order': i}, {}) for i, c in enumerate(children)})
+            self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
+                                           id_rels=rels, collision_manager=collision_manager)
+            for i, k, other in other_parents:
                 if other is not None:
-                    merge_relationship(other, child, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+                    merge_relationship(other, self.node, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+            for i, k, other in other_children:
+                if other is not None:
+                    merge_relationship(self.node, other, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
             version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
-            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], child, version_factors)
-        # now the children
-        for k, child_list in successors.items():
-            type = 'is_required_by'
-            if isinstance(child_list, Collection):
-                with unwind(child_list, enumerated=True) as (child, i):
-                    merge_relationship(self.node, child, type,
-                                       {}, {'relation_id': k, 'order': i},
-                                       collision_manager=collision_manager)
-                collect(child)
-            else:
-                for i, child in enumerate(child_list):
-                    props =  {'relation_id': k, 'order': 0}
-                    merge_relationship(self.node, child, type, {},
-                                       props, collision_manager=collision_manager)
+            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], self.node, version_factors)
 
 
     @classmethod
