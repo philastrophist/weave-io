@@ -63,7 +63,7 @@ class File(Hierarchy):
     def check_mos(cls, path):
         header = fits.open(path)[0].header
         try:
-            return 'IFU' not in header['OBSMODE'] and header['OBSTYPE'] == 'TARGET'
+            return 'IFU' not in header['OBSMODE'] and (header.get('OBSTYPE', '') in ['TARGET', ''])
         except KeyError as e:
             raise KeyError(f"File {path} does not contain OBSTYPE keyword") from e
 

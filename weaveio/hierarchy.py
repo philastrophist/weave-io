@@ -439,39 +439,54 @@ class Graphable(metaclass=GraphableMeta):
             other_parents = []
             other_children = []
             for k, parent_list in self.predecessors.items():
-                if isinstance(parent_list, Collection):
-                    raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
                 if k in self.identifier_builder and k in parentnames:
+                    if isinstance(parent_list, Collection):
+                        raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
                     parents += [p for p in parent_list]
+                elif isinstance(parent_list, Collection):
+                    other_parents.append((None, k, parent_list))
                 else:
                     other_parents += [(i, k, p) for i, p in enumerate(parent_list)]
                 if k in self.version_on:
-                    version_parents += parent_list
+                    raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
             for k, child_list in self.successors.items():
-                if isinstance(child_list, Collection):
-                    raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
                 if k in self.identifier_builder and k in childnames:
+                    if isinstance(child_list, Collection):
+                        raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
                     children += [c for c in child_list]
+                elif isinstance(child_list, Collection):
+                    other_children.append((None, k, child_list))
                 else:
                     other_children += [(i, k, c) for i, c in enumerate(child_list)]
                 if k in self.version_on:
-                    version_parents += child_list
+                    raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
             reltype = 'is_required_by'
             rels = {p: (reltype, True, {'order': i}, {}) for i, p in enumerate(parents)}
             rels.update({c: (reltype, False, {'order': i}, {}) for i, c in enumerate(children)})
             self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            id_rels=rels, collision_manager=collision_manager)
-            for i, k, other in other_parents:
-                if other is not None:
-                    merge_relationship(other, self.node, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
-            for i, k, other in other_children:
-                if other is not None:
-                    merge_relationship(self.node, other, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+            for i, k, others in other_parents:
+                if others is not None:
+                    if i is None:
+                        with unwind(others, enumerated=True) as (other, i):
+                            merge_relationship(other, self.node, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+                        collect(other)
+                    else:
+                        merge_relationship(others, self.node, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+            for i, k, others in other_children:
+                if others is not None:
+                    if i is None:
+                        with unwind(others, enumerated=True) as (other, i):
+                            merge_relationship(self.node, other, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+                        collect(other)
+                    else:
+                        merge_relationship(self.node, others, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
-            version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
-            set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], self.node, version_factors)
+            raise NotImplementedError(f"Versioning is not yet implemented: {version_parents} cannot be versioned yet")
+            # version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
+            # set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], self.node, version_factors)
 
 
     @classmethod
@@ -739,6 +754,8 @@ class Hierarchy(Graphable):
 def find_branch(*nodes_or_types):
     """
     Given a mix of variables and types along an undirected path (the input order), instantate those types from the graph
-    >>> _, _, l1spectrum, _ = find_branch(fibre, FibreTarget, L1Spectrum, l1file)
+    >>> _, l1spectrum, fibretargetr, _ = find_branch(l1file, L1Spectrum, FibreTarget, fibre)
+    This will find the branch that looks like (l1file)<--(:L1Spectrum)<--(:FibreTarget)<--(fibre)
+    and return the nodes
     """
     return match_branch_node(*[i.__name__ if isinstance(i, type) else i for i in nodes_or_types])

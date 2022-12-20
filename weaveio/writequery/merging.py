@@ -149,7 +149,7 @@ class MatchBranchNode(Statement):
 
     def to_cypher(self):
         nodes = [f'({o}:{n})' if isinstance(n, str) else f'({o})' for n, o in zip(self.nodes_or_labels, self.output_variables)]
-        path = '--'.join(map('{}'.format, nodes))
+        path = '<-[:is_required_by]-'.join(map('{}'.format, nodes))
         return f'WITH * OPTIONAL MATCH {path}'
 
 class PropertyOverlapError(Exception):

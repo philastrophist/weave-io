@@ -498,7 +498,7 @@ class Data:
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False, test_one=False, infile_slc: slice = None,
-                    debug=False, debug_time=False, debug_plan=False, timeout=None,
+                    debug=False, debug_time=False, debug_params=False, debug_plan=False, timeout=None,
                     statement_batch_size=None, statement_batch_i_start=0) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
@@ -563,8 +563,9 @@ class Data:
                     if debug:
                         with open('debug-query.log', 'w') as f:
                             f.write(cypher)
-                        with open('debug-params.log', 'w') as f:
-                            f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
+                        if debug_params:
+                            with open('debug-params.log', 'w') as f:
+                                f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
                     start = time.time()
                     timed_out = False
                     if not dryrun:
@@ -850,6 +851,11 @@ class Data:
             print(label_rel_id_duplicates)
         else:
             print(f"There are 0 unique rel id violations (0 class definitions)")
+        try:
+            if len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
+                print('Database schema is valid!')
+        except TypeError:
+            print('Database schema is valid!')
         return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 
     def is_product(self, factor_name, hierarchy_name):

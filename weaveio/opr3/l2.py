@@ -27,34 +27,23 @@ class IngestedSpectrum(Spectrum1D):
     An ingested spectrum is one which is a slightly modified version of an L1 spectrum
     """
     is_template = True
-    parents = [APS]
-    products = ['flux', 'error', 'wvl']
+    children = []  # gets rid of inherited wvl array
+    products = ['flux', 'error', 'wvl', 'ivar', 'logwvl', 'goodpix']
 
 
 class UncombinedIngestedSpectrum(IngestedSpectrum):
-    parents = [L1Spectrum, APS]
-    identifier_builder = ['l1_spectrum', 'aps']
-
-
-class IvarIngestedSpectrum(UncombinedIngestedSpectrum):
-    products = ['flux', 'ivar', 'wvl']
+    parents = [L1Spectrum]
+    identifier_builder = ['l1_spectrum']
 
 
 class CombinedIngestedSpectrum(IngestedSpectrum):
-    parents = [Multiple(L1Spectrum, 1, 3), APS]
-    identifier_builder = ['l1_spectra', 'aps']
-
-
-class IvarCombinedIngestedSpectrum(CombinedIngestedSpectrum):
-    products = ['flux', 'ivar', 'wvl']
-
-
-class MaskedCombinedIngestedSpectrum(CombinedIngestedSpectrum):
-    products = ['flux', 'error', 'logwvl', 'goodpix']
+    parents = [Multiple(L1Spectrum, 1, 3)]
+    identifier_builder = ['l1_spectra']
 
 
 class ModelSpectrum(Spectrum1D):
     is_template = True
+    children = []  # gets rid of inherited wvl array
     parents = [OneOf(IngestedSpectrum, one2one=True)]
     identifier_builder = ['ingested_spectrum']
     products = ['flux']
@@ -161,14 +150,15 @@ class Gandalf(Fit):
 
 class PPXF(Fit):
     parents = [Multiple(L1Spectrum, 2, 3, one2one=True), OneOf(CombinedModelSpectrum, one2one=True)]
-    factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6') + Measurement.as_factors('zcorr')
+    factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6') + \
+              Measurement.as_factors('zcorr')
     identifier_builder = ['combined_model_spectrum']
 
 
 class L2Product(L2):
     is_template = True
-    parents = [Multiple(L1Spectrum, 2, 3), APS,
-               OneOf(Redrock, one2one=True), Optional(RVSpecfit, one2one=True),
+    parents = [Multiple(L1Spectrum, 2, 3),
+               Optional(Redrock, one2one=True), Optional(RVSpecfit, one2one=True),
                Optional(Ferre, one2one=True), Optional(PPXF, one2one=True), Optional(Gandalf, one2one=True)]
 
 
