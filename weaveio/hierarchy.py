@@ -426,8 +426,8 @@ class Graphable(metaclass=GraphableMeta):
                         merge_relationship(self.node, child, type, {},
                                            props, collision_manager=collision_manager)
         elif merge_strategy == 'NODE+RELATIONSHIP':
-            parentnames = [p.name for p in self.parents]
-            childnames = [p.name for p in self.children]
+            parentnames = {p.name: p for p in self.parents}
+            childnames = {p.name: p for p in self.children}
             parents = []
             children = []
             other_parents = []
@@ -454,11 +454,19 @@ class Graphable(metaclass=GraphableMeta):
                     other_children += [(i, k, c) for i, c in enumerate(child_list)]
                 if k in self.version_on:
                     raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
+            anti_id_rels = []
             reltype = 'is_required_by'
+            for k in self.identifier_builder:
+                p = parentnames.get(k, None)
+                c = childnames.get(k, None)
+                if getattr(p, 'is_optional', False):
+                    anti_id_rels.append((reltype, True, {'relation_id': p.relation_idname or k}))
+                if getattr(c, 'is_optional', False):
+                    anti_id_rels.append((reltype, False, {'relation_id': p.relation_idname or k}))
             rels = {p: (reltype, True, {'order': i, 'relation_id': k}, {}) for i, k, p in parents}
             rels.update({c: (reltype, False, {'order': i, 'relation_id': k}, {}) for i, k, c in children})
             self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
-                                           id_rels=rels, collision_manager=collision_manager)
+                                           id_rels=rels, anti_id_rels=anti_id_rels, collision_manager=collision_manager)
             for i, k, others in other_parents:
                 if others is not None:
                     if i is None:

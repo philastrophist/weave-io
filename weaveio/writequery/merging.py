@@ -593,9 +593,11 @@ def set_version(parents, reltypes, childlabel, child, childproperties):
 
 def merge_node(labels, identproperties, properties=None,
                id_rels: Dict[CypherVariable, Union[Tuple[str, bool, Optional[Dict], Optional[Dict]], str]] = None,
+               anti_id_rels:List[Tuple[str, bool, Optional[Dict]], str] = None,
                versioned_label=None,
                versioned_properties=None,
                collision_manager='track&flag') -> CypherVariable:
+    raise NotImplementedError(f"anti_id_rels not implemented")
     if properties is None:
         properties = {}
     if id_rels is None:
