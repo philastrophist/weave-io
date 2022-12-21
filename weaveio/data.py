@@ -674,10 +674,12 @@ class Data:
                 mn, mx = relation.minnumber, relation.maxnumber
                 b = relation.node.__name__
                 reflected = relation.one2one
+                relation_idname = relation.relation_idname
             else:
                 mn, mx = 1, 1
                 b = relation.__name__
                 reflected = False
+                relation_idname = None
             mn = 0 if mn is None else mn
             mx = 9999999 if mx is None else mx
             a = hierarchy.__name__
@@ -687,11 +689,13 @@ class Data:
             else:
                 arrows = ['-', '->']
                 reldef = [b, a]
+            relid1 = f'WHERE r1.relation_id = "{relation_idname}"' if relation_idname else ''
+            relid2 = f'WHERE r2.relation_id = "{relation_idname}"' if relation_idname else ''
             q = f"""
             MATCH (n:{a})
-            OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{b})
+            OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{b}) {relid1}
             WITH n, count(r1) as forwardCount
-            OPTIONAL MATCH (m:{b}){arrows[0]}[r2:is_required_by]{arrows[1]}(n)
+            OPTIONAL MATCH (m:{b}){arrows[0]}[r2:is_required_by]{arrows[1]}(n) {relid2}
             WITH n, forwardCount, count(r2) as reflCount           
             WITH *
             WHERE forwardCount < {mn} OR forwardCount > {mx} OR (reflCount <> forwardCount AND {reflected})
@@ -699,19 +703,6 @@ class Data:
             """
             result = self.graph.neograph.run(q).to_data_frame()
             dfs.append(result)
-            # commented out because one2one actually just means reciprocal not 1to1...
-            # if reflected and self.graph.execute(f'MATCH (n:{a}) return count(n) > 1').evaluate():
-                # q2 = f"""
-                # MATCH (n:{b})
-                # OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{a})
-                # WITH n, count(r1) as forwardCount
-                # OPTIONAL MATCH (m:{a}){arrows[0]}[r2:is_required_by]{arrows[1]}(n)
-                # WITH n, forwardCount, count(r2) as reflCount
-                # WITH *
-                # WHERE forwardCount < {mn} OR forwardCount > {mx} OR (reflCount <> forwardCount)
-                # RETURN "{reldef[0]}" as child, "{reldef[1]}" as parent, {mn} as mn, {mx} as mx, {reflected} as reflected, id(n), forwardCount, reflCount
-                # """
-                # dfs.append(self.graph.neograph.run(q2).to_data_frame())
         try:
             df = pd.concat(dfs)
             return df, df.groupby(['child', 'parent']).apply(len).astype(int)
@@ -738,15 +729,15 @@ class Data:
         """
         return self.graph.neograph.run(q).to_data_frame()
 
-    def _validate_rel_unique_ids(self):
+    def _validate_rel_unique_ids(self, *hiers):
         """
         For each hierarchy which defines an identifier builder based on parent hierarchies,
         check that the parents+self is unique in the db since this is not guaranteed by neo4j indexes
         """
         instance_duplications = []
-        for h in tqdm(list(self.singular_hierarchies.keys()), desc='checking for schema uniqueness violations'):
+        for h in tqdm(hiers or list(self.singular_hierarchies.keys()), desc='checking for schema uniqueness violations'):
             hierarchy = self.singular_hierarchies[h]
-            if hierarchy.has_rel_identity():
+            if hierarchy.has_rel_identity() and not hierarchy.is_template:
                 id_factors = [f for f in hierarchy.factors if f in hierarchy.identifier_builder]
                 id_parents = [p if isinstance(p, Multiple) else OneOf(p) for p in hierarchy.parents]
                 id_children = [p if isinstance(p, Multiple) else OneOf(p) for p in hierarchy.children]
@@ -825,38 +816,39 @@ class Data:
         return qs
 
     def validate(self, file_paths=None):
-        if file_paths is not None:
-            extant = {path: fname for path, fname in self.graph.execute(f'MATCH (n:File) return n.path as path, n.fname as fname')}
-            missing = [str(path) for path in file_paths if path in extant]
-            print(f"Missing {len(missing)} files from db")
-            if missing:
-                print(f"Missing the following files {missing} in the database")
-        duplicates = self._validate_no_duplicate_relationships()
-        print(f'There are {len(duplicates)} duplicate relations')
-        if len(duplicates):
-            print(duplicates)
-        duplicates = self._validate_no_duplicate_relation_ordering()
-        print(f'There are {len(duplicates)} relations with different orderings')
-        if len(duplicates):
-            print(duplicates)
-        schema_violations, label_instances = self._validate_expected_number_schema()
-        print(f'There are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
-        if len(schema_violations):
-            print(schema_violations)
-            print(label_instances)
-        unique_rel_id_duplicates, label_rel_id_duplicates = self._validate_rel_unique_ids()
-        if unique_rel_id_duplicates is not None:
-            print(f"There are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
-            print(unique_rel_id_duplicates)
-            print(label_rel_id_duplicates)
-        else:
-            print(f"There are 0 unique rel id violations (0 class definitions)")
-        try:
-            if len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
+        with pd.option_context('display.max_columns', None):
+            if file_paths is not None:
+                extant = {path: fname for path, fname in self.graph.execute(f'MATCH (n:File) return n.path as path, n.fname as fname')}
+                missing = [str(path) for path in file_paths if path in extant]
+                print(f"Missing {len(missing)} files from db")
+                if missing:
+                    print(f"Missing the following files {missing} in the database")
+            duplicates = self._validate_no_duplicate_relationships()
+            print(f'There are {len(duplicates)} duplicate relations')
+            if len(duplicates):
+                print(duplicates)
+            duplicates = self._validate_no_duplicate_relation_ordering()
+            print(f'There are {len(duplicates)} relations with different orderings')
+            if len(duplicates):
+                print(duplicates)
+            schema_violations, label_instances = self._validate_expected_number_schema()
+            print(f'There are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
+            if len(schema_violations):
+                print(schema_violations)
+                print(label_instances)
+            unique_rel_id_duplicates, label_rel_id_duplicates = self._validate_rel_unique_ids()
+            if unique_rel_id_duplicates is not None:
+                print(f"There are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
+                print(unique_rel_id_duplicates)
+                print(label_rel_id_duplicates)
+            else:
+                print(f"There are 0 unique rel id violations (0 class definitions)")
+            try:
+                if len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
+                    print('Database schema is valid!')
+            except TypeError:
                 print('Database schema is valid!')
-        except TypeError:
-            print('Database schema is valid!')
-        return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
+            return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 
     def is_product(self, factor_name, hierarchy_name):
         return self.singular_name(factor_name) in self.singular_hierarchies[self.singular_name(hierarchy_name)].products

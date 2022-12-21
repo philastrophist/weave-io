@@ -63,24 +63,38 @@ class CombinedModelSpectrum(ModelSpectrum):
 # IngestedSpectrum->ModelSpectrum->CleanModelSpectrum
 # IngestedSpectrum->CleanIngestedSpectrum
 
-class GandalfSpectrum(Spectrum1D):
+class GandalfSpectrum(ModelSpectrum):
+    """template object that only stores model flux and sources the wavelength array from another linked object"""
     is_template = True
+    parents = []  # removes input spectrum dependency
+    identifier_builder = None
 
 
 class GandalfModelSpectrum(CombinedModelSpectrum, GandalfSpectrum):
+    """
+    A Gandalf model spectrum is the full modelled SED of emission lines and continuum
+    It also has:
+        - `.clean_model`     : a clean model spectrum without emission line contribution
+        - `.clean_observed`  : the observed spectrum with model emission lines subtracted
+        - `.emission_line_model`  : the model emission line contribution only
+    """
+
+class GandalfDerivativeSpectrum(GandalfSpectrum):
+    is_template = True
+    parents = [OneOf(GandalfModelSpectrum, one2one=True)]
+    identifier_builder = ['gandalf_model_spectrum']
+
+
+class GandalfCleanIngestedSpectrum(GandalfDerivativeSpectrum):
     pass
 
-class GandalfEmissionModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
-    parents = [OneOf(GandalfModelSpectrum, one2one=True)]
-    identifier_builder = ['gandalf_model_spectrum']
 
-class GandalfCleanModelSpectrum(GandalfModelSpectrum, GandalfSpectrum):
-    parents = [OneOf(GandalfModelSpectrum, one2one=True)]
-    identifier_builder = ['gandalf_model_spectrum']
+class GandalfCleanModelSpectrum(GandalfDerivativeSpectrum):
+    pass
 
-class GandalfCleanIngestedSpectrum(GandalfModelSpectrum, GandalfSpectrum):
-    parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
-    identifier_builder = ['combined_ingested_spectrum']
+
+class GandalfEmissionModelSpectrum(GandalfDerivativeSpectrum):
+    pass
 
 
 class Fit(Hierarchy):
@@ -116,6 +130,7 @@ class Redrock(Fit):
     parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
                Multiple(UncombinedModelSpectrum, 0, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True),
                Multiple(ModelSpectrum, 1, 3, one2one=True, notreal=True)]
+    # todo: really need to have a check in the merge that checks that combinedmodelspec doesnt exist if not given
     template_names = ['galaxy', 'qso', 'star_a', 'star_b', 'star_cv', 'star_f', 'star_g', 'star_k', 'star_m', 'star_wd']
     parents += [OneOf(Template, idname=x, one2one=True) for x in template_names]
     identifier_builder = ['uncombined_model_spectra', 'combined_model_spectrum']
@@ -142,10 +157,15 @@ class Ferre(Fit):
 
 class Gandalf(Fit):
     plural_name = 'gandalfs'
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True), OneOf(GandalfModelSpectrum, one2one=True)]
+    parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
+               OneOf(GandalfModelSpectrum, one2one=True, idname='model'),
+               OneOf(GandalfCleanIngestedSpectrum, one2one=True, idname='clean_observed'),
+               OneOf(GandalfCleanModelSpectrum, one2one=True, idname='clean_model'),
+               OneOf(GandalfEmissionModelSpectrum, one2one=True, idname='emission_line_model'),
+               ]
     factors = Fit.factors + ['fwhm_flag']
     factors += Line.as_factors(*gandalf_line_names) + SpectralIndex.as_factors(*gandalf_index_names)
-    identifier_builder = ['gandalf_model_spectrum']
+    identifier_builder = ['model']
 
 
 class PPXF(Fit):

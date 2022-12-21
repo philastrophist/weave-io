@@ -217,10 +217,7 @@ class GraphableMeta(type):
                 for n in c.constrain:
                     if n not in cls.children:
                         cls.children.append(n)
-                if c.maxnumber == 1:
-                    parentnames[c.singular_name] = (c.minnumber, c.maxnumber)
-                else:
-                    parentnames[c.plural_name] = (c.minnumber, c.maxnumber)
+                parentnames[c.name] = (c.minnumber, c.maxnumber)
             else:
                 parentnames[c.singular_name] = (1, 1)
         for i, p in enumerate(cls.parents):
@@ -231,10 +228,7 @@ class GraphableMeta(type):
                 for n in p.constrain:
                     if n not in cls.parents:
                         cls.parents.append(n)
-                if p.maxnumber == 1:
-                    parentnames[p.singular_name] = (p.minnumber, p.maxnumber)
-                else:
-                    parentnames[p.plural_name] = (p.minnumber, p.maxnumber)
+                parentnames[p.name] = (p.minnumber, p.maxnumber)
             else:
                 parentnames[p.singular_name] = (1, 1)
         if cls.identifier_builder is not None:
@@ -442,7 +436,7 @@ class Graphable(metaclass=GraphableMeta):
                 if k in self.identifier_builder and k in parentnames:
                     if isinstance(parent_list, Collection):
                         raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
-                    parents += [p for p in parent_list]
+                    parents += [(i, k, p) for i, p in enumerate(parent_list)]
                 elif isinstance(parent_list, Collection):
                     other_parents.append((None, k, parent_list))
                 else:
@@ -453,7 +447,7 @@ class Graphable(metaclass=GraphableMeta):
                 if k in self.identifier_builder and k in childnames:
                     if isinstance(child_list, Collection):
                         raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
-                    children += [c for c in child_list]
+                    children += [(i, k, c) for i, c in enumerate(child_list)]
                 elif isinstance(child_list, Collection):
                     other_children.append((None, k, child_list))
                 else:
@@ -461,8 +455,8 @@ class Graphable(metaclass=GraphableMeta):
                 if k in self.version_on:
                     raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
             reltype = 'is_required_by'
-            rels = {p: (reltype, True, {'order': i}, {}) for i, p in enumerate(parents)}
-            rels.update({c: (reltype, False, {'order': i}, {}) for i, c in enumerate(children)})
+            rels = {p: (reltype, True, {'order': i, 'relation_id': k}, {}) for i, k, p in parents}
+            rels.update({c: (reltype, False, {'order': i, 'relation_id': k}, {}) for i, k, c in children})
             self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            id_rels=rels, collision_manager=collision_manager)
             for i, k, others in other_parents:
@@ -495,7 +489,10 @@ class Graphable(metaclass=GraphableMeta):
             return False
         if len(cls.identifier_builder) == 0:
             return False
-        return not any(n.name in cls.identifier_builder for n in cls.parents+cls.children)
+        rels = [x.name if isinstance(x, Multiple) else OneOf(x).name for x in cls.parents+cls.children]
+        if not any(r in cls.factors or r in cls.identifier_builder for r in rels) and rels:
+            raise ValueError(f"{cls} defines an identifier_builder with name(s) which are neither factors, parents, or children")
+        return not any(r in cls.identifier_builder for r in rels)
 
     @classmethod
     def has_rel_identity(cls):
@@ -690,7 +687,9 @@ class Hierarchy(Graphable):
         successors = {}
         for name, nodetype in self.specification.items():
             if isinstance(nodetype, Multiple):
-                if (nodetype.minnumber == 0 or nodetype.notreal) and name not in kwargs:
+                if nodetype.notreal and name in kwargs:
+                    raise ValueError(f"{name} is not accepted as an argument for {self} since `notreal` is set for it in {self.__class__.__name__} definition")
+                if (nodetype.minnumber == 0 and name not in kwargs) or nodetype.notreal:
                     continue
             if do_not_create:
                 value = kwargs.pop(name, None)
@@ -740,16 +739,22 @@ class Hierarchy(Graphable):
         except ContextError:
             return
         reltype = 'is_required_by'
-        parents = [getattr(p, 'relation_idname', None) or p.singular_name for p in self.parents if isinstance(p, Multiple) and p.is_optional]
-        children = [getattr(c, 'relation_idname', None) or c.singular_name for c in self.children if isinstance(c, Multiple) and c.is_optional]
+        parents = {p.name: p.one2one for p in self.parents if isinstance(p, Multiple) and p.is_optional}
+        children = {c.name: c.one2one for c in self.children if isinstance(c, Multiple) and c.is_optional}
         for key, item in optionals.items():
+            if isinstance(item, Collection):
+                raise NotImplementedError(f"Cannot attach optional collections yet")
             if key in parents:
                 parent, child = item.node, self.node
+                one2one = parents[key]
             elif key in children:
                 parent, child = self.node, item.node
+                one2one = children[key]
             else:
                 raise KeyError(f"{key} is not a parent or child of {self}")
             merge_relationship(parent, child, reltype, {'order': 0, 'relation_id': key}, {}, collision_manager=collision_manager)
+            if one2one:
+                merge_relationship(child, parent, reltype, {'order': 0, 'relation_id': key}, {}, collision_manager=collision_manager)
 
 def find_branch(*nodes_or_types):
     """

@@ -278,18 +278,21 @@ class L2File(File):
         unrolled = [specs.individual_models[i] for i in range(nl1specs)]
         for template_name in Redrock.template_names:
             chi2s = row[f'CZZ_CHI2_{template_name}'.lower()]
-            template = Template(l1_spectra=l1spectra, model_spectra=unrolled, combined_model_spectrum=specs.combined_model,
+            template = Template(l1_spectra=l1spectra, uncombined_model_spectra=unrolled, combined_model_spectrum=specs.combined_model,
                                 redshift_array=zs[template_name], name=template_name, chi2_array=chi2s)
             templates[template_name] = template
-        return Redrock(l1_spectra=l1spectra, model_spectra=unrolled, combined_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements, **templates)
+        return Redrock(l1_spectra=l1spectra, uncombined_model_spectra=unrolled, combined_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements, **templates)
 
     @classmethod
     def make_gandalf_structure(cls, l1spectra, specs, row, this_fname, nrow, replacements):
         model, ingested = specs.combined_model, specs.combined
         emission = GandalfEmissionModelSpectrum(gandalf_model_spectrum=model)
         clean_model = GandalfCleanModelSpectrum(gandalf_model_spectrum=model)
-        clean_ingested = GandalfCleanIngestedSpectrum(combined_ingested_spectrum=ingested)
-        gandalf = Gandalf(l1_spectra=l1spectra, gandalf_model_spectrum=specs.combined_model, tables=row, tables_replace=replacements)
+        clean_ingested = GandalfCleanIngestedSpectrum(gandalf_model_spectrum=model)
+        gandalf = Gandalf(l1_spectra=l1spectra, model=specs.combined_model,
+                          clean_model=clean_model, clean_observed=clean_ingested,
+                          emission_line_model=emission,
+                          tables=row, tables_replace=replacements)
         return gandalf, GandalfSpecs(model=model, ingested=ingested, emission=emission, clean_model=clean_model,
                                      clean_ingested=clean_ingested, nrow=specs.nrow)
 
