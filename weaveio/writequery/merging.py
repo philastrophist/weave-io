@@ -305,7 +305,7 @@ class MergeRelationship(CollisionManager):
 class MergeDependentNode(CollisionManager):
     def __init__(self, labels: List[str], identproperties: Dict[str, Union[str, int, float, CypherVariable]],
                  properties: Dict[str, Union[str, int, float, CypherVariable]],
-                 parents: List[CypherVariable],
+                 parents: List[CypherVariable], anti_id_rels: Tuple[str, bool, Dict],
                  reltypes: List[str],
                  reldirs: List[bool], # True if parent, False if child
                  relidentproperties: List[Dict[str, Union[str, int, float, CypherVariable]]],
@@ -332,6 +332,13 @@ class MergeDependentNode(CollisionManager):
         self.reltypes = reltypes
         self.relpropsvars = [CypherVariable(f'{t}_props') for t in reltypes]
         self.colliding_rel_keys = [CypherVariable('colliding_rel_keys') for _ in reltypes]
+        _anti_rel_ids = []
+        anti_id_rel_inputs = []
+        for label, reltype, reldir, props in anti_id_rels:
+            d, anti_id_rel_input = neo4j_dictionary(props)
+            anti_id_rel_inputs += anti_id_rel_input
+            _anti_rel_ids.append((label, reltype, reldir, d))
+        self.anti_id_rels = _anti_rel_ids
         super().__init__(self.outnode, identproperties, properties, collision_manager)
         self.child_holder = CypherVariable('child_holder')
         self.unnamed = CypherVariable('unnamed')
@@ -339,6 +346,7 @@ class MergeDependentNode(CollisionManager):
         self.input_variables += parents
         self.input_variables += relidentpropins
         self.input_variables += relpropins
+        self.input_variables += anti_id_rel_inputs
         self.output_variables += self.relvars
         self.output_variables += self.dummyrelvars
         self.output_variables += self.relpropsvars
@@ -367,10 +375,16 @@ class MergeDependentNode(CollisionManager):
     @property
     def merge_statement(self):
         labels = ':'.join(map(str, self.labels))
+        anti_relations = []
         real_relations = []
         temp_relations = []
         test_relations = []
         parent_list = []
+        for label, reltype, reldir, props in self.anti_id_rels:
+            arrows = ['-' if reldir else '<-', '->' if reldir else '-']
+            rel = f'(:{label}){arrows[0]}[:{reltype} {props}]{arrows[1]}({self.dummy})'
+            anti_relations.append(rel)
+        anti_relations = ' OR '.join(anti_relations)
         for i, (parent, reltype, reldir, relidentprop, dummyrelvar, relvar) in enumerate(zip(self.parents, self.reltypes, self.reldirs, self.relidentproperties, self.dummyrelvars, self.relvars)):
             child = f'({self.dummy})'
             arrows = ['-' if reldir else '<-', '->' if reldir else '-']
@@ -417,7 +431,8 @@ class MergeDependentNode(CollisionManager):
         on_match_rel_returns = ', '.join([f'${dummy} as {real}' for dummy, real in zip(self.dummyrelvars, self.relvars)])
         rel_expansion = expand_to_cypher_alias(self.out, *self.relvars, prefix=f'{self.child_holder}.')
         exists = ','.join([f'{tr}' for tr in test_relations])
-        already_exists = f"OPTIONAL MATCH {first_child},{exists}"
+        notexists_condition = f'WHERE NOT ({anti_relations})' if anti_relations else ''
+        already_exists = f"OPTIONAL MATCH {first_child},{exists} {notexists_condition}"
         condition = f"{self.dummy} is null"
         iftrue = f"""
         WITH {aliases}, $time0 as time0
@@ -576,10 +591,11 @@ def merge_relationship(parent, child, reltype, identproperties, properties, coll
     return statement.out
 
 
-def merge_dependent_node(labels, identproperties, properties, parents, reltypes, reldirs, relidentproperties, relproperties,
+def merge_dependent_node(labels, identproperties, properties, parents, anti_id_rels,
+                         reltypes, reldirs, relidentproperties, relproperties,
                          collision_manager='track&flag'):
     query = CypherQuery.get_context()  # type: CypherQuery
-    statement = MergeDependentNode(labels, identproperties, properties, parents, reltypes, reldirs,
+    statement = MergeDependentNode(labels, identproperties, properties, parents, anti_id_rels, reltypes, reldirs,
                                    relidentproperties, relproperties, collision_manager)
     query.add_statement(statement)
     return statement.outnode
@@ -593,15 +609,16 @@ def set_version(parents, reltypes, childlabel, child, childproperties):
 
 def merge_node(labels, identproperties, properties=None,
                id_rels: Dict[CypherVariable, Union[Tuple[str, bool, Optional[Dict], Optional[Dict]], str]] = None,
-               anti_id_rels:List[Tuple[str, bool, Optional[Dict]], str] = None,
+               anti_id_rels: List[Tuple[str, bool, Dict]] = None,
                versioned_label=None,
                versioned_properties=None,
                collision_manager='track&flag') -> CypherVariable:
-    raise NotImplementedError(f"anti_id_rels not implemented")
     if properties is None:
         properties = {}
     if id_rels is None:
         id_rels = {}
+    if anti_id_rels is None:
+        anti_id_rels = {}
     rel_list = []
     reldir_list = []
     reltype_list = []
@@ -621,8 +638,8 @@ def merge_node(labels, identproperties, properties=None,
             relproperties_list.append(reldata[3])
         else:
             relproperties_list.append({})
-    if len(id_rels):
-        node = merge_dependent_node(labels, identproperties, properties, rel_list,
+    if len(id_rels) or len(anti_id_rels):
+        node = merge_dependent_node(labels, identproperties, properties, rel_list, anti_id_rels,
                                     reltype_list, reldir_list, relidentproperties_list, relproperties_list,
                                     collision_manager)
     else:

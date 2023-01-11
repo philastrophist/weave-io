@@ -454,15 +454,19 @@ class Graphable(metaclass=GraphableMeta):
                     other_children += [(i, k, c) for i, c in enumerate(child_list)]
                 if k in self.version_on:
                     raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
-            anti_id_rels = []
             reltype = 'is_required_by'
+            anti_id_rels = []
+            # make sure that optional relations present in an ID are part of the search
+            # i.e. the absence of an optional relation in the db is itself part of the unique key
+            # anti_id_rels are added for missing optional relations
             for k in self.identifier_builder:
-                p = parentnames.get(k, None)
-                c = childnames.get(k, None)
-                if getattr(p, 'is_optional', False):
-                    anti_id_rels.append((reltype, True, {'relation_id': p.relation_idname or k}))
-                if getattr(c, 'is_optional', False):
-                    anti_id_rels.append((reltype, False, {'relation_id': p.relation_idname or k}))
+                if k not in self.predecessors and k not in self.successors:
+                    p = parentnames.get(k, None)
+                    c = childnames.get(k, None)
+                    if getattr(p, 'is_optional', False):
+                        anti_id_rels.append((p.node.__name__, reltype, True, {'relation_id': p.relation_idname or k}))
+                    if getattr(c, 'is_optional', False):
+                        anti_id_rels.append((c.node.__name__, reltype, False, {'relation_id': p.relation_idname or k}))
             rels = {p: (reltype, True, {'order': i, 'relation_id': k}, {}) for i, k, p in parents}
             rels.update({c: (reltype, False, {'order': i, 'relation_id': k}, {}) for i, k, c in children})
             self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
