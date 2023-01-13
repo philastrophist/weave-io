@@ -98,6 +98,7 @@ class L2File(File):
     parents = [Multiple(L1File, 2, 3), Multiple(L2, maxnumber=1000)]
     children = [APS]
     parts = ['RR', 'RVS', 'FR', 'GAND', 'PPXF']
+    recommended_batchsize = 50
     hdus = {
         'primary': PrimaryHDU,
         'class_table': TableHDU,

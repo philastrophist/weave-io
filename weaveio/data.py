@@ -6,6 +6,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from functools import reduce
 from pathlib import Path
+from textwrap import dedent
 from typing import Union, List, Tuple, Type, Dict, Set, Callable
 from uuid import uuid4
 
@@ -463,12 +464,13 @@ class Data:
         for index in tqdm(indexes, desc='dropping indexes'):
             self.graph.neograph.run(str(index)[1:-1])
 
-    def get_extant_files(self, *filetypes, return_only_fname=True):
+    def get_complete_files(self, *filetypes, return_only_fname=True):
         filetypes = [self.singular_hierarchies[self.singular_name(f)].__name__ for f in filetypes]
         if not filetypes:
             filetypes = ['File']
         r = 'fname' if return_only_fname else 'path'
-        result = self.graph.execute(f"MATCH (f:File) where any(l in labels(f) where l in $filetypes) RETURN DISTINCT f.{r}", filetypes=filetypes).to_series(dtype=str).values.tolist()
+        q = f"MATCH (f:File) where any(l in labels(f) where l in $filetypes) and f._dbcompleted_complete RETURN DISTINCT f.{r}"
+        result = self.graph.execute(q, filetypes=filetypes).to_ndarray()[:, 0].tolist()
         if return_only_fname:
             return result
         return list(map(lambda x: self.rootdir / x, result))
@@ -495,9 +497,45 @@ class Data:
             raise IOError(f"Writing is not allowed")
         return self.graph.execute('match (n) where n.`_dbcreated` > $timestamp detach delete n', timestamp=state)
 
-    def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False,
+    def mark_batch_complete_query(self, fname, slice, part, total_length, all_parts):
+        """
+        Mark fname[slice][part] as complete in the db and if all parts are then complete, mark that too
+        file._dbcompleted_{part} is a list of rows that have been marked as complete for that part
+        file._dbcompleted_{part}_complete = True if that part is completely written
+        file._dbcompleted_complete = True all parts are completely written
+        part is "None" for files which have no parts
+        """
+        def get_intervals(v):
+            return f"[c in apoc.coll.pairs([0] + [x in range(0, size({v})-2) where {v}[x] <> {v}[x+1] -1 | x+1]) | CASE WHEN c[1] is null THEN [{v}[c[0]],{v}[-1]] ELSE [{v}[c[0]], {v}[c[1]-1]] END]"
+        def get_list(v):
+            return f"apoc.coll.flatten([i in {v} | range(i[0],i[1])])"
+        q = dedent(rf"""
+        MATCH (f: File {{fname: $_check_fname}})
+        WITH *, apoc.coll.zip(f.`_dbcompleted_{part}_start`, f.`_dbcompleted_{part}_end`) as already_intervals
+        WITH *, {get_list('already_intervals')} as already_done
+        WITH *, apoc.coll.sort(apoc.coll.toSet(coalesce(already_done, []) + $_check_completed)) as done
+        WITH *, {get_intervals('done')} as done_intervals
+        WITH *, CASE WHEN size(done_intervals) = 0 THEN [[0, $_check_total_length]] ELSE done_intervals END as done_intervals
+        SET f.`_dbcompleted_{part}_start` = [i in done_intervals | i[0]]
+        SET f.`_dbcompleted_{part}_end` = [i in done_intervals | i[1]]
+        SET f.`_dbcompleted_{part}_complete` = done_intervals = [[0, $_check_total_length]]
+        SET f.`_dbcompleted_complete` = all(x in $_check_parts where f['_dbcompleted_'+x+'_complete'])
+        """)
+        completed = list(range(0, total_length)[slice])
+        return q, {'_check_fname': fname, '_check_completed': completed,
+                   '_check_parts': list(map(str, all_parts)), '_check_total_length': total_length}
+
+    def file_batch_is_complete(self, fname, slc, part, total_length):
+        q = dedent(f"""
+        OPTIONAL MATCH (f:File {{fname: $fname}})
+        with f, apoc.coll.zip(f._dbcompleted_{part}_start, f._dbcompleted_{part}_end) as intervals
+        return all(x in $rows where any(i in intervals where i[0] <= x and x <= i[1]))
+        """)
+        return self.graph.execute(q, fname=fname, rows=list(range(total_length)[slc])).evaluate()
+
+    def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False, skip_complete=True,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
-                    dryrun=False, do_not_apply_constraints=False, test_one=False, infile_slc: slice = None,
+                    dryrun=False, do_not_apply_constraints=False, test_one=False, batches_slc: slice = None,
                     debug=False, debug_time=False, debug_params=False, debug_plan=False, timeout=None,
                     statement_batch_size=None, statement_batch_i_start=0) -> pd.DataFrame:
         """
@@ -520,7 +558,9 @@ class Data:
                 raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
             filetype = matches[0]
             filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
-            slices = filetype.get_batches(path, filetype_batch_size, parts, infile_slc)
+            slices = filetype.get_batches(path, filetype_batch_size, parts, batches_slc)
+            if skip_complete:
+                slices = [self.file_batch_is_complete(path, slc, part, filetype.length(path, part)) for slc, part in slices]
             batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
@@ -556,7 +596,9 @@ class Data:
                         filetype.read(self.rootdir, path, slc, part)
                         cypher, params = query.render_query(statement_batch_size=statement_batch_size, statement_batch_i=statement_batch_i)
                         uuid = f"//{uuid4()}"
-                        lines = [uuid, 'CYPHER runtime=interpreted', cypher]
+                        guarantee, added_data = self.mark_batch_complete_query(path.name, slc, part, filetype.length(self.rootdir / path, part), filetype.parts)
+                        lines = [uuid, 'CYPHER runtime=interpreted', cypher[:-1], 'WITH time0', guarantee, cypher[-1]]
+                        params.update(added_data)
                         if debug_plan:
                             lines = ['PROFILE'] + lines
                         cypher = '\n'.join(lines)  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
@@ -634,7 +676,7 @@ class Data:
             return
         return df.set_index(['fname', 'batch_start', 'batch_end', 'part'])
 
-    def find_files(self, *filetype_names, skip_extant_files=True):
+    def find_files(self, *filetype_names, skip_complete_files=True):
         filetype_names = [x+'_file' if not x.endswith('_file') else x for x in filetype_names]
         filelist = []
         if len(filetype_names) == 0:
@@ -646,8 +688,8 @@ class Data:
                            f"Allowed names are: {[i.singular_name for i in self.filetypes]}")
         for filetype in filetypes:
             filelist += sorted([i for i in filetype.match_files(self.rootdir, self.graph)], key=lambda f: f.name)
-        if skip_extant_files:
-            extant_fnames = self.get_extant_files() if skip_extant_files else []
+        if skip_complete_files:
+            extant_fnames = self.get_complete_files() if skip_complete_files else []
             filtered_filelist = [i for i in filelist if str(i.name) not in extant_fnames]
         else:
             filtered_filelist = filelist
