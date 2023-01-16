@@ -1,25 +1,33 @@
+from astropy.io import fits
 from astropy.table import Table
 import pytest
 from weaveio import *
+
+@pytest.fixture(scope='module')
+def nsky_expected(data):
+    return {sum(Table(fits.open(data.rootdir / p)['FIBTABLE'].data)['TARGUSE'] == 'S') for p in data.raw_files.path()}
 
 
 def test_example1a(data):
     runid = 1003453
     nsky = sum(data.runs[runid].targuses == 'S')()
-    assert nsky == 50
+    q = data.runs[runid].raw_file.path
+    t = Table(fits.open(data.rootdir / q()[0])['FIBTABLE'].data)
+    assert nsky == sum(t['TARGUSE'] == 'S')
 
-def test_example1b(data):
-    nsky = sum(data.runs.targuses == 'S', wrt=data.runs)()  # sum the number of skytargets with respect to their runs
-    assert set(nsky) == {100, 160, 198, 200, 299, 360}
+def test_example1b(data, nsky_expected):
+    nsky = set(sum(data.runs.targuses == 'S', wrt=data.runs)())  # sum the number of skytargets with respect to their runs
+    assert nsky == nsky_expected
 
 
-def test_example1c(data):
+def test_example1c(data, nsky_expected):
     nsky = sum(data.runs.targuses == 'S', wrt=data.runs)  # sum the number of skytargets with respect to their runs
     query_table = data.runs[['id', nsky]]  # design a table by using the square brackets
     concrete_table = query_table()
-    assert len(concrete_table) == 196
-    assert set(concrete_table.sum) == {100, 160, 198, 200, 299, 360}
-    assert len(set(concrete_table.id)) == 196
+    expected_nruns = count(data.runs)()
+    assert len(concrete_table) == expected_nruns
+    assert set(concrete_table.sum) == nsky_expected
+    assert len(set(concrete_table.id)) == expected_nruns
 
 
 def test_example2(data):
@@ -32,7 +40,7 @@ def test_example2(data):
     sky_spectra = spectra[spectra.targuse == 'S']
     table = sky_spectra[['wvl', 'flux']]
     assert count(table)() == 690
-    assert not any(np.any(i.mask) for i in table(limit=2)['wvl'])
+    assert not any(np.any(t['wvl'].mask) for t in table(limit=10))  # just check the first few
 
 
 def test_example3(data):

@@ -2,7 +2,6 @@ import pytest
 
 from weaveio.opr3 import Data
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def data():
-    # return Data()
-    return Data(dbname='weaveio', host='127.0.0.1', user='neo4j', password='password', rootdir='/data/weave')
+    return Data(dbname='test', host='127.0.0.1', user='neo4j', password='password', rootdir='/data/weave')

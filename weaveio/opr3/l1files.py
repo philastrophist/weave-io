@@ -143,7 +143,7 @@ class RawFile(HeaderFibinfoFile):
     match_pattern = 'r[0-9]+\.fit'
     hdus = {'primary': PrimaryHDU, 'counts1': BinaryHDU, 'counts2': BinaryHDU,
             'fibtable': TableHDU, 'guidinfo': TableHDU, 'metinfo': TableHDU}
-    parents = [RawSpectrum]
+    parents = [OneOf(RawSpectrum, one2one=True)]
     produces = [CASU, System]  # extra things which are not necessarily children of this object, cannot include parents
     children = [Optional('self', idname='adjunct', one2one=True), CASU, System]
 
@@ -201,7 +201,6 @@ class L1SingleFile(L1File):
     match_pattern = 'single_\d+\.fit'
     parents = [OneOf(RawFile, one2one=True), Multiple(L1SingleSpectrum, maxnumber=1000, one2one=True)]
     children = [Optional('self', idname='adjunct', one2one=True), WavelengthHolder, CASU, System]
-    version_on = ['raw_file']
 
     @classmethod
     def fname_from_runid(cls, runid):
