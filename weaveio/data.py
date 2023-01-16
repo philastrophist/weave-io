@@ -525,13 +525,16 @@ class Data:
         return q, {'_check_fname': fname, '_check_completed': completed,
                    '_check_parts': list(map(str, all_parts)), '_check_total_length': total_length}
 
-    def file_batch_is_complete(self, fname, slc, part, total_length):
+    def file_batch_is_complete(self, fname: str, slc: slice, part: str, total_length: int) -> bool:
+        """
+        Returns True if the file[rows-slice][part] is complete otherwise False
+        """
         q = dedent(f"""
         OPTIONAL MATCH (f:File {{fname: $fname}})
         with f, apoc.coll.zip(f._dbcompleted_{part}_start, f._dbcompleted_{part}_end) as intervals
         return all(x in $rows where any(i in intervals where i[0] <= x and x <= i[1]))
         """)
-        return self.graph.execute(q, fname=fname, rows=list(range(total_length)[slc])).evaluate()
+        return self.graph.execute(q, fname=fname, rows=list(range(total_length)[slc])).evaluate() or False
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False, skip_complete=True,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
@@ -549,6 +552,8 @@ class Data:
         if not do_not_apply_constraints:
             self.apply_constraints()
         batches = []
+        if not paths:
+            return
         if len(paths) == 1 and isinstance(paths[0], (tuple, list)):
             paths = paths[0]
         for path in paths:
@@ -560,7 +565,7 @@ class Data:
             filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
             slices = filetype.get_batches(path, filetype_batch_size, parts, batches_slc)
             if skip_complete:
-                slices = [self.file_batch_is_complete(path, slc, part, filetype.length(path, part)) for slc, part in slices]
+                slices = [self.file_batch_is_complete(path.name, slc, part, filetype.length(path, part)) for slc, part in slices]
             batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
