@@ -41,19 +41,19 @@ class _TestTemplate:
 
 class TestGandalfSurvey(_TestTemplate):
     a, b = Gandalf, Survey
-    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-Gandalf'}
+    expected = {'Survey-Subprogramme-Catalogue-SurveyTarget-FibreTarget-L1Spectrum-Gandalf'}
 
 class TestRVSpecfitSurvey(_TestTemplate):
     a, b = RVSpecfit, Survey
-    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-RVSpecfit'}
+    expected = {'Survey-Subprogramme-Catalogue-SurveyTarget-FibreTarget-L1Spectrum-RVSpecfit'}
 
 class TestRedrockSurvey(_TestTemplate):
     a, b = Redrock, Survey
-    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-Redrock'}
+    expected = {'Survey-Subprogramme-Catalogue-SurveyTarget-FibreTarget-L1Spectrum-Redrock'}
 
 class TestFitSurvey(_TestTemplate):
     a, b = Fit, Survey
-    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum-Fit'}
+    expected = {'Survey-Subprogramme-Catalogue-SurveyTarget-FibreTarget-L1Spectrum-Fit'}
 
 class TestFitIngestedSpectrum(_TestTemplate):
     a, b = Fit, IngestedSpectrum
@@ -70,7 +70,7 @@ class TestOBRun(_TestTemplate):
 
 class TestL1SpectrumSurvey(_TestTemplate):
     a, b = L1Spectrum, Survey
-    expected = {'Survey-Subprogramme-SurveyCatalogue-SurveyTarget-FibreTarget-L1Spectrum'}
+    expected = {'Survey-Subprogramme-Catalogue-SurveyTarget-FibreTarget-L1Spectrum'}
 
 
 class TestOBFit(_TestTemplate):

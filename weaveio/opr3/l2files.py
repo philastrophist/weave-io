@@ -113,9 +113,9 @@ class L2File(File):
     def length(cls, path, part=None):
         hdus = fits.open(path)
         if part is None:
-            return len(hdus[1].data)
+            return hdus[1].header['NAXIS2']
         d = {'RR': 1, 'RVS': 2, 'FR':2, 'GAND': 3, 'PPXF': 3}
-        return len(hdus[d[part]].data)
+        return hdus[d[part]].header['NAXIS2']
 
     @classmethod
     def make_l2(cls, spectra, nspec, **hiers):

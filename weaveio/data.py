@@ -244,7 +244,6 @@ class Data:
         self.password = password or os.getenv('WEAVEIO_PASSWORD', 'weavepassword')
         self.user = user or os.getenv('WEAVEIO_USER', 'weaveuser')
         self.rootdir = Path(rootdir or os.getenv('WEAVEIO_ROOTDIR', '/beegfs/car/weave/weaveio/'))
-
         self.write_allowed = False
         self.query = Query(self)
         self.rowparser = RowParser(self.rootdir)
@@ -470,7 +469,7 @@ class Data:
             filetypes = ['File']
         r = 'fname' if return_only_fname else 'path'
         q = f"MATCH (f:File) where any(l in labels(f) where l in $filetypes) and f._dbcompleted_complete RETURN DISTINCT f.{r}"
-        result = self.graph.execute(q, filetypes=filetypes).to_ndarray()[:, 0].tolist()
+        result = self.graph.execute(q, filetypes=filetypes).to_series(0).values.tolist()
         if return_only_fname:
             return result
         return list(map(lambda x: self.rootdir / x, result))
@@ -513,12 +512,12 @@ class Data:
         MATCH (f: File {{fname: $_check_fname}})
         WITH *, apoc.coll.zip(f.`_dbcompleted_{part}_start`, f.`_dbcompleted_{part}_end`) as already_intervals
         WITH *, {get_list('already_intervals')} as already_done
-        WITH *, apoc.coll.sort(apoc.coll.toSet(coalesce(already_done, []) + $_check_completed)) as done
+        WITH *, apoc.coll.sort(apoc.coll.toSet(coalesce(already_done, []) + $_check_completed))+[-1] as done
         WITH *, {get_intervals('done')} as done_intervals
-        WITH *, CASE WHEN size(done_intervals) = 0 THEN [[0, $_check_total_length]] ELSE done_intervals END as done_intervals
+        WITH *, CASE WHEN size(done_intervals) = 0 THEN [[0, $_check_total_length-1]] ELSE done_intervals[..-1] END as done_intervals
         SET f.`_dbcompleted_{part}_start` = [i in done_intervals | i[0]]
         SET f.`_dbcompleted_{part}_end` = [i in done_intervals | i[1]]
-        SET f.`_dbcompleted_{part}_complete` = done_intervals = [[0, $_check_total_length]]
+        SET f.`_dbcompleted_{part}_complete` = done_intervals = [[0, $_check_total_length-1]]
         SET f.`_dbcompleted_complete` = all(x in $_check_parts where f['_dbcompleted_'+x+'_complete'])
         """)
         completed = list(range(0, total_length)[slice])
@@ -540,7 +539,7 @@ class Data:
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False, test_one=False, batches_slc: slice = None,
                     debug=False, debug_time=False, debug_params=False, debug_plan=False, timeout=None,
-                    statement_batch_size=None, statement_batch_i_start=0) -> pd.DataFrame:
+                    ) -> pd.DataFrame:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -564,111 +563,105 @@ class Data:
             filetype = matches[0]
             filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
             slices = filetype.get_batches(path, filetype_batch_size, parts, batches_slc)
-            if skip_complete:
-                slices = [self.file_batch_is_complete(path.name, slc, part, filetype.length(path, part)) for slc, part in slices]
             batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
         timestamps = []
         if dryrun:
             logging.info(f"Dryrun: will not write to database. However, reading is permitted")
-        if test_one:
-            batches = batches[:1]
         _, path, slc, part = batches[0]
         desc_size = max(len(f'{path}[{slc.start}:{slc.stop}:{part}]') for filetype, path, slc, part in batches)
-        first = f"{0}~{path}[{slc.start}:{slc.stop}:{part}]"
-
-        filetype, path, slc, part = batches[0]
-        with self.write_cypher(collision_manager) as query:
-            filetype.read(self.rootdir, path, slc, part)
-        if statement_batch_size is not None:
-            import numpy as np
-            n_statement_batches = int(np.ceil(len(query.statements) / statement_batch_size))
-        else:
-            n_statement_batches = 1
-        bar = tqdm(batches*(n_statement_batches-statement_batch_i_start), desc=first.ljust(desc_size))
+        first = f"{path}[{slc.start}:{slc.stop}:{part}]"
+        bar = tqdm(batches, desc=first.ljust(desc_size))
         if debug or debug_time:
             with open('debug-timestamp.log', 'w') as f:
                 pass
-        for statement_batch_i in range(statement_batch_i_start, n_statement_batches):
-            for i, (filetype, path, slc, part) in enumerate(batches):
-                bar.set_description(f'{statement_batch_i}~{path}[{slc.start}:{slc.stop}:{part}]')
-                try:
-                    if raise_on_duplicate_file:
-                        if len(self.graph.execute('MATCH (f:File {fname: $fname})', fname=path.name)) != 0:
-                            raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
-                    with self.write_cypher(collision_manager) as query:
-                        filetype.read(self.rootdir, path, slc, part)
-                        cypher, params = query.render_query(statement_batch_size=statement_batch_size, statement_batch_i=statement_batch_i)
-                        uuid = f"//{uuid4()}"
-                        guarantee, added_data = self.mark_batch_complete_query(path.name, slc, part, filetype.length(self.rootdir / path, part), filetype.parts)
-                        lines = [uuid, 'CYPHER runtime=interpreted', cypher[:-1], 'WITH time0', guarantee, cypher[-1]]
-                        params.update(added_data)
-                        if debug_plan:
-                            lines = ['PROFILE'] + lines
-                        cypher = '\n'.join(lines)  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
-                    if debug:
-                        with open('debug-query.log', 'w') as f:
-                            f.write(cypher)
-                        if debug_params:
-                            with open('debug-params.log', 'w') as f:
-                                f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
-                    start = time.time()
-                    timed_out = False
-                    if not dryrun:
-                        try:
-                            results = self.graph.execute(cypher, **params)
-                            stats.append(results.stats())
-                            timestamp = results.evaluate()
-                            successful = True
-                        except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
-                            is_running = True
-                            while is_running:
-                                is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
-                                time.sleep(1)
-                                bar.set_description(f'{statement_batch_i}~{path}[{slc.start}:{slc.stop}:{part}]')
-                                if timeout is not None:
-                                    if time.time() - start > timeout:
-                                        timed_out = True
-                                        break
-                            r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
-                            if not timed_out:
-                                successful = r.evaluate()
-                                timestamp = successful
-                            else:
-                                successful = False
-                                timestamp = None
-                            stats.append(r.stats())
-                            if not successful and halt_on_error:
-                                raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
-                        finally:
-                            self.graph.execute('MATCH (n) remove n._query_hash')
-                            self.graph.execute('MATCH ()-[r]-() remove r._query_hash')
-                        if timestamp is None:
-                            logging.warning(f"This query terminated early due to either an empty input table/data or "
-                                            f"a match within the query returned no matches or it timed-out. "
-                                            f"Adjust your `.read` method and query to allow for empty tables/data")
-                        timestamps.append(timestamp)
-                    else:
+        out_batches = []
+        for i, (filetype, path, slc, part) in enumerate(bar):
+            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
+            try:
+                if raise_on_duplicate_file:
+                    if len(self.graph.execute('MATCH (f:File {fname: $fname}) return count(f)', fname=path.name)) != 0:
+                        raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
+                if skip_complete:
+                    if self.file_batch_is_complete(path.name, slc, part, filetype.length(self.rootdir / path, part)):
                         continue
+                with self.write_cypher(collision_manager) as query:
+                    filetype.read(self.rootdir, path, slc, part)
+                    cypher, params = query.render_query(as_lines=True)
+                    uuid = f"//{uuid4()}"
+                    guarantee, added_data = self.mark_batch_complete_query(path.name, slc, part, filetype.length(self.rootdir / path, part), filetype.parts)
+                    lines = [uuid, 'CYPHER runtime=interpreted']  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
+                    if debug_plan:
+                        lines.append('PROFILE')
+                    lines += cypher[:-1] + ['WITH time0', guarantee, cypher[-1]]
+                    params.update(added_data)
+                    cypher = '\n'.join(lines)
+                if debug:
+                    with open('debug-query.log', 'w') as f:
+                        f.write(cypher)
+                    if debug_params:
+                        with open('debug-params.log', 'w') as f:
+                            f.write(self.graph.output_for_debug(**params, arrow=False, cmdline=False, silent=True))
+                start = time.time()
+                timed_out = False
+                if not dryrun:
+                    try:
+                        self.graph.execute('MATCH (n) remove n._query_hash')
+                        self.graph.execute('MATCH ()-[r]-() remove r._query_hash')
+                        results = self.graph.execute(cypher, **params)
+                        stats.append(results.stats())
+                        timestamp = results.evaluate()
+                        successful = True
+                    except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
+                        is_running = True
+                        while is_running:
+                            is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
+                            time.sleep(1)
+                            bar.set_description(f'{path}[{slc.start}:{slc.stop}:{part}]')
+                            if timeout is not None:
+                                if time.time() - start > timeout:
+                                    timed_out = True
+                                    break
+                        r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
+                        if not timed_out:
+                            successful = r.evaluate()
+                            timestamp = successful
+                        else:
+                            successful = False
+                            timestamp = None
+                        stats.append(r.stats())
+                        if not successful and halt_on_error:
+                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
+                    finally:
+                        self.graph.execute('MATCH (n) remove n._query_hash')
+                        self.graph.execute('MATCH ()-[r]-() remove r._query_hash')
+                    if timestamp is None:
+                        logging.warning(f"This query terminated early due to either an empty input table/data or "
+                                        f"a match within the query returned no matches or it timed-out. "
+                                        f"Adjust your `.read` method and query to allow for empty tables/data")
+                    timestamps.append(timestamp)
                     if successful:
                         elapsed_times.append(time.time() - start)
                     else:
                         elapsed_times.append(-1)
+                    out_batches.append((filetype, path, slc, part))
                     if debug or debug_time:
                         with open('debug-timestamp.log', 'a') as f:
                             f.write(str(elapsed_times[-1]) + '\n')
-                except (ClientError, DatabaseError, FileExistsError, ConnectionError) as e:
-                    logging.exception('ClientError:', exc_info=True)
-                    if halt_on_error:
-                        raise e
-                    print(e)
-                bar.update(1)
+            except (ClientError, DatabaseError, FileExistsError, ConnectionError) as e:
+                logging.exception('ClientError:', exc_info=True)
+                if halt_on_error:
+                    raise e
+                print(e)
+            if test_one:
+                batches = batches[i:i+1]
+                break
         if len(batches) and not dryrun:
             df = pd.DataFrame(stats)
             df['timestamp'] = timestamps
             df['elapsed_time'] = elapsed_times
-            _, df['fname'], slcs, parts = zip(*batches)
+            _, df['fname'], slcs, parts = zip(*out_batches)
             df['batch_start'], df['batch_end'] = zip(*[(i.start, i.stop) for i in slcs])
             df['part'] = parts
         elif dryrun:
@@ -683,14 +676,15 @@ class Data:
 
     def find_files(self, *filetype_names, skip_complete_files=True):
         filetype_names = [x+'_file' if not x.endswith('_file') else x for x in filetype_names]
+        if any(f for f in filetype_names if f not in [i.singular_name for i in self.filetypes]):
+            raise KeyError(f"Some or all of the filetype_names are not understood. "
+                           f"Allowed names are: {[i.singular_name.replace('_file', '') for i in self.filetypes]}")
         filelist = []
         if len(filetype_names) == 0:
             filetypes = self.filetypes
         else:
-            filetypes = [f for f in self.filetypes if f.singular_name in filetype_names or f.plural_name in filetype_names]
-        if len(filetypes) == 0:
-            raise KeyError(f"Some or all of the filetype_names are not understood. "
-                           f"Allowed names are: {[i.singular_name for i in self.filetypes]}")
+            filetypes = [f for f in self.filetypes if f.singular_name in filetype_names]
+
         for filetype in filetypes:
             filelist += sorted([i for i in filetype.match_files(self.rootdir, self.graph)], key=lambda f: f.name)
         if skip_complete_files:
@@ -700,7 +694,7 @@ class Data:
             filtered_filelist = filelist
         diff = len(filelist) - len(filtered_filelist)
         if diff:
-            print(f'Skipping {diff} extant files (use skip_extant_files=False to go over them again)')
+            print(f'Skipping {diff} complete files (use skip_complete_files=False to go over them again)')
         return [f for f in tqdm(filtered_filelist, desc='getting MOS files') if File.check_mos(f)]
 
     def write_directory(self, *filetype_names, collision_manager='ignore', skip_extant_files=True, halt_on_error=False,
@@ -829,7 +823,7 @@ class Data:
             class_duplications = instance_duplications.groupby('type').apply(len)
             return instance_duplications, class_duplications
         except ValueError:
-            return None, None
+            return [], []
 
 
     def _validate_expected_number_schema(self):
@@ -862,8 +856,21 @@ class Data:
                             qs.append(self.graph.neograph.run(q).to_data_frame())
         return qs
 
+    def _validate_all_nodes_created_with_file(self):
+        q = dedent("""match (f:File) 
+        with collect(distinct f._dbcreated) as dbs
+        match (n) where not n.`_dbcreated` in dbs
+        with labels(n) as labels, count(n) as cnt
+        RETURN labels, cnt""")
+        return self.graph.execute(q).to_data_frame()
+
     def validate(self, file_paths=None):
+        missing = []
         with pd.option_context('display.max_columns', None):
+            non_file_nodes = self._validate_all_nodes_created_with_file()
+            if len(non_file_nodes):
+                print(f"Some {len(non_file_nodes)} nodes were created outside of the weaveio writing process and dont have a file instance")
+                print(non_file_nodes)
             if file_paths is not None:
                 extant = {path: fname for path, fname in self.graph.execute(f'MATCH (n:File) return n.path as path, n.fname as fname')}
                 missing = [str(path) for path in file_paths if path in extant]
@@ -890,10 +897,7 @@ class Data:
                 print(label_rel_id_duplicates)
             else:
                 print(f"There are 0 unique rel id violations (0 class definitions)")
-            try:
-                if len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
-                    print('Database schema is valid!')
-            except TypeError:
+            if len(missing) + len(non_file_nodes) + len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
                 print('Database schema is valid!')
             return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 

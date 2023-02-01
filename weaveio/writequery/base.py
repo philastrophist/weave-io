@@ -90,10 +90,11 @@ class CypherQuery(metaclass=ContextMeta):
                 qs[i] = q
         # TODO: make this bit above better! All it does is remove $[...] from WITH statements, there must be a better way
         datadict = {d.name: d.data for d in self.data if any(d.name in q for q in qs)}
+        q = '\n'.join(qs)
+        q = dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', ''))
         if as_lines:
             return qs, datadict
-        q = '\n'.join(qs)
-        return dedent(re.sub(r'(custom\.[\w\d]+)\(', fr'\1-----{procedure_tag}(', q).replace('-----', '')), datadict
+        return q.split('\n'), datadict
 
     def open_context(self):
         self.open_contexts.append([])

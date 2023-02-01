@@ -167,22 +167,24 @@ class Fibre(Hierarchy):
     idname = 'id'
 
 
-class Subprogramme(Hierarchy):
+class Targprog(Hierarchy):
     """
-    A submitted programme of observation which was written by a survey.
+    Sub-programme name within a survey (TARGPROG)
     """
-    parents = [Multiple(Survey, maxnumber=5)]
+    singular_name = 'targprog'
+    parents = [Survey]
     factors = ['name']
-    idname = 'id'
+    identifier_builder = ['name', 'survey']
 
 
-class SurveyCatalogue(Hierarchy):
+class Catalogue(Hierarchy):
     """
-    A catalogue which was submitted by a subprogramme.
+    A catalogue which was submitted by a survey.
     """
-    parents = [Subprogramme]
+    parents = [Survey]
+    children = [Multiple(Targprog, maxnumber=600)]
     factors = ['name']
-    idname = 'id'
+    identifier_builder = ['name', 'survey']
 
 
 class SurveyTarget(Hierarchy):
@@ -191,11 +193,12 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     targname is optional for MOS observations
     """
-    parents = [SurveyCatalogue, WeaveTarget]
+    parents = [Catalogue, WeaveTarget]
+    children = [Multiple(Targprog, maxnumber=5)]
     factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse', 'targprog',
                'targclass', 'targpmra', 'targpdec', 'targparal', 'targprio'] \
               + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mag_')
-    identifier_builder = ['weave_target', 'survey_catalogue', 'targid', 'targra', 'targdec', 'targuse']
+    identifier_builder = ['weave_target', 'catalogue', 'targid', 'targra', 'targdec', 'targuse']
 
 
 class InstrumentConfiguration(Hierarchy):
@@ -241,7 +244,7 @@ class OBSpec(Hierarchy):
     """
     singular_name = 'obspec'
     factors = ['title']
-    parents = [Obstemp, Progtemp, Multiple(SurveyCatalogue, maxnumber=20), Multiple(Subprogramme, maxnumber=20), Multiple(Survey, maxnumber=10)]
+    parents = [Obstemp, Progtemp, Multiple(Catalogue, maxnumber=20), Multiple(Targprog, maxnumber=20), Multiple(Survey, maxnumber=10)]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
 

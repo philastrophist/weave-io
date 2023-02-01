@@ -8,23 +8,33 @@ from astropy.io import fits
 from astropy.io.fits.hdu.base import _BaseHDU
 from astropy.table import Table as AstropyTable
 import numpy as np
+import pandas as pd
 
 from weaveio.config_tables import progtemp_config
 from weaveio.file import File, PrimaryHDU, TableHDU, BinaryHDU
 from weaveio.hierarchy import unwind, collect, Multiple, Hierarchy, OneOf, Optional
-from weaveio.opr3.hierarchy import Survey, Subprogramme, SurveyCatalogue, \
+from weaveio.opr3.hierarchy import Survey, Targprog, Catalogue, \
     WeaveTarget, SurveyTarget, Fibre, FibreTarget, Progtemp, ArmConfig, Obstemp, \
     OBSpec, OB, Exposure, Run, CASU, RawSpectrum, _predicate, WavelengthHolder, System
 from weaveio.opr3.l1 import L1SingleSpectrum, L1StackSpectrum, L1SuperstackSpectrum, L1SupertargetSpectrum, L1Spectrum, L1StackedSpectrum, NoSS
 from weaveio.writequery import groupby, CypherData
 
 
+def explode_pandas_series(df: pd.DataFrame, column: str) -> pd.DataFrame:
+    copy = df.copy()
+    del copy[column]
+    return df.apply(lambda x: pd.Series(x[column]), axis=1).stack().reset_index(level=1, drop=1).to_frame(column).join(copy)
+
+def groupby_aggregate_pandas_list_column(df: pd.DataFrame, groupby: Union[str, List[str]], list_column: str) -> pd.DataFrame:
+    # must be sorted because weaveio is sensitive to ordering!
+    return df.groupby(groupby)[list_column].agg(lambda x: tuple(sorted({j for i in x for j in i}))).reset_index()
+
 class HeaderFibinfoFile(File):
     is_template = True
 
     @classmethod
     def length(cls, path, part=None):
-        return len(cls.read_fibinfo_dataframe(path))
+        return fits.open(path)['FIBTABLE'].header['NAXIS2']
 
     @classmethod
     def read_fibinfo_dataframe(cls, path, slc=None):
@@ -36,60 +46,60 @@ class HeaderFibinfoFile(File):
         if 'nspec' in fibinfo.columns:
             fibinfo['spec_index'] = fibinfo['nspec'] - 1
         slc = slice(None) if slc is None else slc
-        return fibinfo.iloc[slc]
+        selected = fibinfo.iloc[slc]
+        t = selected[~selected['fibreid'].isnull()]
+        t['targsrvy'] = t.targsrvy.apply(str)
+        t['targprog'] = t.targprog.apply(str).str.split('|').apply(tuple)
+        t['targcat'] = t.targcat.apply(str)
+        if np.any(t.targsrvy.apply(str).str.split(',').apply(len) > 1):
+            raise ValueError(f"There are multiple surveys defined in targsrvy. The schema needs to be revised")
+        return t.drop_duplicates()
 
     @classmethod
     def read_surveyinfo(cls, df_fibinfo):
         df_svryinfo = df_fibinfo[['targsrvy', 'targprog', 'targcat']].drop_duplicates()
-        df_svryinfo['progid'] = df_svryinfo['targsrvy'] + df_svryinfo['targprog']
-        df_svryinfo['catid'] = df_svryinfo['progid'] + df_svryinfo['targcat']
-        return df_svryinfo
+        return groupby_aggregate_pandas_list_column(df_svryinfo, ['targsrvy', 'targcat'], 'targprog')
 
     @classmethod
     def read_fibretargets(cls, df_svryinfo, df_fibinfo, obspec):
-        srvyinfo = CypherData(df_svryinfo)
         fibinfo = CypherData(df_fibinfo)
-        with unwind(srvyinfo) as svryrow:
-            with unwind(svryrow['targsrvy']) as surveyname:
-                survey = Survey(name=surveyname)
-            surveys = collect(survey)
-            prog = Subprogramme(name=svryrow['targprog'], id=svryrow['progid'], surveys=surveys)
-            cat = SurveyCatalogue(name=svryrow['targcat'], id=svryrow['catid'], subprogramme=prog)
-        cat_collection = collect(cat)
-        cats = groupby(cat_collection, 'name')
         with unwind(fibinfo) as fibrow:
             fibre = Fibre(id=fibrow['fibreid'])  #  must be up here for some reason otherwise, there will be duplicates
-            cat = cats[fibrow['targcat']]
+            survey = Survey.find(name=fibrow['targsrvy'])
+            catalogue = Catalogue.find(name=fibrow['targcat'], survey=survey)
+            with unwind(fibrow['targprog']) as targprog:
+                targprog = Targprog.find(name=targprog, survey=survey)
+            targprogs = collect(targprog)
             weavetarget = WeaveTarget(cname=fibrow['cname'])
-            surveytarget = SurveyTarget(survey_catalogue=cat, weave_target=weavetarget, tables=fibrow)
+            surveytarget = SurveyTarget(catalogue=catalogue, weave_target=weavetarget, targprogs=targprogs, tables=fibrow)
             fibtarget = FibreTarget(survey_target=surveytarget, fibre=fibre, obspec=obspec, tables=fibrow)
         return collect(fibtarget, fibrow)
 
     @classmethod
     def read_distinct_survey_info(cls, df_svryinfo):
-        rows = CypherData(df_svryinfo['targsrvy'].drop_duplicates().values, 'surveynames')
-        with unwind(rows) as survey_name:
-            survey = Survey(name=survey_name)
+        # must be sorted because weaveio is sensitive to ordering!
+        survey_rows = CypherData(groupby_aggregate_pandas_list_column(df_svryinfo, 'targsrvy', 'targprog'), 'survey_rows')
+        with unwind(survey_rows) as survey_row:  # unique survey
+            survey = Survey(name=survey_row['targsrvy'])
+            with unwind(survey_row['targprog']) as targprog_name:
+                targprog = Targprog(survey=survey, name=targprog_name)
+            collect(targprog)
         survey_list = collect(survey)
         survey_dict = groupby(survey_list, 'name')
-        # each row is (subprogramme, [survey_name, ...])
-        s = df_svryinfo.groupby('progid')[['targsrvy', 'targprog']].aggregate(lambda x: x.values.tolist())
-        rows = CypherData(s, 'targprog_rows')
-        with unwind(rows) as row:
-            with unwind(row['targsrvy']) as survey_name:
-                survey = survey_dict[survey_name]
-            surveys = collect(survey)
-            subprogramme = Subprogramme(surveys=surveys, name=row['targprog'][0], id=row['progid'])
-        subprogramme_list = collect(subprogramme)
-        subprogramme_dict = groupby(subprogramme_list, 'id')
 
-        # catalogue has 1 programme
-        # programme can have many catalogues
-        rows = CypherData(df_svryinfo[['targcat', 'progid', 'catid']].drop_duplicates(), 'targcat_rows')
-        with unwind(rows) as row:
-            catalogue = SurveyCatalogue(subprogramme=subprogramme_dict[row['progid']], name=row['targcat'], id=row['catid'])
+        cat_rows = CypherData(df_svryinfo, 'targcat_rows')
+        with unwind(cat_rows) as cat_row:  # unique cat
+            survey = survey_dict[cat_row['targsrvy']]
+            with unwind(cat_row['targprog']) as targprog_name:
+                targprog = Targprog.find(survey=survey, name=targprog_name)
+            targprogs = collect(targprog)
+            catalogue = Catalogue(name=cat_row['targcat'], survey=survey, targprogs=targprogs)
         catalogue_list = collect(catalogue)
-        return survey_list, subprogramme_list, catalogue_list
+        targprog_rows = CypherData(explode_pandas_series(df_svryinfo, 'targprog'), 'targprog_rows')
+        with unwind(targprog_rows) as targprog_row:  # unique targprog
+            targprog = Targprog.find(survey=survey_dict[targprog_row['targsrvy']], name=targprog_row['targprog'])
+        targprog_list = collect(targprog)
+        return survey_list, targprog_list, catalogue_list
 
     @classmethod
     def read_hierarchy(cls, header, df_svryinfo):
@@ -103,14 +113,13 @@ class HeaderFibinfoFile(File):
         obid = float(header['OBID'])
         casu = CASU(id=header['CASUID'])
         sys = System(version=header['sysver'])
-
         progtemp = Progtemp.from_progtemp_code(header['PROGTEMP'])
         vph = int(progtemp_config[(progtemp_config['mode'] == progtemp.instrument_configuration.mode)
                                   & (progtemp_config['resolution'] == res.lower().replace('res', ''))][f'{camera}_vph'].iloc[0])
         arm = ArmConfig(vph=vph, resolution=res, camera=camera)  # must instantiate even if not used
         obstemp = Obstemp.from_header(header)
         obspec = OBSpec(xml=xml, title=obtitle, obstemp=obstemp, progtemp=progtemp,
-                        survey_catalogues=catalogues, subprogrammes=subprogrammes, surveys=surveys)
+                        catalogues=catalogues, targprogs=subprogrammes, surveys=surveys)
         ob = OB(id=obid, mjd=obstart, obspec=obspec)
         exposure = Exposure.from_header(ob, header)
         adjunct_run = Run.find(anonymous_parents=[exposure], exclude=[Run.find(id=runid)])
