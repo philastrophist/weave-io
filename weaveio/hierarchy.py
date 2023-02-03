@@ -66,7 +66,7 @@ def all_subclasses(cls):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False, notreal=False):
+    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False, ordered=False, notreal=False):
         self.node = node
         self.minnumber = int_or_none(minnumber) or 0
         if maxnumber is None:
@@ -77,13 +77,14 @@ class Multiple:
         self.one2one = one2one
         self._isself = self.node == 'self'
         self.notreal = notreal
+        self.ordered = bool(ordered)
         if inspect.isclass(self.node):
             if issubclass(self.node, Hierarchy):
                 self.instantate_node()
 
     def to_reldict(self):
         return {'relation_idname': self.relation_idname, 'maxnumber': self.maxnumber, 'minnumber': self.minnumber,
-                'constrain': self.constrain, 'one2one': self.one2one, 'notreal': self.notreal}
+                'constrain': self.constrain, 'one2one': self.one2one, 'notreal': self.notreal, 'ordered': self.ordered}
 
     @property
     def is_optional(self):
@@ -126,14 +127,18 @@ class Multiple:
             h.instantate_node(include_hierarchies)
 
     def __repr__(self):
-        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}] id={self.relation_idname})>"
+        if self.ordered:
+            o = '[Ordered]'
+        else:
+            o = '[Unordered]'
+        return f"<Multiple({self.node} [{self.minnumber} - {self.maxnumber}] id={self.relation_idname} {o})>"
 
     def __hash__(self):
         if isinstance(self.node, str):
             hsh = hash(self.node)
         else:
             hsh = hash(self.node.__name__)
-        return hash(self.__class__) ^ hash(self.minnumber) ^ hash(self.maxnumber) ^\
+        return hash(self.__class__) ^ hash(self.minnumber) ^ hash(self.maxnumber) ^ hash(self.ordered) ^ \
         reduce(lambda x, y: x ^ y, map(hash, self.constrain), 0) ^ hash(self.relation_idname) ^ hsh
 
     def __eq__(self, other):
@@ -396,35 +401,45 @@ class Graphable(metaclass=GraphableMeta):
         if  merge_strategy == 'NODE FIRST':
             self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            collision_manager=collision_manager)
-            for k, parent_list in predecessors.items():
+            for k, (parent_list, relation) in predecessors.items():
                 type = 'is_required_by'
                 if isinstance(parent_list, Collection):
                     with unwind(parent_list, enumerated=True) as (parent, i):
-                        props = {'order': i, 'relation_id': k}
+                        props = {'relation_id': k}
+                        if relation.ordered:
+                            props['order'] = i
                         merge_relationship(parent, self.node, type, {}, props, collision_manager=collision_manager)
                     parent_list = collect(parent)
                     if k in self.version_on:
                         raise RuleBreakingException(f"Cannot version on a collection of nodes")
                 else:
                     for i, parent in enumerate(parent_list):
-                        props = {'order': i, 'relation_id': k}
+                        props = {'relation_id': k}
+                        if relation.ordered:
+                            props['order'] = i
                         merge_relationship(parent, self.node, type, {}, props, collision_manager=collision_manager)
                         if k in self.version_on:
                             version_parents.append(parent)
             # now the children
-            for k, child_list in successors.items():
+            for k, (child_list, relation) in successors.items():
                 type = 'is_required_by'
                 if isinstance(child_list, Collection):
                     with unwind(child_list, enumerated=True) as (child, i):
+                        props = {'relation_id': k}
+                        if relation.ordered:
+                            props['order'] = i
                         merge_relationship(self.node, child, type,
-                                           {}, {'relation_id': k, 'order': i},
+                                           {}, props,
                                            collision_manager=collision_manager)
                     collect(child)
                 else:
                     for i, child in enumerate(child_list):
-                        props = {'relation_id': k, 'order': i}
-                        merge_relationship(self.node, child, type, {},
-                                           props, collision_manager=collision_manager)
+                        props = {'relation_id': k}
+                        if relation.ordered:
+                            props['order'] = i
+                        merge_relationship(self.node, child, type,
+                                           {}, props,
+                                           collision_manager=collision_manager)
         elif merge_strategy == 'NODE+RELATIONSHIP':
             parentnames = {p.name: p for p in self.parents}
             childnames = {p.name: p for p in self.children}
@@ -432,29 +447,49 @@ class Graphable(metaclass=GraphableMeta):
             children = []
             other_parents = []
             other_children = []
-            for k, parent_list in self.predecessors.items():
+            for k, (parent_list, relation) in self.predecessors.items():
                 if k in self.identifier_builder and k in parentnames:
                     if isinstance(parent_list, Collection):
                         raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
-                    parents += [(i, k, p) for i, p in enumerate(parent_list)]
+                    if relation.ordered:
+                        parents += [({'order': i, 'relation_id': k}, p) for i, p in enumerate(parent_list)]
+                    else:
+                        parents += [({'relation_id': k}, p) for i, p in enumerate(parent_list)]
                 elif isinstance(parent_list, Collection):
-                    other_parents.append((None, k, parent_list))
+                    if relation.ordered:
+                        other_parents.append(({'order': None, 'relation_id': k}, parent_list))
+                    else:
+                        other_parents.append(({'relation_id': k}, parent_list))
                 else:
-                    other_parents += [(i, k, p) for i, p in enumerate(parent_list)]
+                    if relation.ordered:
+                        other_parents += [({'order': i, 'relation_id': k}, p) for i, p in enumerate(parent_list)]
+                    else:
+                        other_parents += [({'relation_id': k}, p) for i, p in enumerate(parent_list)]
                 if k in self.version_on:
                     raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
-            for k, child_list in self.successors.items():
+            for k, (child_list, relation) in self.successors.items():
                 if k in self.identifier_builder and k in childnames:
                     if isinstance(child_list, Collection):
                         raise TypeError(f"Cannot merge NODE+RELATIONSHIP for collections")
-                    children += [(i, k, c) for i, c in enumerate(child_list)]
+                    if relation.ordered:
+                        children += [({'order': i, 'relation_id': k}, c) for i, c in enumerate(child_list)]
+                    else:
+                        children += [({'relation_id': k}, c) for i, c in enumerate(child_list)]
                 elif isinstance(child_list, Collection):
-                    other_children.append((None, k, child_list))
+                    if relation.ordered:
+                        other_children.append(({'order': None, 'relation_id': k}, child_list))
+                    else:
+                        other_children.append(({'relation_id': k}, child_list))
                 else:
-                    other_children += [(i, k, c) for i, c in enumerate(child_list)]
+                    if relation.ordered:
+                        other_children += [({'order': i, 'relation_id': k}, c) for i, c in enumerate(child_list)]
+                    else:
+                        other_children += [({'relation_id': k}, c) for i, c in enumerate(child_list)]
                 if k in self.version_on:
                     raise NotImplementedError(f"Versioning is not yet implemented: {k} cannot be versioned yet")
             reltype = 'is_required_by'
+            rels = {p: (reltype, True, d, {}) for d, p in parents}
+            rels.update({c: (reltype, False, d, {}) for d, c in children})
             anti_id_rels = []
             # make sure that optional relations present in an ID are part of the search
             # i.e. the absence of an optional relation in the db is itself part of the unique key
@@ -467,32 +502,32 @@ class Graphable(metaclass=GraphableMeta):
                         anti_id_rels.append((p.node.__name__, reltype, True, {'relation_id': p.relation_idname or k}))
                     if getattr(c, 'is_optional', False):
                         anti_id_rels.append((c.node.__name__, reltype, False, {'relation_id': p.relation_idname or k}))
-            rels = {p: (reltype, True, {'order': i, 'relation_id': k}, {}) for i, k, p in parents}
-            rels.update({c: (reltype, False, {'order': i, 'relation_id': k}, {}) for i, k, c in children})
             self.node = merge_node(self.neotypes, self.neoidentproperties, self.neoproperties,
                                            id_rels=rels, anti_id_rels=anti_id_rels, collision_manager=collision_manager)
-            for i, k, others in other_parents:
+            for d, others in other_parents:
                 if others is not None:
-                    if i is None:
+                    if isinstance(others, Collection):
                         with unwind(others, enumerated=True) as (other, i):
-                            merge_relationship(other, self.node, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+                            if 'order' in d:
+                                d['order'] = i
+                            merge_relationship(other, self.node, reltype, d, {}, collision_manager=collision_manager)
                         collect(other)
                     else:
-                        merge_relationship(others, self.node, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
-            for i, k, others in other_children:
+                        merge_relationship(others, self.node, reltype, d, {}, collision_manager=collision_manager)
+            for d, others in other_children:
                 if others is not None:
-                    if i is None:
+                    if isinstance(others, Collection):
                         with unwind(others, enumerated=True) as (other, i):
-                            merge_relationship(self.node, other, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+                            if 'order' in d:
+                                d['order'] = i
+                            merge_relationship(self.node, other, reltype, d, {}, collision_manager=collision_manager)
                         collect(other)
                     else:
-                        merge_relationship(self.node, others, reltype, {'order': i, 'relation_id': k}, {}, collision_manager=collision_manager)
+                        merge_relationship(self.node, others, reltype, d, {}, collision_manager=collision_manager)
         else:
             ValueError(f"Merge strategy not known: {merge_strategy}")
         if len(version_parents):
             raise NotImplementedError(f"Versioning is not yet implemented: {version_parents} cannot be versioned yet")
-            # version_factors = {f: self.neoproperties[f] for f in self.version_on if f in self.factors}
-            # set_version(version_parents, ['is_required_by'] * len(version_parents), self.neotypes[-1], self.node, version_factors)
 
 
     @classmethod
@@ -717,10 +752,12 @@ class Hierarchy(Graphable):
             else:
                 value = [value]
             if name not in factors:
+                if not isinstance(nodetype, Multiple):
+                    nodetype = OneOf(nodetype)
                 if name in children:
-                    successors[name] = value
+                    successors[name] = value, nodetype
                 if name in parents:
-                    predecessors[name] = value
+                    predecessors[name] = value, nodetype
         if len(kwargs):
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors

@@ -1,10 +1,49 @@
 site_name: WEAVE-IO
-theme: readthedocs
+theme:
+  name: material
+  features:
+    - content.code.annotate
+    - content.code.copy
+  palette:
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+     custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+
+
 nav:
   - Outline: index.md
-  - Setup: setup.md
-  - Quickstart: quickstart.md
-  - 'Implementation Details':
-      - 'The Graph Database': implementation-details/graph-database.md
-      - 'WEAVE-IO Schema': implementation-details/schema.md
-      - 'Writing to WEAVE-IO': implementation-details/writing.md
+  - Quickstart by example: quickstart-by-example.md
+  - Installation:
+      - User: user-installation.md
+      - Admin: admin-installation.md
+  - The database connector: database-connector.md
+  - Reading:
+      - Objects and their attributes: objects.md
+      - Designing result tables: tables.md
+      - Stacking, aligning, and joining: stacking.md

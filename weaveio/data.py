@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from functools import reduce
 from pathlib import Path
 from textwrap import dedent
-from typing import Union, List, Tuple, Type, Dict, Set, Callable
+from typing import Union, List, Tuple, Type, Dict, Set, Callable, Optional
 from uuid import uuid4
 
 import graphviz
@@ -33,6 +33,10 @@ from .writequery import Unwind
 
 CONSTRAINT_FAILURE = re.compile(r"already exists with label `(?P<label>[^`]+)` and property "
                                 r"`(?P<idname>[^`]+)` = (?P<idvalue>[^`]+)$", flags=re.IGNORECASE)
+
+
+class ConnectionTimeOutError(ConnectionError):
+    pass
 
 
 def process_neo4j_error(data: 'Data', file: File, msg):
@@ -524,22 +528,46 @@ class Data:
         return q, {'_check_fname': fname, '_check_completed': completed,
                    '_check_parts': list(map(str, all_parts)), '_check_total_length': total_length}
 
-    def file_batch_is_complete(self, fname: str, slc: slice, part: str, total_length: int) -> bool:
+    def file_batch_is_complete(self, filetype: File, path: Path, slc: slice, part: str) -> bool:
         """
         Returns True if the file[rows-slice][part] is complete otherwise False
         """
+        total_length = filetype.length(self.rootdir / path, part)
         q = dedent(f"""
         OPTIONAL MATCH (f:File {{fname: $fname}})
         with f, apoc.coll.zip(f._dbcompleted_{part}_start, f._dbcompleted_{part}_end) as intervals
         return all(x in $rows where any(i in intervals where i[0] <= x and x <= i[1]))
         """)
-        return self.graph.execute(q, fname=fname, rows=list(range(total_length)[slc])).evaluate() or False
+        return self.graph.execute(q, fname=path.name, rows=list(range(total_length)[slc])).evaluate() or False
+
+    def files_to_batches(self, *paths: Union[Path, str], batch_size=None, batches_slc=None, parts=None,
+                         skip_complete=False):
+        batches = []
+        if not paths:
+            return []
+        if len(paths) == 1 and isinstance(paths[0], (tuple, list)):
+            paths = paths[0]
+        bar = tqdm(paths, desc='Building todo list')
+        for path in bar:
+            path = Path(path)
+            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir), self.graph)]
+            if len(matches) > 1:
+                raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
+            filetype = matches[0]
+            filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
+            slices = filetype.get_batches(path, filetype_batch_size, parts, batches_slc)
+            bs = [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
+            if skip_complete:
+                bs = [b for b in bs if not self.file_batch_is_complete(*b)]
+            batches += bs
+        return batches
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False, skip_complete=True,
                     collision_manager='ignore', batch_size=None, parts=None, halt_on_error=True,
                     dryrun=False, do_not_apply_constraints=False, test_one=False, batches_slc: slice = None,
                     debug=False, debug_time=False, debug_params=False, debug_plan=False, timeout=None,
-                    ) -> pd.DataFrame:
+                    replan='skip_except_first', runtime='pipelined',
+                    ) -> Optional[pd.DataFrame]:
         """
         Read in the files given in `paths` to the database.
         `collision_manager` is the method with which the database deals with overwriting data.
@@ -548,22 +576,14 @@ class Data:
         :return
             statistics dataframe
         """
+        if not halt_on_error:
+            logging.warning(f"`halt_on_error` is set to False. This would allow files to read without first reading their dependent files. "
+                            f"This is not recommended.")
         if not do_not_apply_constraints:
             self.apply_constraints()
-        batches = []
-        if not paths:
+        batches = self.files_to_batches(*paths, batch_size=batch_size, batches_slc=batches_slc, parts=parts)
+        if not batches:
             return
-        if len(paths) == 1 and isinstance(paths[0], (tuple, list)):
-            paths = paths[0]
-        for path in paths:
-            path = Path(path)
-            matches = [f for f in self.filetypes if f.match_file(self.rootdir, path.relative_to(self.rootdir), self.graph)]
-            if len(matches) > 1:
-                raise ValueError(f"{path} matches more than 1 file type: {matches} with `{[m.match_pattern for m in matches]}`")
-            filetype = matches[0]
-            filetype_batch_size = filetype.recommended_batchsize if batch_size is None else batch_size
-            slices = filetype.get_batches(path, filetype_batch_size, parts, batches_slc)
-            batches += [(filetype, path.relative_to(self.rootdir), slc, part) for slc, part in slices]
         elapsed_times = []
         stats = []
         timestamps = []
@@ -584,14 +604,19 @@ class Data:
                     if len(self.graph.execute('MATCH (f:File {fname: $fname}) return count(f)', fname=path.name)) != 0:
                         raise FileExistsError(f"{path.name} exists in the DB and raise_on_duplicate_file=True")
                 if skip_complete:
-                    if self.file_batch_is_complete(path.name, slc, part, filetype.length(self.rootdir / path, part)):
+                    if self.file_batch_is_complete(filetype, path, slc, part):
                         continue
                 with self.write_cypher(collision_manager) as query:
                     filetype.read(self.rootdir, path, slc, part)
                     cypher, params = query.render_query(as_lines=True)
                     uuid = f"//{uuid4()}"
                     guarantee, added_data = self.mark_batch_complete_query(path.name, slc, part, filetype.length(self.rootdir / path, part), filetype.parts)
-                    lines = [uuid, 'CYPHER runtime=interpreted']  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
+                    if replan == 'skip_except_first':
+                        replan_cypher = f'CYPHER replan=skip'
+                        replan = 'skip'
+                    else:
+                        replan_cypher = f'CYPHER replan={replan}'
+                    lines = [uuid, f'CYPHER runtime={runtime}', replan_cypher]  # runtime is to avoid neo4j bug with pipelines: https://github.com/neo4j/neo4j/issues/12441
                     if debug_plan:
                         lines.append('PROFILE')
                     lines += cypher[:-1] + ['WITH time0', guarantee, cypher[-1]]
@@ -615,6 +640,7 @@ class Data:
                         successful = True
                     except (ConnectionError, RuntimeError, IndexError, ConnectionResetError) as e:
                         is_running = True
+                        timed_out = False
                         while is_running:
                             is_running = self.graph.execute("CALL dbms.listQueries() YIELD query WHERE query STARTS WITH $uuid return count(*)", uuid=uuid).evaluate()
                             time.sleep(1)
@@ -624,15 +650,14 @@ class Data:
                                     timed_out = True
                                     break
                         r = self.graph.execute('MATCH (f:File {fname: $fname}) return timestamp()', fname=path.name)
-                        if not timed_out:
-                            successful = r.evaluate()
-                            timestamp = successful
-                        else:
-                            successful = False
-                            timestamp = None
+                        timestamp = r.evaluate()
+                        successful = timestamp is not None
                         stats.append(r.stats())
                         if not successful and halt_on_error:
-                            raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
+                            if timed_out:
+                                raise ConnectionTimeOutError(f"Connection timed out whilst writing {path}{slc.start}:{slc.stop}:{part} and it failed") from e
+                            else:
+                                raise ConnectionError(f"{path} could not be written to the database see neo4j logs for more details") from e
                     finally:
                         self.graph.execute('MATCH (n) remove n._query_hash')
                         self.graph.execute('MATCH ()-[r]-() remove r._query_hash')
@@ -656,6 +681,7 @@ class Data:
                 print(e)
             if test_one:
                 batches = batches[i:i+1]
+                logging.info(f"Writing terminated because `test_one=True`")
                 break
         if len(batches) and not dryrun:
             df = pd.DataFrame(stats)
@@ -860,45 +886,78 @@ class Data:
         q = dedent("""match (f:File) 
         with collect(distinct f._dbcreated) as dbs
         match (n) where not n.`_dbcreated` in dbs
-        with labels(n) as labels, count(n) as cnt
-        RETURN labels, cnt""")
+        with labels(n) as labels, count(n) as cnt, collect(id(n)) as ids
+        RETURN labels, cnt, ids""")
         return self.graph.execute(q).to_data_frame()
 
     def validate(self, file_paths=None):
+        level = logging.getLogger().level
+        logging.getLogger().setLevel(logging.INFO)
         missing = []
         with pd.option_context('display.max_columns', None):
-            non_file_nodes = self._validate_all_nodes_created_with_file()
-            if len(non_file_nodes):
-                print(f"Some {len(non_file_nodes)} nodes were created outside of the weaveio writing process and dont have a file instance")
-                print(non_file_nodes)
+            # logging.info(f"Checking all nodes created using weaveio...")
+            # non_file_nodes = self._validate_all_nodes_created_with_file()
+            # if len(non_file_nodes):
+            #     logging.warning(f'fail:')
+            #     logging.warning(f"\tSome {len(non_file_nodes)} nodes were created outside of the weaveio writing process and dont have an associated file instance")
+            #     logging.warning(non_file_nodes)
+            #     logging.warning(f"\tCheck nodes `_dbcreated` value")
+            # else:
+            #     logging.info(f'pass')
             if file_paths is not None:
+                logging.info(f"Checking all requested files are present...")
                 extant = {path: fname for path, fname in self.graph.execute(f'MATCH (n:File) return n.path as path, n.fname as fname')}
                 missing = [str(path) for path in file_paths if path in extant]
-                print(f"Missing {len(missing)} files from db")
                 if missing:
-                    print(f"Missing the following files {missing} in the database")
+                    logging.warning('fail')
+                    logging.warning(f"\tMissing {len(missing)} files from db")
+                    logging.warning(f"\tMissing the following files in the database:")
+                    logging.warning(f"{missing}")
+                else:
+                    logging.info('pass')
+            logging.info(f"Checking no duplicate relationships...")
             duplicates = self._validate_no_duplicate_relationships()
-            print(f'There are {len(duplicates)} duplicate relations')
             if len(duplicates):
-                print(duplicates)
-            duplicates = self._validate_no_duplicate_relation_ordering()
-            print(f'There are {len(duplicates)} relations with different orderings')
-            if len(duplicates):
-                print(duplicates)
-            schema_violations, label_instances = self._validate_expected_number_schema()
-            print(f'There are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
-            if len(schema_violations):
-                print(schema_violations)
-                print(label_instances)
-            unique_rel_id_duplicates, label_rel_id_duplicates = self._validate_rel_unique_ids()
-            if unique_rel_id_duplicates is not None:
-                print(f"There are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
-                print(unique_rel_id_duplicates)
-                print(label_rel_id_duplicates)
+                logging.warning(f"fail")
+                logging.warning(f'\tThere are {len(duplicates)} duplicate relations')
+                logging.warning(f"\t{duplicates}")
+                logging.warning(f"\tThis indicates a weaveio logic issue. Raise with maintainer.")
             else:
-                print(f"There are 0 unique rel id violations (0 class definitions)")
+                logging.info(f"pass")
+            logging.info(f"Checking no duplicate relationships with different ordering...")
+            duplicates = self._validate_no_duplicate_relation_ordering()
+            if len(duplicates):
+                logging.warning(f"fail")
+                logging.warning(f'\tThere are {len(duplicates)} relations with different orderings')
+                logging.warning(f"\t{duplicates}")
+                logging.warning(f"\tThis indicates a weaveio logic issue. Raise with maintainer.")
+            else:
+                logging.info(f"pass")
+            logging.info(f"Checking expected number of parent/child relations from schema...")
+            schema_violations, label_instances = self._validate_expected_number_schema()
+            if len(schema_violations):
+                logging.warning(f"fail")
+                logging.warning(f'\tThere are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
+                logging.warning(f"\t{schema_violations}")
+                logging.warning(f"\t{label_instances}")
+                logging.warning(f"\tThis indicates incorrect file read logic on user defined read functions. Check read function.")
+            else:
+                logging.info(f"pass")
+            logging.info(f"Checking unique relationships based on connected nodes are unique...")
+            unique_rel_id_duplicates, label_rel_id_duplicates = self._validate_rel_unique_ids()
+            if len(unique_rel_id_duplicates):
+                logging.warning(f"fail")
+                logging.warning(f"\tThere are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
+                logging.warning(f"\t{unique_rel_id_duplicates}")
+                logging.warning(f"\t{label_rel_id_duplicates}")
+                logging.warning(f"\tThis indicates a weaveio logic issue. Raise with maintainer.")
+            else:
+                logging.info(f"pass")
             if len(missing) + len(non_file_nodes) + len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
-                print('Database schema is valid!')
+                logging.info('Database schema is valid!')
+            else:
+                logging.warning(f"Database schema is invalid")
+            logging.getLogger().setLevel(level)
             return duplicates, (schema_violations, label_instances), unique_rel_id_duplicates
 
     def is_product(self, factor_name, hierarchy_name):

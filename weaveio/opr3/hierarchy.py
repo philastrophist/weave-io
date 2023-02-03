@@ -40,13 +40,15 @@ from weaveio.hierarchy import Hierarchy, Multiple, OneOf, Optional
 class ArrayHolder(Hierarchy):
     is_template = True
 
+
 class WavelengthHolder(ArrayHolder):
     singular_name = 'wavelength_holder'
     factors = ['wvl', 'cd1_1', 'crval1', 'naxis1']
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
 
+
 class Measurement(Hierarchy):
-    factors = ['value', 'error']
+    factors = ['value', 'err']
     indexes = ['value']
 
 
@@ -181,8 +183,7 @@ class Catalogue(Hierarchy):
     """
     A catalogue which was submitted by a survey.
     """
-    parents = [Survey]
-    children = [Multiple(Targprog, maxnumber=600)]
+    parents = [Survey, Multiple(Targprog, maxnumber=600)]
     factors = ['name']
     identifier_builder = ['name', 'survey']
 
@@ -193,9 +194,8 @@ class SurveyTarget(Hierarchy):
     the target you want if you not linking observations between subprogrammes.
     targname is optional for MOS observations
     """
-    parents = [Catalogue, WeaveTarget]
-    children = [Multiple(Targprog, maxnumber=5)]
-    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse', 'targprog',
+    parents = [Catalogue, WeaveTarget, Multiple(Targprog, maxnumber=5)]
+    factors = ['targid', 'targname', 'targra', 'targdec', 'epoch', 'targuse',
                'targclass', 'targpmra', 'targpdec', 'targparal', 'targprio'] \
               + Magnitude.as_factors('g', 'r', 'i', 'gg', 'bp', 'rp', prefix='mag_')
     identifier_builder = ['weave_target', 'catalogue', 'targid', 'targra', 'targdec', 'targuse']
@@ -369,7 +369,6 @@ class SpectralIndex(Measurement):
 class RedshiftMeasurement(Measurement):
     is_template = True
     factors = Measurement.factors + ['warn']
-
 
 
 class MeanFlux(Hierarchy):

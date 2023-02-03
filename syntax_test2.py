@@ -1,9 +1,8 @@
 from weaveio import *
+from weaveio.opr3 import Data
 
-data = Data()
-# ingested = data.ingested_spectra
-# q = ingested.camera
-q = data.ingested_spectra.camera
+logging.basicConfig(level=logging.INFO)
 
-print('\n'.join(q._precompile()._to_cypher()[0]))
-# print(q(limit=1))
+data = Data(dbname='opr3btestordering')
+q = data.redrocks.surveys.name
+print(q._debug_output()[0])

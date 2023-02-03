@@ -41,7 +41,7 @@ class File(Hierarchy):
     def get_batches(cls, path, batch_size, parts: List[Union[str, None]] = None, slc: slice = None):
         if parts is None:
             parts = cls.parts
-        parts = {p for p in parts if p in cls.parts}
+        parts = sorted({p for p in parts if p in cls.parts})
         if slc is None:
             slc = slice(None, None)
         if batch_size is None:

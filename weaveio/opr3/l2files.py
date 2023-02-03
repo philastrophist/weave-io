@@ -360,7 +360,7 @@ class L2File(File):
                                                       CombinedIngestedSpectrum,
                                                       UncombinedModelSpectrum, CombinedModelSpectrum,
                                                       True, None, 'RVS')
-            rvspecfit = RVSpecfit(l1_spectra=l1spectra, model_spectra=[rvs_specs.individual_models[i] for i in range(len(parent_l1filenames))],
+            rvspecfit = RVSpecfit(l1_spectra=l1spectra, uncombined_model_spectra=[rvs_specs.individual_models[i] for i in range(len(parent_l1filenames))],
                                   combined_model_spectrum=rvs_specs.combined_model, tables=row, tables_replace=replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(rvspecfit=rvspecfit)
@@ -378,7 +378,7 @@ class L2File(File):
                                                         CombinedIngestedSpectrum,
                                                         UncombinedModelSpectrum, CombinedModelSpectrum,
                                                         True, None, 'FR')
-            ferre = Ferre(l1_spectra=l1spectra, model_spectra=[ferre_specs.individual_models[i] for i in range(len(parent_l1filenames))],
+            ferre = Ferre(l1_spectra=l1spectra, uncombined_model_spectra=[ferre_specs.individual_models[i] for i in range(len(parent_l1filenames))],
                           combined_model_spectrum=ferre_specs.combined_model, tables=row, tables_replace=replacements)
             l2 = cls.make_l2(l1spectra, nspec=len(parent_l1filenames), fibre_target=fibretargets[0], **hiers)
             l2.attach_optionals(ferre=ferre)
@@ -455,24 +455,24 @@ class L2File(File):
             cols = [col for col in safe_tables[i].colnames if not ('chi2' not in col and 'czz_' in col)]
             safe_cypher_tables[i] =  CypherData(safe_tables[i][cols])
         if part == 'RVS':
-            l2, specfits, specs, *types = cls.read_rvspecfit(path, astropy_hdus[5], astropy_hdus[2].data.names,
+            l2, specfits, specs, *types = cls.read_rvspecfit(path, astropy_hdus[5], [x.lower() for x in astropy_hdus[2].data.names],
                                                  safe_cypher_tables[2], fnames, **hierarchies)
             hdu_node = 5
         elif part == 'FR':
-            l2, specfits, specs, *types = cls.read_ferre(path, astropy_hdus[5], astropy_hdus[2].data.names,
+            l2, specfits, specs, *types = cls.read_ferre(path, astropy_hdus[5], [x.lower() for x in astropy_hdus[2].data.names],
                                              safe_cypher_tables[2], fnames, **hierarchies)
             hdu_node = 5
         elif part == 'PPXF':
-            l2, specfits, specs, *types = cls.read_ppxf(path, astropy_hdus[6], astropy_hdus[3].data.names,
+            l2, specfits, specs, *types = cls.read_ppxf(path, astropy_hdus[6], [x.lower() for x in astropy_hdus[3].data.names],
                                             safe_cypher_tables[3], fnames, **hierarchies)
             hdu_node = 6
         elif part == 'RR':
             zs = cls.make_redshift_arrays(safe_tables[1])
-            l2, specfits, specs, *types = cls.read_redrock(path, astropy_hdus[4], astropy_hdus[1].data.names,
+            l2, specfits, specs, *types = cls.read_redrock(path, astropy_hdus[4], [x.lower() for x in astropy_hdus[1].data.names],
                                                safe_cypher_tables[1], fnames, zs, **hierarchies)
             hdu_node = 4
         elif part == 'GAND':
-            l2, specfits, specs, extra_specs, *types = cls.read_gandalf(path, astropy_hdus[6], astropy_hdus[3].data.names,
+            l2, specfits, specs, extra_specs, *types = cls.read_gandalf(path, astropy_hdus[6], [x.lower() for x in astropy_hdus[3].data.names],
                              safe_cypher_tables[3], fnames, **hierarchies)
             hdu_node = 6
         else:
