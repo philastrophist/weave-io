@@ -42,6 +42,8 @@ match_branch_node = hierarchy_query_decorator(writequery.match_branch_node)
 collect = hierarchy_query_decorator(writequery.collect)
 merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
 set_version = hierarchy_query_decorator(writequery.set_version)
+validate_number = hierarchy_query_decorator(writequery.validate_number)
+validate_type = hierarchy_query_decorator(writequery.validate_type)
 
 
 def chunker(lst, n):
@@ -66,7 +68,9 @@ def all_subclasses(cls):
 
 
 class Multiple:
-    def __init__(self, node, minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False, ordered=False, notreal=False):
+    def __init__(self, node: Union[str, 'GraphableMeta'], minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False, ordered=False, notreal=False):
+        if not isinstance(node, (GraphableMeta, str)):
+            raise TypeError(f"{node} is of type {type(node)}. Must be a Hierarchy class or a name of a yet to be built Hierarchy class")
         self.node = node
         self.minnumber = int_or_none(minnumber) or 0
         if maxnumber is None:
@@ -150,6 +154,13 @@ class Multiple:
         multiple_list = [Multiple(hierarchy, i, i) if isinstance(i, int) else Multiple(cls, *i) for k, i in multiples.items()]
         return single_list + multiple_list
 
+    @classmethod
+    def from_any(cls, anything: Union[str, Type['Hierarchy'], 'Multiple']) -> 'Multiple':
+        if isinstance(anything, (str, GraphableMeta)):
+            return OneOf(anything)
+        elif isinstance(anything, Multiple):
+            return anything
+        raise TypeError(f"{anything} is not a subclass of Hierarchy or an instance of Multiple")
 
 class OneOf(Multiple):
     def __init__(self, node, constrain=None, idname=None, one2one=False):
@@ -751,9 +762,23 @@ class Hierarchy(Graphable):
                                 raise TypeError(f"{name} expects multiple elements")
             else:
                 value = [value]
+            try:
+                l = len(value)
+            except TypeError:
+                l = 1
+            nodetype = Multiple.from_any(nodetype)
+            if not isinstance(value, Collection):
+                if not (nodetype.minnumber <= l <= nodetype.maxnumber):
+                    raise ValueError(f"{self.__class__.__name__} requires {nodetype.minnumber} <= count({name}) <= {nodetype.maxnumber}. "
+                                     f"{l} received.")
+                if isinstance(value, Hierarchy):
+                    invalid_types = {v for v in value if isinstance(v, nodetype.node)}
+                    if invalid_types:
+                        raise TypeError(f"{self.__class__.__name__} can only take {nodetype.node.__name__} not {invalid_types}")
+            else:
+                validate_number(value, nodetype.minnumber, nodetype.maxnumber, self.__class__.__name__, nodetype.node.__class__.__name__)
+                validate_type(value, nodetype.node.__name__)
             if name not in factors:
-                if not isinstance(nodetype, Multiple):
-                    nodetype = OneOf(nodetype)
                 if name in children:
                     successors[name] = value, nodetype
                 if name in parents:

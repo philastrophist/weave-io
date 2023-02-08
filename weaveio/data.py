@@ -733,6 +733,7 @@ class Data:
         hierarchy = self.singular_hierarchies[hierarchy_name]
         if hierarchy.is_template:
             return
+        subclasses = get_all_subclasses(hierarchy)
         parents = [h for h in hierarchy.parents]
         children = [h for h in hierarchy.children]
         dfs = []
@@ -758,8 +759,9 @@ class Data:
                 reldef = [b, a]
             relid1 = f'WHERE r1.relation_id = "{relation_idname}"' if relation_idname else ''
             relid2 = f'WHERE r2.relation_id = "{relation_idname}"' if relation_idname else ''
+            subclass_exclusions = ' WHERE ' + ' AND '.join([f'NOT n:{i.__name__}' for i in subclasses]) if len(subclasses) else ''
             q = f"""
-            MATCH (n:{a})
+            MATCH (n:{a}){subclass_exclusions}
             OPTIONAL MATCH (n){arrows[0]}[r1:is_required_by]{arrows[1]}(m:{b}) {relid1}
             WITH n, count(r1) as forwardCount
             OPTIONAL MATCH (m:{b}){arrows[0]}[r2:is_required_by]{arrows[1]}(n) {relid2}
@@ -895,15 +897,6 @@ class Data:
         logging.getLogger().setLevel(logging.INFO)
         missing = []
         with pd.option_context('display.max_columns', None):
-            # logging.info(f"Checking all nodes created using weaveio...")
-            # non_file_nodes = self._validate_all_nodes_created_with_file()
-            # if len(non_file_nodes):
-            #     logging.warning(f'fail:')
-            #     logging.warning(f"\tSome {len(non_file_nodes)} nodes were created outside of the weaveio writing process and dont have an associated file instance")
-            #     logging.warning(non_file_nodes)
-            #     logging.warning(f"\tCheck nodes `_dbcreated` value")
-            # else:
-            #     logging.info(f'pass')
             if file_paths is not None:
                 logging.info(f"Checking all requested files are present...")
                 extant = {path: fname for path, fname in self.graph.execute(f'MATCH (n:File) return n.path as path, n.fname as fname')}
@@ -920,7 +913,7 @@ class Data:
             if len(duplicates):
                 logging.warning(f"fail")
                 logging.warning(f'\tThere are {len(duplicates)} duplicate relations')
-                logging.warning(f"\t{duplicates}")
+                logging.warning(f"\n{duplicates}")
                 logging.warning(f"\tThis indicates a weaveio logic issue. Raise with maintainer.")
             else:
                 logging.info(f"pass")
@@ -929,7 +922,7 @@ class Data:
             if len(duplicates):
                 logging.warning(f"fail")
                 logging.warning(f'\tThere are {len(duplicates)} relations with different orderings')
-                logging.warning(f"\t{duplicates}")
+                logging.warning(f"\n{duplicates}")
                 logging.warning(f"\tThis indicates a weaveio logic issue. Raise with maintainer.")
             else:
                 logging.info(f"pass")
@@ -938,8 +931,8 @@ class Data:
             if len(schema_violations):
                 logging.warning(f"fail")
                 logging.warning(f'\tThere are {len(schema_violations)} violations of expected relationship number ({len(label_instances)} class relations)')
-                logging.warning(f"\t{schema_violations}")
-                logging.warning(f"\t{label_instances}")
+                logging.warning(f"\n{schema_violations}")
+                logging.warning(f"\n{label_instances}")
                 logging.warning(f"\tThis indicates incorrect file read logic on user defined read functions. Check read function.")
             else:
                 logging.info(f"pass")
@@ -948,12 +941,12 @@ class Data:
             if len(unique_rel_id_duplicates):
                 logging.warning(f"fail")
                 logging.warning(f"\tThere are {len(unique_rel_id_duplicates)} unique rel id violations ({len(label_rel_id_duplicates)} class definitions)")
-                logging.warning(f"\t{unique_rel_id_duplicates}")
-                logging.warning(f"\t{label_rel_id_duplicates}")
+                logging.warning(f"\n{unique_rel_id_duplicates}")
+                logging.warning(f"\n{label_rel_id_duplicates}")
                 logging.warning(f"\tThis indicates a weaveio logic issue. Raise with maintainer.")
             else:
                 logging.info(f"pass")
-            if len(missing) + len(non_file_nodes) + len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
+            if len(missing) + len(duplicates) + len(schema_violations) + len(unique_rel_id_duplicates) == 0:
                 logging.info('Database schema is valid!')
             else:
                 logging.warning(f"Database schema is invalid")

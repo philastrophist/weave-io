@@ -25,7 +25,7 @@ def join(table: Table, index_column: str,
 
     Examples:
         Join a table where each row corresponds to a weave_target cname
-        >>> table, weave_targets = join(table, 'cname', data.weave_targets, 'cname')
+        >>> table, weave_targets = join(table, 'cname', data.weave_targets.cname)
         `weave_targets` is the subset of `data.weave_targets` that is matched to the table
         `table` is the entire table
 

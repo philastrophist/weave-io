@@ -539,6 +539,40 @@ class SetVersion(Statement):
         return '\n'.join(query)
 
 
+class ValidateNumber(Statement):
+    def __init__(self, collection: Collection, mn: int, mx: int, central_typelabel: str, to_join_typelabel: str):
+        self.collection = collection
+        self.mn = mn
+        self.mx = mx
+        self.central_typelabel = central_typelabel
+        self.to_join_typelabel = to_join_typelabel
+        self.dummy = CypherVariable('check')
+        super(ValidateNumber, self).__init__([self.collection], [], [self.dummy])
+
+    def to_cypher(self):
+        return f"WITH *, apoc.util.validatePredicate((size({self.collection}) > self.mx) or (size({self.collection}) < {self.mn}), " \
+               f"'{self.central_typelabel} expects {self.mn} <= count({self.to_join_typelabel}) <= {self.mx} not %d', [size({self.collection})]) AS {self.dummy}"
+
+
+
+class ValidateType(Statement):
+    def __init__(self, variable: CypherVariable, typelabel: str):
+        self.variable = variable
+        self.typelabel = typelabel
+        self.dummy = CypherVariable('check')
+        hidden = [self.dummy]
+        if isinstance(self.variable, Collection):
+            self.x = CypherVariable('i')
+            hidden.append(self.x)
+        super(ValidateType, self).__init__([self.variable], [], hidden)
+
+    def to_cypher(self):
+        if isinstance(self.variable, Collection):
+            return f"WITH *, apoc.util.validatePredicate(size([{self.x} in {self.variable} where '{self.typelabel}' in labels({self.x})]) > 0, " \
+                   f"'{self.variable} needs to be a collection of {self.typelabel}', []) as {self.dummy}"
+        return f"WITH *, apoc.util.validatePredicate('{self.typelabel}' in labels({self.variable}), '{self.variable} expects {self.typelabel}', []) as {self.dummy}"
+
+
 def match_node(labels, properties, optional=False):
     query = CypherQuery.get_context()  # type: CypherQuery
     statement = MatchNode(labels, properties, optional)
@@ -604,6 +638,17 @@ def merge_dependent_node(labels, identproperties, properties, parents, anti_id_r
 def set_version(parents, reltypes, childlabel, child, childproperties):
     query = CypherQuery.get_context()  # type: CypherQuery
     statement = SetVersion(parents, reltypes, childlabel, child, childproperties)
+    query.add_statement(statement)
+
+
+def validate_number(collection, mn, mx, central_typelabel, to_join_typelabel):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = ValidateNumber(collection, mn, mx, central_typelabel, to_join_typelabel)
+    query.add_statement(statement)
+
+def validate_type(collection, typelabel):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = ValidateType(collection, typelabel)
     query.add_statement(statement)
 
 
