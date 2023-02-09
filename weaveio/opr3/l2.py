@@ -54,9 +54,14 @@ class UncombinedModelSpectrum(ModelSpectrum):
     identifier_builder = ['uncombined_ingested_spectrum']
 
 
-class CombinedModelSpectrum(ModelSpectrum):
+class BaseCombinedModelSpectrum(ModelSpectrum):
+    is_template = True
     parents = [OneOf(CombinedIngestedSpectrum, one2one=True)]
     identifier_builder = ['combined_ingested_spectrum']
+
+
+class CombinedModelSpectrum(BaseCombinedModelSpectrum):
+    is_template = False
 
 
 # This allows us to use 'clean' to talk about the clean model or clean spectrum
@@ -70,7 +75,7 @@ class GandalfSpectrum(ModelSpectrum):
     identifier_builder = None
 
 
-class GandalfModelSpectrum(CombinedModelSpectrum, GandalfSpectrum):
+class GandalfModelSpectrum(BaseCombinedModelSpectrum, GandalfSpectrum):
     """
     A Gandalf model spectrum is the full modelled SED of emission lines and continuum
     It also has:
@@ -106,7 +111,7 @@ class Fit(Hierarchy):
     is_template = True
     parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
                Multiple(UncombinedModelSpectrum, 0, 3, one2one=True),
-               Optional(CombinedModelSpectrum, one2one=True),
+               Optional(BaseCombinedModelSpectrum, one2one=True),
                Multiple(ModelSpectrum, 1, 3, one2one=True, notreal=True)]
 
 

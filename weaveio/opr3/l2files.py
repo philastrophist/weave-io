@@ -17,7 +17,7 @@ from weaveio.opr3.hierarchy import APS, OB, OBSpec, Exposure, WeaveTarget, _pred
 from weaveio.opr3.l1 import L1Spectrum, L1SingleSpectrum, L1StackSpectrum, L1SupertargetSpectrum
 from weaveio.opr3.l2 import L2, L2Single, L2Stack, L2Superstack, L2Supertarget, IngestedSpectrum, Fit, ModelSpectrum, Redrock, \
     RVSpecfit, Ferre, PPXF, Gandalf, GandalfModelSpectrum, CombinedIngestedSpectrum, CombinedModelSpectrum, Template, RedshiftArray, GandalfEmissionModelSpectrum, GandalfCleanModelSpectrum, \
-    GandalfCleanIngestedSpectrum, L2Product, gandalf_line_names, gandalf_index_names, UncombinedIngestedSpectrum, UncombinedModelSpectrum
+    GandalfCleanIngestedSpectrum, L2Product, gandalf_line_names, gandalf_index_names, UncombinedIngestedSpectrum, UncombinedModelSpectrum, BaseCombinedModelSpectrum
 from weaveio.opr3.l1files import L1File, L1SuperstackFile, L1StackFile, L1SingleFile, L1SupertargetFile
 from weaveio.writequery import CypherData, CypherVariable
 from weaveio.writequery.actions import string_append
@@ -95,7 +95,7 @@ class L2File(File):
     antimatch_pattern = '.*cube.*'
     L2 = L2Product
     L1 = L1Spectrum
-    parents = [Multiple(L1File, 2, 3), Multiple(L2, maxnumber=1000)]
+    parents = [Multiple(L1File, 2, 3), Multiple(L2, maxnumber=1000, one2one=True)]
     children = [APS]
     parts = ['RR', 'RVS', 'FR', 'GAND', 'PPXF']
     recommended_batchsize = 50
@@ -303,7 +303,7 @@ class L2File(File):
                              IngestedSpectrumClass: Optional[Type[IngestedSpectrum]],
                              CombinedIngestedSpectrumClass: Optional[Type[CombinedIngestedSpectrum]],
                              ModelSpectrumClass: Optional[Type[ModelSpectrum]],
-                             CombinedModelSpectrumClass: Optional[Type[CombinedModelSpectrum]],
+                             CombinedModelSpectrumClass: Optional[Type[BaseCombinedModelSpectrum]],
                              uses_disjoint_spectra: bool,
                              uses_combined_spectrum: Optional[bool],
                              formatter: str):

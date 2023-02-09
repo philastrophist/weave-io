@@ -568,9 +568,9 @@ class ValidateType(Statement):
 
     def to_cypher(self):
         if isinstance(self.variable, Collection):
-            return f"WITH *, apoc.util.validatePredicate(size([{self.x} in {self.variable} where '{self.typelabel}' in labels({self.x})]) > 0, " \
+            return f"WITH *, apoc.util.validatePredicate(size([{self.x} in {self.variable} where NOT '{self.typelabel}' in labels({self.x})]) > 0, " \
                    f"'{self.variable} needs to be a collection of {self.typelabel}', []) as {self.dummy}"
-        return f"WITH *, apoc.util.validatePredicate('{self.typelabel}' in labels({self.variable}), '{self.variable} expects {self.typelabel}', []) as {self.dummy}"
+        return f"WITH *, apoc.util.validatePredicate('NOT {self.typelabel}' in labels({self.variable}), '{self.variable} expects {self.typelabel}', []) as {self.dummy}"
 
 
 def match_node(labels, properties, optional=False):

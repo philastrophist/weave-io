@@ -47,12 +47,17 @@ class WavelengthHolder(ArrayHolder):
     identifier_builder = ['cd1_1', 'crval1', 'naxis1']
 
 
-class Measurement(Hierarchy):
+class BaseMeasurement(Hierarchy):
     factors = ['value', 'err']
     indexes = ['value']
+    is_template = True
 
 
-class Magnitude(Measurement):
+class Measurement(BaseMeasurement):
+    pass
+
+
+class Magnitude(BaseMeasurement):
     pass
 
 
@@ -353,23 +358,23 @@ class Supertarget(Stacked):
     is_template = True
 
 
-class MCMCMeasurement(Measurement):
+class MCMCMeasurement(BaseMeasurement):
     is_template = True
     factors = Measurement.factors + ['formal_error']
 
 
-class Line(Measurement):
+class Line(BaseMeasurement):
     is_template = True
     factors = ['aon']
     factors += Measurement.as_factors('flux', 'redshift', 'sigma', 'ebmv', 'amp')
     indexes = []
 
 
-class SpectralIndex(Measurement):
+class SpectralIndex(BaseMeasurement):
     is_template = True
 
 
-class RedshiftMeasurement(Measurement):
+class RedshiftMeasurement(BaseMeasurement):
     is_template = True
     factors = Measurement.factors + ['warn']
 

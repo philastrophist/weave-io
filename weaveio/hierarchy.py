@@ -69,6 +69,25 @@ def all_subclasses(cls):
 
 class Multiple:
     def __init__(self, node: Union[str, 'GraphableMeta'], minnumber=1, maxnumber=None, constrain=None, idname=None, one2one=False, ordered=False, notreal=False):
+        """
+        Used to define relationships in the schema .e.g.:
+            class Car:
+                parents = [Multiple(Wheel, 4, 4, one2one=True), Multiple(Driver, constrain=(House,)]
+        This is read as:
+            A car has exactly 4 wheels and a wheel has only one car
+            A car has an unlimited number of drivers in the same house (but at least 1) and a driver has an unlimited number of cars (but at least 1)
+
+        :param node: A Hierarchy object to define a relationship to (e.g. creating a rel of Car-->Wheel
+        :param minnumber: The minimum number that can exists in the database, can be 0
+        :param maxnumber: The rough advised number of relationships that can exist
+        :param constrain: The Hierarchies which all node instances must have in their tree of dependencies
+        :param idname: The name of the relationship which can be used when reading
+        :param one2one: Is the relationship reciprocated? If yes, then a relationship of parent-[singular]->node  is also created
+                        e.g. After the Wheel-->Car rel is created, Car-[singular]->Wheel is also created.
+                            In this case a car has multiple wheels, but a wheel has only 1 car.
+        :param ordered: The order of the instances makes a different unique identification
+        :param notreal: This relationship is never instantiated. Use this to express logic about superclasses and subclasses
+        """
         if not isinstance(node, (GraphableMeta, str)):
             raise TypeError(f"{node} is of type {type(node)}. Must be a Hierarchy class or a name of a yet to be built Hierarchy class")
         self.node = node
@@ -220,6 +239,9 @@ class GraphableMeta(type):
         return r
 
     def __init__(cls, name, bases, dct):
+        invalid_bases = [b for b in bases if not b.is_template]
+        if any(invalid_bases):
+            raise RuleBreakingException(f"{name} cannot subclass {invalid_bases} since they are marked with `is_template=False`")
         if cls.idname is not None and cls.identifier_builder is not None:
             raise RuleBreakingException(f"You cannot define a separate idname and an identifier_builder at the same time for {name}")
         parentnames = {}
@@ -393,6 +415,9 @@ class Graphable(metaclass=GraphableMeta):
 
 
     def __init__(self, predecessors, successors=None, do_not_create=False):
+        if self.is_template and not do_not_create:
+            raise TypeError(f"Template Hierarchies cannot be instantiated directly. "
+                            f"If you need to instantiate {self.__class__.__name__}, set {self.__class__.__name__}.is_template=False.")
         if successors is None:
             successors = {}
         if predecessors is None:
@@ -776,7 +801,7 @@ class Hierarchy(Graphable):
                     if invalid_types:
                         raise TypeError(f"{self.__class__.__name__} can only take {nodetype.node.__name__} not {invalid_types}")
             else:
-                validate_number(value, nodetype.minnumber, nodetype.maxnumber, self.__class__.__name__, nodetype.node.__class__.__name__)
+                validate_number(value, nodetype.minnumber, nodetype.maxnumber, self.__class__.__name__, nodetype.node.__name__)
                 validate_type(value, nodetype.node.__name__)
             if name not in factors:
                 if name in children:
