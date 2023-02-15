@@ -121,7 +121,7 @@ class RedshiftArray(ArrayHolder):
 
 
 class Template(Fit):
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
+    parents = [Multiple(L1Spectrum, 2, 3),
                Multiple(UncombinedModelSpectrum, 0, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True),
                Multiple(ModelSpectrum, 1, 3, one2one=True, notreal=True)]
     factors = ['chi2_array', 'name']
@@ -132,7 +132,7 @@ class Template(Fit):
 class Redrock(Fit):
     factors = ['class', 'subclass', 'snr', 'chi2', 'deltachi2', 'ncoeff', 'coeff',
                'npixels', 'srvy_class', 'z', 'zerr', 'zwarn']
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
+    parents = [Multiple(L1Spectrum, 2, 3),
                Multiple(UncombinedModelSpectrum, 0, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True),
                Multiple(ModelSpectrum, 1, 3, one2one=True, notreal=True)]
     # todo: really need to have a check in the merge that checks that combinedmodelspec doesnt exist if not given
@@ -143,7 +143,7 @@ class Redrock(Fit):
 
 class RVSpecfit(Fit):
     singular_name = 'rvspecfit'
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
+    parents = [Multiple(L1Spectrum, 2, 3),
                Multiple(UncombinedModelSpectrum, 0, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True),
                Multiple(ModelSpectrum, 1, 3, one2one=True, notreal=True)]
     factors = Fit.factors + ['skewness', 'kurtosis', 'vsini', 'snr', 'chi2_tot']
@@ -152,7 +152,7 @@ class RVSpecfit(Fit):
 
 
 class Ferre(Fit):
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
+    parents = [Multiple(L1Spectrum, 2, 3),
                Multiple(UncombinedModelSpectrum, 0, 3, one2one=True), Optional(CombinedModelSpectrum, one2one=True),
                Multiple(ModelSpectrum, 1, 3, one2one=True, notreal=True)]
     factors = Fit.factors + ['snr', 'chi2_tot', 'flag']
@@ -162,7 +162,7 @@ class Ferre(Fit):
 
 class Gandalf(Fit):
     plural_name = 'gandalfs'
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True),
+    parents = [Multiple(L1Spectrum, 2, 3),
                OneOf(GandalfModelSpectrum, one2one=True, idname='model'),
                OneOf(GandalfCleanIngestedSpectrum, one2one=True, idname='clean_observed'),
                OneOf(GandalfCleanModelSpectrum, one2one=True, idname='clean_model'),
@@ -174,7 +174,7 @@ class Gandalf(Fit):
 
 
 class PPXF(Fit):
-    parents = [Multiple(L1Spectrum, 2, 3, one2one=True), OneOf(CombinedModelSpectrum, one2one=True)]
+    parents = [Multiple(L1Spectrum, 2, 3), OneOf(CombinedModelSpectrum, one2one=True)]
     factors = Fit.factors + MCMCMeasurement.as_factors('v', 'sigma', 'h3', 'h4', 'h5', 'h6') + \
               Measurement.as_factors('zcorr')
     identifier_builder = ['combined_model_spectrum']

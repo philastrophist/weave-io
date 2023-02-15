@@ -1,3 +1,4 @@
+import logging
 import sys
 from collections import namedtuple, defaultdict
 from pathlib import Path
@@ -58,30 +59,38 @@ def extract_lines_names(expected_line_names, colnames):
     """
     returns dictionary of required factor names and values that can be take from the hdu
     """
-    actual_line_names = sorted([i[len('FLUX') + 1:] for i in colnames if i.startswith('FLUX')], key=lambda x: float(x.split('_')[1]))
+    colnames = list(map(lambda x: x.lower(), colnames))
+    expected_line_names = list(map(lambda x: x.lower(), expected_line_names))
+    actual_line_names = sorted([i[len('FLUX') + 1:] for i in colnames if i.startswith('flux')], key=lambda x: float(x.split('_')[1]))
     d = {}
     for name in actual_line_names:
         if name in expected_line_names:
-            name = name.lower()
             d[f"{name}_aon"] = f'aon_{name}'
             d[f"{name}_ebmv"] = f'ebv_{name}'
             d[f"{name}_flux"] = f'flux_{name}'
-            d[f"{name}_flux_error"] = f'err_flux_{name}'
-            d[f"{name}_amp_error"] = f'err_ampl_{name}'
+            d[f"{name}_flux_error"] = f'flux_err_{name}'
+            d[f"{name}_amp_error"] = f'ampl_err_{name}'
             d[f"{name}_redshift"] = f'z_{name}'
-            d[f"{name}_redshift_error"] = f'err_z_{name}'
+            d[f"{name}_redshift_error"] = f'z_err_{name}'
             d[f"{name}_sigma"] = f'sigma_{name}'
-            d[f"{name}_sigma_error"] = f'err_sigma_{name}'
+            d[f"{name}_sigma_error"] = f'sigma_err_{name}'
+        else:
+            logging.warning(f"line `{name}` was found in file but is not part of the schema (will be ignored)")
+    for name in expected_line_names:
+        if name not in actual_line_names:
+            logging.warning(f"expected line `{name}` not found in l2file[gandalf] hdu")
     return d
 
 
 def extract_indices_names(expected_index_names, colnames):
     d = {}
     for name in expected_index_names:
+        name = name.lower()
         if name in colnames:
-            name = name.lower()
             d[f'{name}'] = name
             d[f'{name}_error'] = f'err_{name}'
+        else:
+            logging.warning(f"index `{name}` was not found in l2file[gandalf] hdu")
     return d
 
 FitSpecs = namedtuple('FitSpecs', ['individuals', 'individual_models', 'combined', 'combined_model', 'colour_codes', 'nrow'])

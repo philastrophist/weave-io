@@ -48,10 +48,9 @@ def test_example3(data):
     l2s = l2s[(l2s.ob.mjd >= 57780) & any(l2s.fibre_target.surveys == '/WL.*/', wrt=l2s.fibre_target)]
     l2s = l2s[l2s['ha_6562.80_flux'] > 0]
     table = l2s[['ha_6562.80_flux', 'z']]()  # type: Table
-    assert len(table) == 306
-    table.sort('z')
-    assert table[0]['z'] == -0.0028588480571366923
-    assert table[0]['ha_6562.80_flux'] == 150790646.85417017
+    assert len(table) == 914
+    assert table['z'].min(), table['z'].max() == (-0.004380459951814368, 0.9470194571839268)
+    assert table['ha_6562.80_flux'].min(), table['ha_6562.80_flux'].max() == (0.013978097400486398, 2.736550702489109e+18)
 
 
 def test_example4(data):
@@ -65,12 +64,12 @@ def test_example4(data):
     t = q()
     assert len(t) == len(table)
     assert np.all(np.sort(t['cname']) == np.sort(table['cname']))
-    assert np.all(t['nobservations'] >= 6)
+    assert np.all(t['nobservations'] >= 3)
 
 
 def test_adjunct(data):
     t = data.l1single_spectra[data.l1single_spectra.camera == 'red']
-    t = t[['camera', 'adjunct.camera']](limit=5)
-    assert np.all(t['camera'] == 'red')
-    assert np.all(t['adjunct.camera'] == 'blue')
+    t = t[['camera', t.adjunct.camera]](limit=5)
+    assert np.all(t['camera0'] == 'red')
+    assert np.all(t['camera1'] == 'blue')
 

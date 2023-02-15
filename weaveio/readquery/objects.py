@@ -126,7 +126,8 @@ class ObjectQuery(GenericObjectQuery):
         if not single and want_single:
             raise CardinalityError(err_msg)
         n = self._G.add_traversal(self._node, paths, obj, single)
-        return ObjectQuery._spawn(self, n, obj, single=want_single)
+        name = plural if want_single else self._data.singular_name(obj)
+        return ObjectQuery._spawn(self, n, obj, single=want_single, names=[name])
 
     def _traverse_by_object_index(self, obj, index):
         """
@@ -142,7 +143,8 @@ class ObjectQuery(GenericObjectQuery):
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_scalar_operation(i, f'{{0}} = {param}', f'id={index}', parameters=[param])
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj, single=True)
+        name = self._data.plural_name(obj) if single else self._data.singular_name(obj)
+        return ObjectQuery._spawn(self, n, obj, single=True, names=[name])
 
     def _traverse_by_object_indexes(self, obj, indexes: List):
         path, single = self._get_path_to_object(obj, False)
@@ -152,7 +154,8 @@ class ObjectQuery(GenericObjectQuery):
         i = self._G.add_getitem(travel, 'id')
         eq, _ = self._G.add_combining_operation('{0} = {1}', 'ids', i, one_id, wrt=travel)
         n = self._G.add_filter(travel, eq, direct=True)
-        return ObjectQuery._spawn(self, n, obj, single=True)
+        name = self._data.plural_name(obj) if single else self._data.singular_name(obj)
+        return ObjectQuery._spawn(self, n, obj, single=True, names=[name])
 
     def _select_product(self, attr, want_single):
         attr = self._data.singular_name(attr)
@@ -237,7 +240,7 @@ class ObjectQuery(GenericObjectQuery):
         name = self._G.add_parameter(singular_name)
         eq, _ = self._G.add_scalar_operation(relation_id, f'{{0}} = {name}', 'rel_id', parameters=[name])
         f = self._G.add_filter(n, eq, direct=True)
-        return ObjectQuery._spawn(self, f, obj, single=want_singular)
+        return ObjectQuery._spawn(self, f, obj, single=want_singular, names=[index])
 
     def _filter_by_relative_index(self):
         """
@@ -310,12 +313,12 @@ class ObjectQuery(GenericObjectQuery):
             try:
                 return self._select_or_traverse_to_attribute(item)
             except (KeyError, ValueError):
-                if '.' in item and not (item.endswith('.fit') or item.endswith('.fits')):  # split the parts and parse
-                    try:
-                        obj, attr = item.split('.')
-                        return self.__getitem__(obj).__getitem__(attr)
-                    except ValueError:
-                        raise AttributeNameError(f"{item} cannot be parsed as an `obj.attribute`.")
+                # if '.' in item and not (item.endswith('.fit') or item.endswith('.fits')):  # split the parts and parse
+                #     try:
+                #         obj, attr = item.split('.')
+                #         return self.__getitem__(obj).__getitem__(attr)
+                #     except ValueError:
+                #         raise AttributeNameError(f"{item} cannot be parsed as an `obj.attribute`.")
                 try: # try assuming its an object
                     obj, single = self._normalise_object(item)
                     if obj == self._obj:
@@ -337,7 +340,7 @@ class ObjectQuery(GenericObjectQuery):
                             k, relation = copy(d).popitem()
                             return self._traverse_to_specific_object(k, singular == item).__getattr__(item)
                         return self._traverse_to_relative_object(relation.node.__name__, item, singular == item)
-                    elif by_getitem:  # otherwise treat as an index
+                    elif by_getitem and getattr(self._data.class_hierarchies.get(item, None), 'indexable', False):  # otherwise treat as an index
                         return self._previous._traverse_by_object_index(self._obj, item)
                     else:
                         raise AttributeNameError(f"Unknown attribute `{item}`")

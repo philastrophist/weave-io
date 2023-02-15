@@ -30,8 +30,8 @@ def join(table: Table, index_column: str,
         `table` is the entire table
 
         Join a table where each row corresponds to a weave_target cname but is matched to a specific spectrum
-        >>> query = data.runs[1234].l1single_spectra  # get all spectra belonging to this run
-        >>> table, query = join(table, 'cname', query, query.weave_target.cname)
+        >>> spectra = data.runs[1234].l1single_spectra  # get all spectra belonging to this run
+        >>> table, query = join(table, 'cname', spectra, spectra.cname)
         `query` is the subset of `data.runs[1234].l1single_spectra` that is matched to the table
         `table` is the entire table
 

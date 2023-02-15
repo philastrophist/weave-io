@@ -729,7 +729,7 @@ class Data:
         return self.write_files(*filtered_filelist, collision_manager=collision_manager, halt_on_error=halt_on_error,
                                 dryrun=dryrun, batch_size=batch_size, parts=parts, **kwargs)
 
-    def _validate_one_required(self, hierarchy_name):
+    def _validate_one_required(self, hierarchy_name, timestamp=None):
         hierarchy = self.singular_hierarchies[hierarchy_name]
         if hierarchy.is_template:
             return
@@ -780,7 +780,7 @@ class Data:
         except ValueError:
             return pd.DataFrame(), pd.Series()
 
-    def _validate_no_duplicate_relation_ordering(self):
+    def _validate_no_duplicate_relation_ordering(self, time=None):
         q = """
         MATCH (a)-[r1]->(b)<-[r2]-(a)
         WHERE TYPE(r1) = TYPE(r2) AND r1.order <> r2.order
@@ -789,7 +789,7 @@ class Data:
         """
         return self.graph.neograph.run(q).to_data_frame()
 
-    def _validate_no_duplicate_relationships(self):
+    def _validate_no_duplicate_relationships(self, timestamp=None):
         q = """
         MATCH (a)-[r1]->(b)<-[r2]-(a)
         WHERE TYPE(r1) = TYPE(r2) AND PROPERTIES(r1) = PROPERTIES(r2)
@@ -892,7 +892,7 @@ class Data:
         RETURN labels, cnt, ids""")
         return self.graph.execute(q).to_data_frame()
 
-    def validate(self, file_paths=None):
+    def validate(self, timestamp: int = None, file_paths: List[Path]=None):
         level = logging.getLogger().level
         logging.getLogger().setLevel(logging.INFO)
         missing = []
@@ -909,7 +909,7 @@ class Data:
                 else:
                     logging.info('pass')
             logging.info(f"Checking no duplicate relationships...")
-            duplicates = self._validate_no_duplicate_relationships()
+            duplicates = self._validate_no_duplicate_relationships(timestamp)
             if len(duplicates):
                 logging.warning(f"fail")
                 logging.warning(f'\tThere are {len(duplicates)} duplicate relations')
@@ -918,7 +918,7 @@ class Data:
             else:
                 logging.info(f"pass")
             logging.info(f"Checking no duplicate relationships with different ordering...")
-            duplicates = self._validate_no_duplicate_relation_ordering()
+            duplicates = self._validate_no_duplicate_relation_ordering(timestamp)
             if len(duplicates):
                 logging.warning(f"fail")
                 logging.warning(f'\tThere are {len(duplicates)} relations with different orderings')
@@ -1042,6 +1042,7 @@ class Data:
     def is_valid_name(self, name):
         if not isinstance(name, str):
             return False
+        name = name.lower()
         if self.is_plural_name(name) or self.is_singular_name(name):
             return True
         if isinstance(name, str):
@@ -1058,6 +1059,7 @@ class Data:
         """
         if not isinstance(name, str):
             return False
+        name = name.lower()
         if name in self.plural_hierarchies or name in self.plural_factors or\
                    name in self.plural_idnames or name in self.plural_relative_names:
             return True
@@ -1070,6 +1072,7 @@ class Data:
     def is_singular_name(self, name):
         if not isinstance(name, str):
             return False
+        name = name.lower()
         if name in self.singular_hierarchies or name in self.singular_factors or \
            name in self.singular_idnames or name in self.relative_names:
             return True

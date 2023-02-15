@@ -550,7 +550,7 @@ class ValidateNumber(Statement):
         super(ValidateNumber, self).__init__([self.collection], [], [self.dummy])
 
     def to_cypher(self):
-        return f"WITH *, apoc.util.validatePredicate((size({self.collection}) > self.mx) or (size({self.collection}) < {self.mn}), " \
+        return f"WITH *, apoc.util.validatePredicate((size({self.collection}) > {self.mx}) or (size({self.collection}) < {self.mn}), " \
                f"'{self.central_typelabel} expects {self.mn} <= count({self.to_join_typelabel}) <= {self.mx} not %d', [size({self.collection})]) AS {self.dummy}"
 
 

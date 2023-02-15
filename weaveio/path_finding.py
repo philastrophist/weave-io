@@ -368,7 +368,7 @@ class HierarchyGraph(nx.MultiDiGraph):
             l2superstack.ob yields paths of which `L2superstack-...-L1Single-...-ob` is one.
             This path is invalid, but it is included anyway because it is one of a set
             (through single,stack,superstack,supertarget).
-            When queried, invalid paths will yield 0 results so it is not a problem.
+            When queried, invalid paths will silently yield 0 results so it is not a problem.
         """
         try:
             return find_paths(self.singular.nonoptional, a, b)

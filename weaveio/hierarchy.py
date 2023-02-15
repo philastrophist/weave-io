@@ -314,7 +314,7 @@ class GraphableMeta(type):
             if isinstance(relative, Multiple):
                 if relative.relation_idname is not None:
                     cls.relative_names[relative.relation_idname] = relative
-
+        cls.indexable = cls.idname is not None or cls.identifier_builder is not None
         super().__init__(name, bases, dct)
 
 
@@ -322,6 +322,7 @@ class Graphable(metaclass=GraphableMeta):
     idname = None
     identifier = None
     indexer = None
+    indexable = False
     type_graph_attrs = {}
     plural_name = None
     singular_name = None

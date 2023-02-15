@@ -390,7 +390,7 @@ class BaseQuery(QueryFunctionBase):
              `ob.l1stackedspectra[ob.l1singlespectra == 'red']` is invalid since the lists will not be the same size or have the same parentage
         """
         if mask.dtype != 'boolean':
-            raise TypeError(f"The predicate in a filter, `object[predicate]`, must be of type boolean. {mask} is of type {mask.dtype}")
+            raise TypeError(f"The predicate in a filter `query[predicate]`, must be of type boolean. {mask} is of type {mask.dtype}. ")
         single = single if single is not None else self._single
         try:
             n = self._G.add_filter(self._node, mask._node, direct=False, force_single=single, split_node=split_node)
