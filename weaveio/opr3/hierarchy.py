@@ -251,7 +251,6 @@ class OBSpec(Hierarchy):
     factors = ['title']
     parents = [Obstemp, Progtemp, Multiple(Catalogue, maxnumber=20),
                Multiple(Targprog, maxnumber=20), Multiple(Survey, maxnumber=10),
-               # Multiple('FibreTarget', maxnumber=999, notreal=True)
                ]
     idname = 'xml'  # this is CAT-NAME in the header not CATNAME, annoyingly no hyphens allowed
 
@@ -391,3 +390,5 @@ def _predicate(o):
         return issubclass(o, Hierarchy)
     return False
 hierarchies = [i[-1] for i in inspect.getmembers(sys.modules[__name__], _predicate)]
+
+OBSpec.parents.append(Multiple(FibreTarget, maxnumber=999, notreal=True))

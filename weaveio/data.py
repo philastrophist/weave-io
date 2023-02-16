@@ -197,8 +197,8 @@ def hierarchies_from_hierarchy(hier: Type[Hierarchy], done=None, templates=False
         else:
             h = new
         if h not in done and h is not hier:
-            hierarchies.update(hierarchies_from_hierarchy(h, done, templates))
             done.append(h)
+            hierarchies.update(hierarchies_from_hierarchy(h, done, templates))
     hierarchies.add(hier)
     return hierarchies
 

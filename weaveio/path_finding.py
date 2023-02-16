@@ -128,7 +128,7 @@ def find_forking_path(graph, top, bottom, weight=None):
     return done
 
 
-def find_paths(graph, a, b, weight='weight') -> Set[Tuple[Type[Hierarchy]]]:
+def find_paths(graph, a, b, weight='weight') -> List[Tuple[Set[Tuple[Type[Hierarchy]]], Tuple[Tuple[Type[Hierarchy],Type[Hierarchy], int]]]]:
     """
     Returns a set of paths from a to b
     Not all paths are guaranteed to be valid, for example:
@@ -198,7 +198,7 @@ class HierarchyGraph(nx.MultiDiGraph):
         """
         if not attr:
             return super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, idname)
-        hsh = hash(tuple(attr.items()))
+        hsh = hash(tuple([(k, v) for k, v in attr.items() if k != 'actual_number'] + [u_for_edge.__name__, v_for_edge.__name__]))
         if idname is not None:
             # use idname as unique key
             key = super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, idname, hsh=hsh, **attr)
@@ -213,9 +213,23 @@ class HierarchyGraph(nx.MultiDiGraph):
             edges = set(self.out_edges(u_for_edge, keys=True)) & set(self.in_edges(v_for_edge, keys=True))
         else:
             edges = set()
+            _ = 1
         if hsh not in (self.edges[e]['hsh'] for e in edges):
             # use an incremented integer as a unique key only if the edge is unique in attr and (u,v)
             return super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, hsh=hsh, **attr)
+        else:
+            duplicate = [e for e in edges if self.edges[e]['hsh'] == hsh]
+            assert len(duplicate) == 1
+            duplicate = duplicate[0]
+            if self.edges[duplicate]['actual_number'] is None and attr['actual_number'] is not None:
+                self.remove_edge(*duplicate)
+                return super(HierarchyGraph, self).add_edge(u_for_edge, v_for_edge, hsh=hsh, **attr)
+            elif self.edges[duplicate]['actual_number'] != attr['actual_number']:
+                raise ValueError(f"Edge {u_for_edge}-{v_for_edge} was duplicated with a different actual number")
+            else:
+                return duplicate[0]
+            # all(self.edges[e].get('actual_number', None) is None for e in edges):
+
 
     def surrounding_nodes(self, n):
         return list(self.parents.successors(n)) + list(self.parents.predecessors(n)) + [n]
@@ -228,11 +242,11 @@ class HierarchyGraph(nx.MultiDiGraph):
         if relation.one2one:
             self.add_edge(parent, child, singular=True, optional=relation.minnumber == 0, style='solid',
                           type='is_parent_of', one2one=relation.one2one,
-                          relation=relation, actual_number=relation.maxnumber)
+                          relation=relation, actual_number=1)
         else:
             self.add_edge(parent, child, singular=False, optional=relation.minnumber == 0, style='dashed',
                           type='is_parent_of', one2one=relation.one2one,
-                          relation=relation, actual_number=relation.maxnumber)
+                          relation=relation, actual_number=None)
 
     def _add_child(self, parent: Type[Hierarchy], child: Union[Type[Hierarchy], Multiple]):
         relation, child = normalise_relation(child)
@@ -240,8 +254,12 @@ class HierarchyGraph(nx.MultiDiGraph):
         self.add_edge(parent, child, singular=relation.maxnumber == 1, one2one=relation.one2one,
                        optional=relation.minnumber == 0, type='is_parent_of',
                        relation=relation, style=relstyle, actual_number=relation.maxnumber)
-        self.add_edge(child, parent, singular=True, optional=relation.minnumber == 0,  one2one=relation.one2one,
-                      style='solid', type='is_child_of', actual_number=relation.maxnumber)
+        if relation.one2one:
+            self.add_edge(child, parent, singular=True, optional=relation.minnumber == 0,  one2one=relation.one2one,
+                          style='solid', type='is_child_of', actual_number=1)
+        else:
+            self.add_edge(child, parent, singular=False, optional=relation.minnumber == 0, one2one=relation.one2one,
+                          style='dashed', type='is_child_of', actual_number=None)
 
     def _add_self_reference(self, relation):
         relation, h = normalise_relation(relation)
@@ -263,7 +281,7 @@ class HierarchyGraph(nx.MultiDiGraph):
             elif d['singular']:
                 weight = 0
             else:
-                weight = d['actual_number']
+                weight = d['actual_number'] or 1
             self.edges[u, v, k]['weight'] = weight
 
     def _add_hierarchy(self, hierarchy: Type[Hierarchy]):
@@ -371,17 +389,28 @@ class HierarchyGraph(nx.MultiDiGraph):
             When queried, invalid paths will silently yield 0 results so it is not a problem.
         """
         try:
-            return find_paths(self.singular.nonoptional, a, b)
+            paths = find_paths(self.nonoptional, a, b)
         except nx.NetworkXNoPath:
-            try:
-                return find_paths(self.singular, a, b)
-            except nx.NetworkXNoPath as e:
-                if singular:
-                    raise e
-                try:
-                    return find_paths(self.nonoptional, a, b)
-                except nx.NetworkXNoPath:
-                    return find_paths(self, a, b)
+            paths = find_paths(self, a, b)
+        paths = [(nodes, edges) if a is nodes[0] else (nodes[::-1], [(e[1], e[0], e[2]) for e in edges]) for nodes, edges in paths]
+
+        # forking paths are from turning superclasses into subclasses so expanding
+        # paths are
+        singular_paths = [self.path_is_singular(p[1]) for p in paths]
+        if singular and not all(singular_paths):
+            return paths
+        # try:
+        #     return find_paths(self.singular.nonoptional, a, b)
+        # except nx.NetworkXNoPath:
+        #     try:
+        #         return find_paths(self.singular, a, b)
+        #     except nx.NetworkXNoPath as e:
+        #         if singular:
+        #             raise e
+        #         try:
+        #             return find_paths(self.nonoptional, a, b)
+        #         except nx.NetworkXNoPath:
+        #             return find_paths(self, a, b)
 
     def edge_weights(self, path) -> List[int]:
         return [self.edges[self.short_edge(*e, 'weight')]['weight'] for e in nx.utils.pairwise(path)]
