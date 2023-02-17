@@ -1,2 +1,2 @@
-__version__ = "2023.0.1"
-__changes__ = 'writing now does not crash the server'
+__version__ = "2023.0.2"
+__changes__ = 'fixed unpassed params'

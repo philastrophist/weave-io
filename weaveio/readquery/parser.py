@@ -396,7 +396,7 @@ class QueryGraph:
         """
         if any(d['type'] == 'aggr' for a, b, d in self.G.in_edges(parent_node, data=True)):
             wrt = next(self.backwards_G.successors(parent_node))
-            return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt)
+            return self.add_combining_operation(op_format_string, op_name, parent_node, wrt=wrt, parameters=parameters)
         statement = Operation(self.G.nodes[parent_node]['variables'][0], [], op_format_string, op_name, self, parameters)
         return add_operation(self.G, parent_node, [], statement), parent_node
 
