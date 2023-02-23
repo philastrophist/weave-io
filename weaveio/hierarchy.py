@@ -38,6 +38,7 @@ unwind = hierarchy_query_decorator(writequery.unwind)
 merge_node = hierarchy_query_decorator(writequery.merge_node)
 match_node = hierarchy_query_decorator(writequery.match_node)
 match_pattern_node = hierarchy_query_decorator(writequery.match_pattern_node)
+match_id_node = hierarchy_query_decorator(writequery.match_id_node)
 match_branch_node = hierarchy_query_decorator(writequery.match_branch_node)
 collect = hierarchy_query_decorator(writequery.collect)
 merge_relationship = hierarchy_query_decorator(writequery.merge_relationship)
@@ -52,7 +53,7 @@ def chunker(lst, n):
 
 
 FORBIDDEN_LABELS = []
-FORBIDDEN_PROPERTY_NAMES = []
+FORBIDDEN_PROPERTY_NAMES = ['keys', 'values', 'dict', 'items']
 FORBIDDEN_LABEL_PREFIXES = ['_']
 FORBIDDEN_PROPERTY_PREFIXES = ['_']
 FORBIDDEN_IDNAMES = ['idname']
@@ -667,6 +668,13 @@ class Graphable(metaclass=GraphableMeta):
         node = match_pattern_node(labels=cls.neotypes, properties=factors,
                                   parents=parents, children=anonymous_children, exclude=exclude)
         obj = cls.without_creation(**kwargs)
+        obj.node = node
+        return obj
+
+    @classmethod
+    def from_neo4j_id(cls, id):
+        node = match_id_node(labels=cls.neotypes, id=id)
+        obj = cls.without_creation()
         obj.node = node
         return obj
 

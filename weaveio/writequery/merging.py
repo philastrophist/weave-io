@@ -109,6 +109,21 @@ class MatchRelationship(Statement):
         return f"{self.keyword} ({self.parent})-{reldata}->({self.child})"
 
 
+class MatchIdNode(Statement):
+    def __init__(self, labels: List[str], id: Union[int, CypherVariable]):
+        self.labels = [camelcase(l) for l in labels]
+        if isinstance(id, CypherVariable):
+            self.id = id
+        else:
+            self.id = CypherData(id)
+        self.out = CypherVariable(labels[0])
+        super().__init__([self.id], [self.out], [])
+
+    def to_cypher(self):
+        labels = ':'.join(self.labels)
+        return f'MATCH ({self.out}: {labels}) where id({self.out}) = {self.id}'
+
+
 class MatchPatternNode(Statement):
     def __init__(self, labels: List[str], properties: Dict[str, Union[str, int, float, CypherVariable]],
                  parents: List[CypherVariable], children: List[CypherVariable], exclude: List[CypherVariable]):
@@ -600,6 +615,12 @@ def match_pattern_node(labels: List[str], properties: Dict[str, Union[str, int, 
     if exclude is None:
         exclude = []
     statement = MatchPatternNode(labels, properties, parents, children, exclude)
+    query.add_statement(statement)
+    return statement.out
+
+def match_id_node(labels: List[str], id: int):
+    query = CypherQuery.get_context()  # type: CypherQuery
+    statement = MatchIdNode(labels, id)
     query.add_statement(statement)
     return statement.out
 

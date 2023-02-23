@@ -71,6 +71,11 @@ class BaseQuery(QueryFunctionBase):
     one_row = False
     one_column = False
 
+    def __new__(cls, *args, **kwargs):
+        from fastapi.encoders import ENCODERS_BY_TYPE
+        ENCODERS_BY_TYPE[cls] = lambda x: [x._data, x._node]
+        return super().__new__(cls)
+
     def _debug_output(self, skip=0, limit=None, distinct=False, no_cache=False, graph_export_fname=None,
                       exclusive=True):
         n = self._precompile()

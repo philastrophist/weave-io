@@ -113,6 +113,8 @@ class Graph(metaclass=ContextMeta):
         return CypherQuery(collision_manager)
 
     def _execute(self, cypher, parameters, backoff=1, limit=10):
+        if not isinstance(cypher, str):
+            raise TypeError(f"Cypher must be a string")
         return self.neograph.auto(readonly=not self.write_allowed).run(cypher, parameters=parameters)
 
     def execute(self, cypher, **payload):
