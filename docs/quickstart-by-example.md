@@ -235,7 +235,7 @@ obs = split(data.obs)  # mark the fact that you want have one table per OB there
 stacks = obs.l1stack_spectra[(obs.l1stack_spectra.targuse == 'S') & (obs.l1stack_spectra.camera == 'red')]
 singles = stacks.l1single_spectra
 singles_table =  singles[['flux', 'ivar']]
-query = stacks[['ob.id', {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_': singles_table}]]
+query = stacks[[stacks.obs.id, {'stack_flux': 'flux', 'stack_ivar': 'ivar'}, 'wvl', {'single_': singles_table}]]
 
 for index, ob_query in query:
     print(f"stacks and singles for OB #{index}:")
