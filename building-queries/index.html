@@ -522,11 +522,17 @@
 
 <h1 id="identifying-filtering-and-aggregating">Identifying, filtering and aggregating</h1>
 <h2 id="finding-objects-by-their-unique-identifiers">Finding objects by their unique identifiers</h2>
-<p>If an object defines an idname in its class definition, you can find it in a query by </p>
+<p>If an object defines an idname in its class definition, you can find it in a query by simply listing the ids:</p>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">2345</span><span class="p">]</span>
+</code></pre></div>
+This will return a query pointed at a single ob from which you can continue the query:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">2345</span><span class="p">]</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="o">...</span>
+</code></pre></div>
+<p>You can also access more than one object </p>
 <p>Once you've traversed to an attribute, you can filter and aggregate.</p>
 <h2 id="_1"></h2>
 <p>For example:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">database</span><span class="o">.</span><span class="n">cats</span><span class="o">.</span><span class="n">owner</span><span class="o">.</span><span class="n">age</span> <span class="o">&gt;</span> <span class="n">database</span><span class="o">.</span><span class="n">cats</span><span class="o">.</span><span class="n">age</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">database</span><span class="o">.</span><span class="n">cats</span><span class="o">.</span><span class="n">owner</span><span class="o">.</span><span class="n">age</span> <span class="o">&gt;</span> <span class="n">database</span><span class="o">.</span><span class="n">cats</span><span class="o">.</span><span class="n">age</span>
 </code></pre></div>
 This query is a boolean structure the same shape as <code>database.cats</code> (and also <code>database.cats.owner</code> since a cat only has one owner).</p>
 
