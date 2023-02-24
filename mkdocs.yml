@@ -47,5 +47,6 @@ nav:
       - Objects and their attributes: objects.md
       - Building queries: building-queries.md
       - Designing result tables: tables.md
+      - Splitting queries: splitting.md
       - Stacking, aligning, and joining: stacking.md
       - Syntax summary: syntax-summary.md
