@@ -402,8 +402,35 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    
+  <a href="#filtering" class="md-nav__link">
+    Filtering
+  </a>
+  
+    <nav class="md-nav" aria-label="Filtering">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#using-a-python-value-filter-spectra-to-those-with-snr-greater-than-10" class="md-nav__link">
+    Using a python value: Filter spectra to those with SNR greater than 10
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-queries-filter-spectra-to-those-with-snr-greater-the-average-snr-of-all-spectra-in-the-database" class="md-nav__link">
+    Using queries: Filter spectra to those with SNR greater the average SNR of all spectra in the database
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aggregation" class="md-nav__link">
+    Aggregation
   </a>
   
 </li>
@@ -425,6 +452,20 @@
     <li class="md-nav__item">
       <a href="../tables/" class="md-nav__link">
         Designing result tables
+      </a>
+    </li>
+  
+
+            
+          
+            
+              
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../splitting/" class="md-nav__link">
+        Splitting queries
       </a>
     </li>
   
@@ -499,8 +540,35 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#_1" class="md-nav__link">
-    
+  <a href="#filtering" class="md-nav__link">
+    Filtering
+  </a>
+  
+    <nav class="md-nav" aria-label="Filtering">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#using-a-python-value-filter-spectra-to-those-with-snr-greater-than-10" class="md-nav__link">
+    Using a python value: Filter spectra to those with SNR greater than 10
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-queries-filter-spectra-to-those-with-snr-greater-the-average-snr-of-all-spectra-in-the-database" class="md-nav__link">
+    Using queries: Filter spectra to those with SNR greater the average SNR of all spectra in the database
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#aggregation" class="md-nav__link">
+    Aggregation
   </a>
   
 </li>
@@ -522,19 +590,92 @@
 
 <h1 id="identifying-filtering-and-aggregating">Identifying, filtering and aggregating</h1>
 <h2 id="finding-objects-by-their-unique-identifiers">Finding objects by their unique identifiers</h2>
-<p>If an object defines an idname in its class definition, you can find it in a query by simply listing the ids:</p>
+<p>If an object defines an idname in its class definition, you can find it in a query by using square brackets:</p>
 <p><div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">2345</span><span class="p">]</span>
 </code></pre></div>
 This will return a query pointed at a single ob from which you can continue the query:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">2345</span><span class="p">]</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="o">...</span>
 </code></pre></div>
-<p>You can also access more than one object </p>
-<p>Once you've traversed to an attribute, you can filter and aggregate.</p>
-<h2 id="_1"></h2>
-<p>For example:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">database</span><span class="o">.</span><span class="n">cats</span><span class="o">.</span><span class="n">owner</span><span class="o">.</span><span class="n">age</span> <span class="o">&gt;</span> <span class="n">database</span><span class="o">.</span><span class="n">cats</span><span class="o">.</span><span class="n">age</span>
+<p>You can also access more than one object by listing them in the square brackets:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">2345</span><span class="p">,</span> <span class="mi">3443</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
 </code></pre></div>
-This query is a boolean structure the same shape as <code>database.cats</code> (and also <code>database.cats.owner</code> since a cat only has one owner).</p>
+<div class="admonition failure">
+<p class="admonition-title">Failure</p>
+<p>You can only filter by id if the object is uniquely defined (i.e. specifies an <code>idname</code> in its definition).
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="ne">ValueError</span><span class="p">:</span> <span class="n">L1SingleSpectrum</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">globally</span> <span class="n">uniquely</span> <span class="n">defined</span>
+</code></pre></div></p>
+</div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Cardinality still applies when filtering by id!
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">all_spectra</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">an_ob</span> <span class="o">=</span> <span class="n">all_spectra</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">1234</span><span class="p">]</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">an_ob</span><span class="o">.</span><span class="n">id</span><span class="p">()</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">[</span><span class="mi">1234</span><span class="p">,</span> <span class="mi">1234</span><span class="p">,</span> <span class="mi">1234</span><span class="p">,</span> <span class="mi">1234</span><span class="p">,</span> <span class="mi">1234</span><span class="p">,</span> <span class="mi">1234</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="mi">1234</span><span class="p">]</span><span class="o">.</span><span class="n">id</span><span class="p">()</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="mi">1234</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">all_spectra</span><span class="o">.</span><span class="n">ob</span><span class="o">.</span><span class="n">id</span><span class="p">()</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="mi">8452</span>  <span class="c1"># doesnt have to be the same here </span>
+</code></pre></div></p>
+</div>
+<p>Once you've traversed to an attribute, you can filter and aggregate.</p>
+<h2 id="filtering">Filtering</h2>
+<p>You can reduce the cardinality of a query structure by filtering either by id as above, or by a boolean mask constructed as part of the query.</p>
+<p>You can create the mask by comparing either multiple queries or a query with a python value:</p>
+<h4 id="using-a-python-value-filter-spectra-to-those-with-snr-greater-than-10">Using a python value: Filter spectra to those with SNR greater than 10</h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">[</span><span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="o">.</span><span class="n">snr</span> <span class="o">&gt;</span> <span class="mi">10</span><span class="p">]</span>
+</code></pre></div>
+<h4 id="using-queries-filter-spectra-to-those-with-snr-greater-the-average-snr-of-all-spectra-in-the-database">Using queries: Filter spectra to those with SNR greater the average SNR of all spectra in the database</h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">[</span><span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="o">.</span><span class="n">snr</span> <span class="o">&gt;</span> <span class="n">mean</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="o">.</span><span class="n">snr</span><span class="p">)]</span>
+</code></pre></div>
+<div class="admonition failure">
+<p class="admonition-title">Failure</p>
+<p>You cannot filter an object by a boolean mask which does not have said object in its history.
+All of these will fail: 
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="ne">TypeError</span><span class="p">:</span> <span class="n">Cannot</span> <span class="nb">filter</span> <span class="n">a</span> <span class="n">query</span> <span class="n">by</span> <span class="n">a</span> <span class="n">non</span><span class="o">-</span><span class="n">query</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">data</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">[</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">mjd</span> <span class="o">&lt;</span> <span class="n">today</span><span class="p">()]</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">CardinalityError</span><span class="p">:</span> <span class="n">Cannot</span> <span class="nb">filter</span> <span class="o">&lt;</span><span class="n">ObjectQuery</span> <span class="n">L1singleSpectrum</span><span class="o">&gt;</span> <span class="n">relative</span> <span class="n">to</span> <span class="o">&lt;</span><span class="n">ObjectQuery</span> <span class="n">OB</span><span class="o">&gt;</span> <span class="n">since</span> <span class="n">it</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">a</span> <span class="n">parent</span><span class="o">.</span>
+</code></pre></div></p>
+</div>
+<h2 id="aggregation">Aggregation</h2>
+<p>A query is a chain of objects and attributes (maybe a combination of more than one chain if you've compared or performed arithmetic).
+You can aggregate the end of this chain structure relative to some other point in the chain.
+This is similar to groupby-apply in SQL except that everything is already implicitly grouped in <code>weaveio</code>.
+<code>weaveio</code> defines the aggregation function: <code>sum, max, min, mean, std, count, any, all, exists</code>.</p>
+<p>For example:</p>
+<p>Count the number of objects in the database:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">count</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">)()</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="mi">30</span>
+</code></pre></div>
+<p>Count the number of objects <strong>with respect to another</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">result</span> <span class="o">=</span> <span class="n">count</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">,</span> <span class="n">wrt</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="p">)()</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">result</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="p">[</span><span class="mi">902</span><span class="p">,</span> <span class="mi">945</span><span class="p">,</span> <span class="mi">854</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="o">&gt;&gt;&gt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># this is the length of the python list not the count of the query</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="mi">30</span>
+</code></pre></div>
+<p>All aggregation functions work in the same way: define a long query chain and use <code>wrt=</code> to select the point in the chain you wish to aggregate to.
+The resulting structure will have the same cardinality as the query given in the <code>wrt</code> argument.
+If <code>wrt</code> is not given, <code>weaveio</code> will assume you mean <code>wrt=database</code> and will always return a singular result.</p>
+<div class="admonition failure">
+<p class="admonition-title">Failure</p>
+<p>You may only aggregate a query relative to a point in its history.
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">count</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">,</span> <span class="n">wrt</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">runs</span><span class="p">)</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">CardinalityError</span><span class="p">:</span> <span class="n">Cannot</span> <span class="n">aggregate</span> <span class="o">&lt;</span><span class="n">ObjectQuery</span> <span class="n">OB</span><span class="o">-</span><span class="n">L1singleSpectrum</span><span class="o">&gt;</span> <span class="n">relative</span> <span class="n">to</span> <span class="o">&lt;</span><span class="n">ObjectQuery</span> <span class="n">Run</span><span class="o">&gt;</span> <span class="n">since</span> <span class="n">it</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">a</span> <span class="n">parent</span><span class="o">.</span>
+</code></pre></div></p>
+</div>
+<div class="admonition failure">
+<p class="admonition-title">Failure</p>
+<p>Moreover, you can only currently do aggregate to a point that was explicitly traversed before.
+The chain <code>data.obs.l1single_spectra</code> implicitly goes through <code>runs</code> because each <code>L1SingleSpectrum</code> originates from one run, 
+which originates from one OB.
+However, the following fails because <code>run</code> was not mentioned explicitly in the query before:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">count</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">l1single_spectra</span><span class="p">,</span> <span class="n">wrt</span><span class="o">=</span><span class="n">data</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">runs</span><span class="p">)</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">CardinalityError</span><span class="p">:</span> <span class="n">Cannot</span> <span class="n">aggregate</span> <span class="o">&lt;</span><span class="n">ObjectQuery</span> <span class="n">OB</span><span class="o">-</span><span class="n">L1singleSpectrum</span><span class="o">&gt;</span> <span class="n">relative</span> <span class="n">to</span> <span class="o">&lt;</span><span class="n">ObjectQuery</span> <span class="n">OB</span><span class="o">-</span><span class="n">Run</span><span class="o">&gt;</span> <span class="n">since</span> <span class="n">it</span> <span class="ow">is</span> <span class="ow">not</span> <span class="n">a</span> <span class="n">parent</span><span class="o">.</span>
+</code></pre></div></p>
+</div>
 
 
 
