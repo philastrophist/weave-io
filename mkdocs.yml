@@ -50,3 +50,6 @@ nav:
       - Splitting queries: splitting.md
       - Stacking, aligning, and joining: stacking.md
       - Syntax summary: syntax-summary.md
+  - Maintenance:
+      - Schema: schema.md
+      - Writing to the database: writing.md

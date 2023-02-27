@@ -3,7 +3,7 @@
 !!! info
     This section will talk about how to access objects and their attributes in weaveio.
     It will talk about schema and relationships but it will not describe how to build a schema or write data to the database.
-    This is done in the [writing](writing.md) section.
+    This is done in the [writing](schema.md) section.
 
 An object in weaveio is a container for attributes.
 For example, a `Cat` object has a `tail_length` attribute. 
