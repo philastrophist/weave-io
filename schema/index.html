@@ -9,17 +9,15 @@
       
       
       
-        <link rel="prev" href="../quickstart-by-example/">
+        <link rel="prev" href="../syntax-summary/">
       
-      
-        <link rel="next" href="../objects/">
       
       <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.4.2, mkdocs-material-9.0.5">
     
     
       
-        <title>The database connector - WEAVE-IO</title>
+        <title>Schema - WEAVE-IO</title>
       
     
     
@@ -71,7 +69,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#the-database-connector" class="md-skip">
+        <a href="#designing-the-schema" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              The database connector
+              Schema
             
           </span>
         </div>
@@ -301,21 +299,11 @@
 
   
   
-    
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../database-connector/" class="md-nav__link">
         The database connector
       </a>
-      
     </li>
   
 
@@ -445,18 +433,20 @@
 
   
   
+    
+  
   
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
       
       
       
-      <input class="md-nav__toggle md-toggle " data-md-toggle="__nav_6" type="checkbox" id="__nav_6" >
+      <input class="md-nav__toggle md-toggle " data-md-toggle="__nav_6" type="checkbox" id="__nav_6" checked>
       
       
       
-        <label class="md-nav__link" for="__nav_6" tabindex="0" aria-expanded="false">
+        <label class="md-nav__link" for="__nav_6" tabindex="0" aria-expanded="true">
           Maintenance
           <span class="md-nav__icon md-icon"></span>
         </label>
@@ -472,11 +462,21 @@
               
   
   
+    
   
-    <li class="md-nav__item">
-      <a href="../schema/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         Schema
       </a>
+      
     </li>
   
 
@@ -536,26 +536,9 @@
 
 
 
-<h1 id="the-database-connector">The database connector</h1>
-<p>Every query in weaveio starts with a database connector - <code>Data</code>.
-The <code>Data</code> class represents all the information in the database and contains the backend for connecting to it.</p>
-<p>When designing the database schema, you inherit from the <code>Data</code> class. 
-However, for convenience, when you import <code>Data</code> from weaveio, the opr3 database connector is imported, not the base <code>Data</code> class.</p>
-<p><code>Data</code> has the following signature:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">Data</span><span class="p">(</span><span class="n">rootdir</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">Path</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">host</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> 
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>     <span class="n">dbname</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">password</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">user</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-</code></pre></div>
-Most of these arguments will have default values which have been specified (for example in the opr3 database connector class).
-However, you can override any of them if necessary and <code>user</code> and <code>password</code> are required arguments.
-You can also specify environment variables to avoid pushing passwords to github.
-These are:
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">WEAVEIO_DB</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">WEAVEIO_HOST</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">WEAVEIO_PORT</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="n">WEAVEIO_PASSWORD</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">WEAVEIO_USER</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="n">WEAVEIO_ROOTDIR</span>
-</code></pre></div></p>
+<h1 id="designing-the-schema">Designing the schema</h1>
+<p>The first part of setting up the database is designing the schema.</p>
+<p>Schema are written in the form of python classes that describe the objec</p>
 
 
 
