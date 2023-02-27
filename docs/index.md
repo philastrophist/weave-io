@@ -1,3 +1,7 @@
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/weaveio)
+![PyPI - Downloads](https://img.shields.io/pypi/dw/weaveio)
+[![forks - weave-io](https://img.shields.io/github/forks/philastrophist/weave-io?style=social)](https://github.com/philastrophist/weave-io)
+
 # weaveio
 This is documentation for the use, maintenance, and development of `weaveio`, the data product database tool in use by the WEAVE-LOFAR survey.
 
