@@ -237,6 +237,12 @@ def plot_graph(G, fname, format):
 
 class Data:
     filetypes = []
+    extra_hierarchies = []
+
+    def __new__(cls, *args, **kwargs):
+        from fastapi.encoders import ENCODERS_BY_TYPE
+        ENCODERS_BY_TYPE[cls] = lambda x: x.as_dict()
+        return super().__new__(cls)
 
     def __init__(self, rootdir: Union[Path, str] = None,
                  host: str = None, port=None, dbname=None,
@@ -256,9 +262,10 @@ class Data:
         self.hierarchy_graph.initialise()
         if self.filetypes:
             self.hierarchies = hierarchies_from_files(*self.filetypes, templates=True)
-            self.hierarchies.update({hh for h in self.hierarchies for hh in get_all_class_bases(h)})
         else:
             self.hierarchies = set()
+        self.hierarchies.update(set(self.extra_hierarchies))
+        self.hierarchies.update({hh for h in self.hierarchies for hh in get_all_class_bases(h)})
         self.class_hierarchies = {h.__name__: h for h in self.hierarchies}
         self.singular_hierarchies = {h.singular_name: h for h in self.hierarchies}  # type: Dict[str, Type[Hierarchy]]
         self.plural_hierarchies = {h.plural_name: h for h in self.hierarchies if h.plural_name != 'graphables'}
@@ -280,6 +287,12 @@ class Data:
                 self.relative_names[name][h.__name__] = relation
         self.relative_names = dict(self.relative_names)
         self.plural_relative_names = {make_plural(name): name for name in self.relative_names}
+
+    def __repr__(self):
+        return f'<Data({self.user}@{self.host}[{self.dbname}]:{self.port}:{self.rootdir})>'
+
+    def as_dict(self):
+        return {'user': self.user, 'host': self.host, 'dbname': self.dbname, 'port': self.port, 'rootdir': self.rootdir}
 
     def __dir__(self) -> List[str]:
         neighbors = [i.plural_name for i in self.hierarchies]
@@ -1083,12 +1096,22 @@ class Data:
         return all(self.is_singular_name(n) for n in pattern)
 
     def __getitem__(self, address):
+        if not isinstance(address, str):
+            raise KeyError(f"{self} cannot be indexed by integers.")
         try:
             return self.query.__getitem__(address)
         except (UserError, KeyError) as e:
             self.query.raise_error_with_suggestions(address, e)
 
     def __getattr__(self, item):
+        if item in ['keys', 'items', 'values']:
+            # catch fastapi jsonable_encoder requests for serialization
+            raise AttributeError(f"{self} has no attribute {item}")
+        if item.startswith('_'):
+            # query attributes are not allowed to start with '_'
+            # if we are here, then that means __getattribute__ has failed and we should fail here
+            # like a normal object
+            raise AttributeError(f"{self} has no attribute {item}")
         try:
             return self.query.__getattr__(item)
         except (UserError, KeyError) as e:

@@ -481,6 +481,14 @@ class Query(GenericObjectQuery):
         return self.__getattr__(item)
 
     def __getattr__(self, item):
+        if item in ['keys', 'items', 'values']:
+            # catch fastapi jsonable_encoder requests for serialization
+            raise AttributeError(f"{self} has no attribute {item}")
+        if item.startswith('_'):
+            # query attributes are not allowed to start with '_'
+            # if we are here, then that means __getattribute__ has failed and we should fail here
+            # like a normal object
+            raise AttributeError(f"{self} has no attribute {item}")
         try:
             if self._data.is_singular_name(item):
                 raise CardinalityError(f"Cannot start a query with a single object `{item}`")
@@ -699,6 +707,24 @@ class TableQuery(BaseQuery):
 
     def __getitem__(self, item):
         return self._lookup[item]
+
+    def __add__(self, other: 'TableQuery'):
+        if not isinstance(other, TableQuery):
+            raise TypeError(f"Can only append columns of another TableQuery to a TableQuery. {other} is a {type(other)}")
+        if other._previous is not self._previous:
+            raise ValueError(f"Cannot append columns of a table that does not share the same index object.")
+        attrs = self._attr_queries + other._attr_queries
+        names = self._names + other._names
+        duplicate_names = set(self._names) & set(other._names)
+        if duplicate_names:
+            raise ValueError(f"Cannot append columns of {other} to {self} since they share column names {duplicate_names}. "
+                             f"Change their column names with: `table[[{{'new_name': column}}]]` instead of table[[column]]")
+        force_plurals = [not a._single for a in attrs]
+        is_products = [a._is_products[0] for a in attrs]
+        n, collected = self._G.add_results_table(self._previous._node, [a._node for a in attrs], force_plurals)
+        t = TableQuery._spawn(self._previous, n, names=names, is_products=is_products, attr_queries=attrs)
+        t.one_row = self._G.is_singular_branch_relative_to_splits(n)
+        return t
 
 
 class ListAttributeQuery(AttributeQuery):

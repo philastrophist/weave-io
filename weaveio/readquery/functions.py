@@ -4,7 +4,7 @@ from math import floor, ceil
 import numpy as np
 
 from .utilities import mask_infs
-from .objects import AttributeQuery
+from .objects import AttributeQuery, ObjectQuery
 from .base import BaseQuery
 
 
@@ -44,3 +44,10 @@ isnull = ismissing
 
 def isnan(item):
     return _template_operator('{0} == 1.0/0.0', 'isnan', item, np.isnan, remove_infs=False, out_dtype='boolean')
+
+def _object_scalar_operator(item: ObjectQuery, op_string: str, op_name: str, returns_type: str):
+    n, wrt = item._G.add_scalar_operation(item._node, op_string, op_name, parameters=None)
+    return AttributeQuery._spawn(item, n, index_node=wrt, single=True, dtype=returns_type, factor_name=op_name)
+
+def neo4j_id(item: ObjectQuery):
+    return _object_scalar_operator(item, 'id({0})', 'neo4j_id', 'number')

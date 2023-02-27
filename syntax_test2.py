@@ -27,7 +27,7 @@ from weaveio.opr3.hierarchy import *
 from weaveio.opr3.l1 import *
 from weaveio.opr3.l2 import *
 
-a, b = WeaveTarget, Redrock
+a, b = Survey, Redrock
 
 # for p in nx.all_simple_paths(data.hierarchy_graph.parents_and_inheritance, a, b):
 #     print([i.__name__ for i in p])

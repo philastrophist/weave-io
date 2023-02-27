@@ -45,5 +45,11 @@ nav:
   - The database connector: database-connector.md
   - Reading:
       - Objects and their attributes: objects.md
+      - Building queries: building-queries.md
       - Designing result tables: tables.md
+      - Splitting queries: splitting.md
       - Stacking, aligning, and joining: stacking.md
+      - Syntax summary: syntax-summary.md
+  - Maintenance:
+      - Schema: schema.md
+      - Writing to the database: writing.md

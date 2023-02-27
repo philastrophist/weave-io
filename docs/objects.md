@@ -3,7 +3,7 @@
 !!! info
     This section will talk about how to access objects and their attributes in weaveio.
     It will talk about schema and relationships but it will not describe how to build a schema or write data to the database.
-    This is done in the [writing](writing.md) section.
+    This is done in the [writing](schema.md) section.
 
 An object in weaveio is a container for attributes.
 For example, a `Cat` object has a `tail_length` attribute. 
@@ -162,4 +162,55 @@ If `Cat` is defined as a type of `Animal` then `database.animals['name']()` will
 ```
 If Owner was defined as an animal then this query would also fetch the names of the owners too.
 
+
+
+## Attribute manipulation
+You may perform arithmetic on attributes of objects in the query. 
+All standard operators are supported: `<, >, <=,>=, +, -, /, *, **, &, |, ~` and they are type sensitive.
+
+For example:
+
+!!! success
+    ```python
+    >>> old_cat_filter = cat.age > cat.owner.age > 10
+    ```
+
+!!! failure
+    ```python
+    >>> cat.name > 10 
+    TypeError: > expected a number, got string
+    ```
+
+`weaveio` comes with its own versions of common scalar functions
+`log, exp, log10, sqrt, sign, floor, ceil, isnan`, and aggergating functions
+`sum, any, all, mean, std, count, exists, max, min`
+
+!!! warning
+    `weaveio` functions override the default python functions.
+    i.e. `sum` is replaced by `weaveio.sum` when importing with `from weaveio import *`.
+    `weaveio.sum` supports all the functionality of Python's `sum`when not confronted with a `weaveio` query.
+    Otherwise, it will return another `weaveio` query.
+    Since Python's `sum` cannot be used with `weaveio`, you are recommended to import using `from weaveio import *`.
+
+
+## Products
+`weaveio` supports accessing external data products which are not held in the database.
+The use case for this is if the attribute is too large and no benefit is gained by storing it in the database.
+For instance large numerical arrays should not be stored in database and should be marked as products when uploading.
+
+If an attribute is marked as a product, it cannot be manipulated like normal attributes. 
+All functions and operators will fail.
+However, you may still retrieve the data products in the same way as attributes:
+
+!!! success
+    ```python
+    >>> database.spectra.flux()
+    [np.array([...]), np.array([...]), ...]
+    ```
+
+!!! failure
+    ```python
+    >>> snr = database.spectra.flux * sqrt(database.spectra.ivar)
+    TypeError: `flux` is a product and cannot be manipulated in query, only retrieved.
+    ```
 
