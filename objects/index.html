@@ -12,10 +12,10 @@
         <link rel="prev" href="../database-connector/">
       
       
-        <link rel="next" href="../building-queries/">
+        <link rel="next" href="../tables/">
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.4.2, mkdocs-material-9.0.14">
+      <meta name="generator" content="mkdocs-1.4.2, mkdocs-material-9.0.5">
     
     
       
@@ -23,10 +23,10 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.113286f1.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.558e4712.min.css">
       
         
-        <link rel="stylesheet" href="../assets/stylesheets/palette.a0c5b2b5.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.2505c338.min.css">
       
       
 
@@ -245,16 +245,16 @@
       
       
       
-      <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+      <input class="md-nav__toggle md-toggle " data-md-toggle="__nav_3" type="checkbox" id="__nav_3" >
       
       
       
-        <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+        <label class="md-nav__link" for="__nav_3" tabindex="0" aria-expanded="false">
           Installation
           <span class="md-nav__icon md-icon"></span>
         </label>
       
-      <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+      <nav class="md-nav" aria-label="Installation" data-md-level="1">
         <label class="md-nav__title" for="__nav_3">
           <span class="md-nav__icon md-icon"></span>
           Installation
@@ -325,16 +325,16 @@
       
       
       
-      <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+      <input class="md-nav__toggle md-toggle " data-md-toggle="__nav_5" type="checkbox" id="__nav_5" checked>
       
       
       
-        <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+        <label class="md-nav__link" for="__nav_5" tabindex="0" aria-expanded="true">
           Reading
           <span class="md-nav__icon md-icon"></span>
         </label>
       
-      <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+      <nav class="md-nav" aria-label="Reading" data-md-level="1">
         <label class="md-nav__title" for="__nav_5">
           <span class="md-nav__icon md-icon"></span>
           Reading
@@ -350,7 +350,7 @@
   
     <li class="md-nav__item md-nav__item--active">
       
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      <input class="md-nav__toggle md-toggle" data-md-toggle="toc" type="checkbox" id="__toc">
       
       
         
@@ -408,38 +408,10 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#attribute-manipulation" class="md-nav__link">
-    Attribute manipulation
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#products" class="md-nav__link">
-    Products
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
       
-    </li>
-  
-
-            
-          
-            
-              
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../building-queries/" class="md-nav__link">
-        Building queries
-      </a>
     </li>
   
 
@@ -465,36 +437,8 @@
   
   
     <li class="md-nav__item">
-      <a href="../splitting/" class="md-nav__link">
-        Splitting queries
-      </a>
-    </li>
-  
-
-            
-          
-            
-              
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../stacking/" class="md-nav__link">
         Stacking, aligning, and joining
-      </a>
-    </li>
-  
-
-            
-          
-            
-              
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../syntax-summary/" class="md-nav__link">
-        Syntax summary
       </a>
     </li>
   
@@ -561,20 +505,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#attribute-manipulation" class="md-nav__link">
-    Attribute manipulation
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#products" class="md-nav__link">
-    Products
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -588,6 +518,7 @@
               <article class="md-content__inner md-typeset">
                 
                   
+
 
 
 <h1 id="objects-and-their-attributes-in-weaveio-with-cats">Objects and their attributes in weaveio with cats</h1>
@@ -721,51 +652,6 @@ If <code>Cat</code> is defined as a type of <code>Animal</code> then <code>datab
 <a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="p">[</span><span class="s1">&#39;Smudge&#39;</span><span class="p">,</span> <span class="s1">&#39;Felix&#39;</span><span class="p">,</span> <span class="s1">&#39;Whiskers&#39;</span><span class="p">]</span>
 </code></pre></div>
 If Owner was defined as an animal then this query would also fetch the names of the owners too.</p>
-<h2 id="attribute-manipulation">Attribute manipulation</h2>
-<p>You may perform arithmetic on attributes of objects in the query. 
-All standard operators are supported: <code>&lt;, &gt;, &lt;=,&gt;=, +, -, /, *, **, &amp;, |, ~</code> and they are type sensitive.</p>
-<p>For example:</p>
-<div class="admonition success">
-<p class="admonition-title">Success</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">old_cat_filter</span> <span class="o">=</span> <span class="n">cat</span><span class="o">.</span><span class="n">age</span> <span class="o">&gt;</span> <span class="n">cat</span><span class="o">.</span><span class="n">owner</span><span class="o">.</span><span class="n">age</span> <span class="o">&gt;</span> <span class="mi">10</span>
-</code></pre></div>
-</div>
-<div class="admonition failure">
-<p class="admonition-title">Failure</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">cat</span><span class="o">.</span><span class="n">name</span> <span class="o">&gt;</span> <span class="mi">10</span> 
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="ne">TypeError</span><span class="p">:</span> <span class="o">&gt;</span> <span class="n">expected</span> <span class="n">a</span> <span class="n">number</span><span class="p">,</span> <span class="n">got</span> <span class="n">string</span>
-</code></pre></div>
-</div>
-<p><code>weaveio</code> comes with its own versions of common scalar functions
-<code>log, exp, log10, sqrt, sign, floor, ceil, isnan</code>, and aggergating functions
-<code>sum, any, all, mean, std, count, exists, max, min</code></p>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p><code>weaveio</code> functions override the default python functions.
-i.e. <code>sum</code> is replaced by <code>weaveio.sum</code> when importing with <code>from weaveio import *</code>.
-<code>weaveio.sum</code> supports all the functionality of Python's <code>sum</code>when not confronted with a <code>weaveio</code> query.
-Otherwise, it will return another <code>weaveio</code> query.
-Since Python's <code>sum</code> cannot be used with <code>weaveio</code>, you are recommended to import using <code>from weaveio import *</code>.</p>
-</div>
-<h2 id="products">Products</h2>
-<p><code>weaveio</code> supports accessing external data products which are not held in the database.
-The use case for this is if the attribute is too large and no benefit is gained by storing it in the database.
-For instance large numerical arrays should not be stored in database and should be marked as products when uploading.</p>
-<p>If an attribute is marked as a product, it cannot be manipulated like normal attributes. 
-All functions and operators will fail.
-However, you may still retrieve the data products in the same way as attributes:</p>
-<div class="admonition success">
-<p class="admonition-title">Success</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">database</span><span class="o">.</span><span class="n">spectra</span><span class="o">.</span><span class="n">flux</span><span class="p">()</span>
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">...</span><span class="p">]),</span> <span class="o">...</span><span class="p">]</span>
-</code></pre></div>
-</div>
-<div class="admonition failure">
-<p class="admonition-title">Failure</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">snr</span> <span class="o">=</span> <span class="n">database</span><span class="o">.</span><span class="n">spectra</span><span class="o">.</span><span class="n">flux</span> <span class="o">*</span> <span class="n">sqrt</span><span class="p">(</span><span class="n">database</span><span class="o">.</span><span class="n">spectra</span><span class="o">.</span><span class="n">ivar</span><span class="p">)</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="ne">TypeError</span><span class="p">:</span> <span class="err">`</span><span class="n">flux</span><span class="err">`</span> <span class="ow">is</span> <span class="n">a</span> <span class="n">product</span> <span class="ow">and</span> <span class="n">cannot</span> <span class="n">be</span> <span class="n">manipulated</span> <span class="ow">in</span> <span class="n">query</span><span class="p">,</span> <span class="n">only</span> <span class="n">retrieved</span><span class="o">.</span>
-</code></pre></div>
-</div>
 
 
 
@@ -803,10 +689,10 @@ However, you may still retrieve the data products in the same way as attributes:
       <div class="md-dialog__inner md-typeset"></div>
     </div>
     
-    <script id="__config" type="application/json">{"base": "..", "features": ["content.code.annotate", "content.code.copy"], "search": "../assets/javascripts/workers/search.208ed371.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
+    <script id="__config" type="application/json">{"base": "..", "features": ["content.code.annotate", "content.code.copy"], "search": "../assets/javascripts/workers/search.e5c33ebb.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.2a6f1dda.min.js"></script>
+      <script src="../assets/javascripts/bundle.51d95adb.min.js"></script>
       
     
   </body>
