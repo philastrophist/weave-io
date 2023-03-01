@@ -39,9 +39,7 @@ markdown_extensions:
 nav:
   - Outline: index.md
   - Quickstart by example: quickstart-by-example.md
-  - Installation:
-      - User: user-installation.md
-      - Admin: admin-installation.md
+  - Installation: install.md
   - The database connector: database-connector.md
   - Reading:
       - Objects and their attributes: objects.md
