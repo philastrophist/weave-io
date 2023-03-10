@@ -1183,3 +1183,8 @@ class Data:
         string = '\n'.join([f'{i}. {s}' for i, s in enumerate(l, start=1)])
         msg = f"did you mean one of:\n{string}"
         raise exception.__class__(f"{str(exception.args[0])}\n{msg}") from exception
+
+    def _get_by_neo4j_id(self, neoid, plural_name):
+        from weaveio.readquery.functions import neo4j_id
+        q = self.query.__getattr__(plural_name)
+        return q[neo4j_id(q) == int(neoid)]
