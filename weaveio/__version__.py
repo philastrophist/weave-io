@@ -1,2 +1,2 @@
-__version__ = "2023.0.2"
-__changes__ = 'fixed unpassed params'
+__version__ = "2023.0.3"
+__changes__ = 'adjusted to work with WEAVE/LOFAR QAG'
