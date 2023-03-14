@@ -198,9 +198,11 @@ class BaseQuery(QueryFunctionBase):
                 return [SplitResult(split_indexes, query._to_table(skip, limit, distinct)) for split_indexes, query in self._iterate_groups(cursor_or_gen, new)], new
             return new._data.rowparser.parse_to_table(cursor_or_gen, new._names, new._is_products), new
 
-    def _post_process_table(self, result):
+    def _post_process_table(self, result, squeeze):
         if isinstance(result, SplitResult):
-            return result.index, self._post_process_table(result.result)
+            return result.index, self._post_process_table(result.result, squeeze)
+        if not squeeze:
+            return result
         if self.one_column:
             result = result[result.colnames[0]].data
         if self.one_row:
@@ -212,17 +214,17 @@ class BaseQuery(QueryFunctionBase):
             return row[row.colnames[0]]
         return row
 
-    def __call__(self, skip=0, limit=1000, distinct=False, **kwargs):
+    def __call__(self, skip=0, limit=1000, distinct=False, squeeze=True, **kwargs):
         tbl, new = self._to_table(skip, limit, distinct)
         if isinstance(tbl, list):
             return tbl
-        tbl = new._post_process_table(tbl)
+        tbl = new._post_process_table(tbl, squeeze)
         try:
             if not len(tbl):
                 return tbl
         except TypeError:
             return tbl  # not a table, just a value, so return it
-        if limit == 1:
+        if limit == 1 and squeeze:
             return tbl[0]
         try:
             if limit == len(tbl):
