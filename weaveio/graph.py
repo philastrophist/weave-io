@@ -15,13 +15,13 @@ from weaveio.context import ContextMeta
 from weaveio.writequery import CypherQuery
 
 missing_types = {int:  np.inf, float: np.inf, str: '<MISSING>', type(None): np.inf, None: np.inf, bool: np.inf, datetime: datetime(1900, 1, 1, 0, 0)}
-convert_types = {int:  int, float: float, str: str, type(None): float, None: float, bool: float,
+convert_types = {bool: bool, np.bool: bool, np.bool_: bool, int:  int, float: float, str: str, type(None): float, None: float,
                  datetime: lambda x: datetime(x.year, x.month, x.day, x.hour, x.minute, x.second),
                  list: list, tuple: tuple, np.ndarray: np.ndarray, pd.DataFrame: pd.DataFrame, pd.Series: pd.Series,
                  dict: dict, Table: Table,
                  np.int64: int, np.float64: float, np.float32: float, np.int32:int,
-                 np.str_: str, np.str: str, np.bool: bool, np.bool_: bool,
-                 Path: str}
+                 np.str_: str, np.str: str,
+                 Path: str}  # order matters
 
 def is_null(x):
     try:
@@ -80,6 +80,7 @@ def _convert_datatypes(x, nan2missing=True, none2missing=True, surrounding_type=
         if from_type is not None:
             if isinstance(x, from_type):
                 x = to_type(x)
+                break
     return x
 
 

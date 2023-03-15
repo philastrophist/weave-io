@@ -260,7 +260,7 @@ class QueryGraph:
             return nodes[0]
         return sorted(set.intersection(*[self.above_state(n, no_wrt=True) for n in nodes]), key=lambda n: len(nx.ancestors(self.traversal_G, n)))[-1]
 
-    def latest_object_node(self, a, b):
+    def latest_object_node(self, *nodes):
         """
         a and b have a shared ancestor
         Scenarios:
@@ -269,21 +269,24 @@ class QueryGraph:
             a = plural; b = single -> choose ordering object of a
             a = plural; b = plural -> disallowed [at least one must be aggregated back]
         """
-        try:
-            cardinal_a = next(self.backwards_G.successors(a))
-        except StopIteration:
-            cardinal_a = a
-        try:
-            cardinal_b = next(self.backwards_G.successors(b))
-        except StopIteration:
-            cardinal_b = b
-        shared = self.latest_shared_ancestor(cardinal_a, cardinal_b)
-        if shared == cardinal_a:
-            return cardinal_b
-        elif shared == cardinal_b:
-            return cardinal_a
+        cardinals = []
+        for node in nodes:
+            try:
+                cardinal = next(self.backwards_G.successors(node))
+            except StopIteration:
+                cardinal = node
+            cardinals.append(cardinal)
+
+        shared = self.latest_shared_ancestor(*cardinals)
+        is_shared = [shared == c for c in cardinals]
+        if all(is_shared):
+            return shared
+        if sum(is_shared) == len(is_shared) - 1:
+            for c, i in zip(cardinals, is_shared):
+                if not i:
+                    return c
         else:
-            raise ParserError(f"One of [{a}, {b}] must be a parent of the other. {shared} != [{a}, {b}] ")
+            raise ParserError(f"One of {nodes} must be a parent of the other. {shared} not in {nodes} ")
 
     def is_singular_branch(self, a, b):
         path = nx.shortest_path(self.above_graph, b, a)
