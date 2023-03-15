@@ -432,12 +432,12 @@ class Data:
         d['dbupdated'] = ['CREATE INDEX n_dbupdated FOR (n:Hierarchy) ON n.`_dbupdated`']
         return d
 
-    def apply_constraints(self):
+    def apply_constraints(self, silent=False):
         if not self.write_allowed:
             raise IOError(f"Writing is not allowed")
         templates = set()
         equivalencies = set()
-        for hier, qs in tqdm(self.make_constraints_cypher().items(), desc='applying constraints'):
+        for hier, qs in tqdm(self.make_constraints_cypher().items(), desc='applying constraints', disable=silent):
             if not qs:
                 templates.add(hier)
             for q in qs:
