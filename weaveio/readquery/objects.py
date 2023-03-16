@@ -10,6 +10,7 @@ with waiting,
 it treats two chained expressions as one action
 """
 import collections
+import numpy as np
 from copy import copy
 from typing import List, TYPE_CHECKING, Union, Tuple, Dict, Any, Iterable
 
@@ -567,7 +568,7 @@ class AttributeQuery(BaseQuery):
     def _basic_scalar_function(self, name):
         return self._perform_arithmetic(f'{name}({{0}})', name)
 
-    def _basic_math_operator(self, operator, other, switch=False, out_dtype='number'):
+    def _basic_math_operator(self, operator, other, switch=False, out_dtype='number', expected_dtype='number'):
         if not isinstance(other, AttributeQuery):
             other = self._G.add_parameter(other, 'param')
             string_op = f'{other} {operator} {{0}}' if switch else f'{{0}} {operator} {other}'
@@ -575,25 +576,49 @@ class AttributeQuery(BaseQuery):
         else:
             string_op = f'{{1}} {operator} {{0}}' if switch else f'{{0}} {operator} {{1}}'
             ps = []
-        return self._perform_arithmetic(string_op, operator, other, returns_dtype=out_dtype, parameters=ps)
+        return self._perform_arithmetic(string_op, operator, other, expected_dtype=expected_dtype, returns_dtype=out_dtype, parameters=ps)
+
+    def _bitwise_operator(self, operator, other, switch=False):
+        dtypes = {self.dtype, other.dtype if isinstance(other, AttributeQuery) else type(other)}
+        if not dtypes.issubset({'integer', int}):
+            raise TypeError(f"For a bitwise operation both sides must be integers")
+        if not isinstance(other, AttributeQuery):
+            other = self._G.add_parameter(other, 'param')
+            string_op = f'apoc.bitwise.op({other}, "{operator}", {{0}})' if switch else f'apoc.bitwise.op({{0}}, "{operator}", {other})'
+            ps = [other]
+        else:
+            string_op = f'apoc.bitwise.op({{1}}, "{operator}", {{0}})' if switch else f'apoc.bitwise.op({{0}}, "{operator}", {{1}})'
+            ps = []
+        return self._perform_arithmetic(string_op, operator, other, returns_dtype='integer', parameters=ps)
+
+    def _logic_operator(self, logic_operator, bitwise_symbol, other, switch=False):
+        """
+        If both sides are integers perform bitwise operations
+        Otherwise convert to boolean and do normal logical operations
+        """
+        try:
+            # do bitwise
+            return self._bitwise_operator(bitwise_symbol, other, switch)
+        except TypeError:
+            return self._basic_math_operator(logic_operator, other, expected_dtype='boolean', out_dtype='boolean')
 
     def __and__(self, other):
-        return self._basic_math_operator('and', other, out_dtype='boolean')
+        return self._logic_operator('and', '&', other)
 
     def __rand__(self, other):
-        return self._basic_math_operator('and', other, switch=True, out_dtype='boolean')
+        return self._logic_operator('and', '&', other, switch=True)
 
     def __or__(self, other):
-        return self._basic_math_operator('or', other, out_dtype='boolean')
+        return self._logic_operator('or', '|', other)
 
     def __ror__(self, other):
-        return self._basic_math_operator('or', other, switch=True, out_dtype='boolean')
+        return self._logic_operator('or', '|', other, switch=True)
 
     def __xor__(self, other):
-        return self._basic_math_operator('xor', other, out_dtype='boolean')
+        return self._logic_operator('xor', '^', other)
 
     def __rxor__(self, other):
-        return self._basic_math_operator('xor', other, switch=True, out_dtype='boolean')
+        return self._logic_operator('xor', '^', other, switch=True)
 
     def __invert__(self):
         return self._basic_scalar_function('not')

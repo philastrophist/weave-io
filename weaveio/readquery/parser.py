@@ -544,8 +544,11 @@ class QueryGraph:
             if allowed_cols != value.colnames:
                 warnings.warn(f"Columns {set(value.colnames) - set(allowed_cols)} were dropped due to size limitations (>=100)")
                 value = value[allowed_cols]
-        if value in self.parameters.values():
-            return [k for k, v in self.parameters.items() if v == value][0]
+        # if value in self.parameters.values():
+        #     return [k for k, v in self.parameters.items() if v is value][0]
+        for k, v in self.parameters.items():
+            if value is v:
+                return k
         name = f'${name}' if name is not None else '$'
         varname = self.get_variable_name(name)
         self.parameters[varname] = value
