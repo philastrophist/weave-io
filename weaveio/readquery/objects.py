@@ -565,8 +565,8 @@ class AttributeQuery(BaseQuery):
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name, parameters=parameters)
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype, factor_name=op_name)
 
-    def _basic_scalar_function(self, name):
-        return self._perform_arithmetic(f'{name}({{0}})', name)
+    def _basic_scalar_function(self, name, expected_dtype=None, returns_dtype=None):
+        return self._perform_arithmetic(f'{name}({{0}})', name, expected_dtype=expected_dtype, returns_dtype=returns_dtype)
 
     def _basic_math_operator(self, operator, other, switch=False, out_dtype='number', expected_dtype='number'):
         if not isinstance(other, AttributeQuery):
@@ -621,7 +621,7 @@ class AttributeQuery(BaseQuery):
         return self._logic_operator('xor', '^', other, switch=True)
 
     def __invert__(self):
-        return self._basic_scalar_function('not')
+        return self._basic_scalar_function('not', expected_dtype='boolean', returns_dtype='boolean')
 
     def __add__(self, other):
         return self._basic_math_operator('+', other)
@@ -642,10 +642,10 @@ class AttributeQuery(BaseQuery):
         return self._basic_math_operator('-', other, switch=True)
 
     def __truediv__(self, other):
-        return self._basic_math_operator('/', other)
+        return self._basic_math_operator('/', other, expected_dtype='float', out_dtype='float')
 
     def __rtruediv__(self, other):
-        return self._basic_math_operator('/', other, switch=True)
+        return self._basic_math_operator('/', other, expected_dtype='float', out_dtype='float', switch=True)
 
     def __eq__(self, other):
         op = '='
