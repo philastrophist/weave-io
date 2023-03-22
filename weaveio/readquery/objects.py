@@ -727,8 +727,8 @@ class TableQuery(BaseQuery):
         self._attr_queries = attr_queries
         self._lookup = {k: v for k, v in zip(self._names, self._attr_queries)}
 
-    def _aggregate(self, wrt, string_op, op_name, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None):
-        return self._previous._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs)
+    def _aggregate(self, wrt, string_op, op_name, predicate=False, expected_dtype=None, returns_dtype=None, remove_infs=None, distinct=False):
+        return self._previous._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs, distinct)
 
     def __getitem__(self, item):
         return self._lookup[item]
