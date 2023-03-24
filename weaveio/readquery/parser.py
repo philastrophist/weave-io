@@ -437,11 +437,11 @@ class QueryGraph:
             op_format_string = dtype_conversion(input_dtype, expected_dtype, op_format_string, '{0}')
         if remove_infs:
             op_format_string = op_format_string.format(mask_infs('{0}'))
-        if wrt_node not in nx.ancestors(self.dag_G, parent_node):
-            raise SyntaxError(f"{parent_node} cannot be aggregated to {wrt_node} ({wrt_node} is not an ancestor of {parent_node})")
-        if op_name == 'aggr':
+        if wrt_node == parent_node or op_name == 'aggr':
             statement = NullStatement(self.G.nodes[parent_node]['variables'] + [wrt_node], self)
         else:
+            if wrt_node not in nx.ancestors(self.dag_G, parent_node):
+                raise SyntaxError(f"{parent_node} cannot be aggregated to {wrt_node} ({wrt_node} is not an ancestor of {parent_node})")
             statement = Aggregate(self.G.nodes[parent_node]['variables'][0], wrt_node, op_format_string, op_name, self)
         previous = next(self.backwards_G.successors(parent_node), parent_node)
         dependencies = [] if previous == parent_node else [parent_node]

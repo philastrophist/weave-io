@@ -17,16 +17,18 @@ def ragged_array(data):
     >>> ragged_array([[1, 2, 3], [4, 5, 6, 7]])
     np.mask.array([[1, 2, 3, --], [4, 5, 6, 7]], mask=[[False, False, False, True], [False, False, False, False]])
     """
-    shapes = [np.ma.asarray(i).shape for i in data]
+    darrays = [np.ma.asarray(d) for d in data]
+    dtypes = {d.dtype for d in darrays if not np.all(d.mask)}
+    if not dtypes:
+        dtype = np.float_
+    else:
+        dtype = np.stack([np.array([], dtype=d) for d in dtypes]).dtype
+    shapes = [d.shape for d in darrays]
     if len(set(shapes)) == 1:
         return data
     maxshape = np.max(shapes, axis=0)
-    array = np.ma.empty((len(data), *maxshape), dtype=np.asarray(data[0]).dtype)
+    array = np.ma.empty((len(data), *maxshape), dtype=dtype)
     array.mask = True
-    try:
-        array.fill_value = np.nan
-    except TypeError:
-        pass
     slcs = [tuple(slice(0, s) for s in shape_tuple) for shape_tuple in shapes]
     for i, (slc, d) in enumerate(zip(slcs, data)):
         array.__setitem__((i, *slc), d)
@@ -65,7 +67,7 @@ class MaskedColumn(AstropyMaskedColumn):
         Apply a function to each row in the column. Returns nd array if possible otherwise an unstructured array.
         :param func: Callable to apply to each row. Takes an array/scalar depending on the type of the column.
         """
-        return ragged_column([func(d, *args, **kwargs) for d in self.data], func.__name__)
+        return ragged_column([func(d, *args, **kwargs) for d in self.data], self.name)
 
     def masked(self, mask, inplace=False):
         if inplace:
