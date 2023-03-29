@@ -227,6 +227,8 @@ class GraphableMeta(type):
                 raise RuleBreakingException(f"The name {factor} is not allowed for class {name}")
             if any(factor.startswith(p) for p in FORBIDDEN_PROPERTY_PREFIXES):
                 raise RuleBreakingException(f"The name {factor} may not start with any of {FORBIDDEN_PROPERTY_PREFIXES} for {name}")
+            if not factor.islower():
+                raise RuleBreakingException(f"The name {factor} must be lowercase")
         # remove duplicates from the list dct['parents'] whilst maintaining its order
         if 'parents' in dct:
             dct['parents'] = list(OrderedDict.fromkeys(dct['parents']))
@@ -671,12 +673,6 @@ class Graphable(metaclass=GraphableMeta):
         obj.node = node
         return obj
 
-    @classmethod
-    def from_neo4j_id(cls, id):
-        node = match_id_node(labels=cls.neotypes, id=id)
-        obj = cls.without_creation()
-        obj.node = node
-        return obj
 
     def __repr__(self):
         i = ''
@@ -700,12 +696,17 @@ class Hierarchy(Graphable):
         return thing
 
     @classmethod
+    def from_neo4j_id(cls, id):
+        node = match_id_node(labels=cls.neotypes, id=id)
+        return cls.from_cypher_variable(node)
+
+    @classmethod
     def as_factors(cls, *names, prefix=''):
         if len(names) == 1 and isinstance(names[0], list):
             names = prefix+names[0]
         if cls.parents+cls.children:
             raise TypeError(f"Cannot use {cls} as factors {names} since it has defined parents and children")
-        return [f"{prefix}{name}_{factor}" if factor != 'value' else f"{prefix}{name}" for name in names for factor in cls.factors]
+        return [f"{prefix}{name}_{factor}".lower() if factor != 'value' else f"{prefix}{name}".lower() for name in names for factor in cls.factors]
 
     @classmethod
     def from_name(cls, name):
@@ -801,23 +802,24 @@ class Hierarchy(Graphable):
             except TypeError:
                 l = 1
             nodetype = Multiple.from_any(nodetype)
-            if not isinstance(value, Collection):
-                if not (nodetype.minnumber <= l <= nodetype.maxnumber):
-                    raise ValueError(f"{self.__class__.__name__} requires {nodetype.minnumber} <= count({name}) <= {nodetype.maxnumber}. "
-                                     f"{l} received.")
-                if isinstance(value, Hierarchy):
-                    invalid_types = {v for v in value if isinstance(v, nodetype.node)}
-                    if invalid_types:
-                        raise TypeError(f"{self.__class__.__name__} can only take {nodetype.node.__name__} not {invalid_types}")
-            else:
-                validate_number(value, nodetype.minnumber, nodetype.maxnumber, self.__class__.__name__, nodetype.node.__name__)
-                validate_type(value, nodetype.node.__name__)
+            if not do_not_create:
+                if not isinstance(value, Collection):
+                    if not (nodetype.minnumber <= l <= nodetype.maxnumber):
+                        raise ValueError(f"{self.__class__.__name__} requires {nodetype.minnumber} <= count({name}) <= {nodetype.maxnumber}. "
+                                         f"{l} received.")
+                    if isinstance(value, Hierarchy):
+                        invalid_types = {v for v in value if isinstance(v, nodetype.node)}
+                        if invalid_types:
+                            raise TypeError(f"{self.__class__.__name__} can only take {nodetype.node.__name__} not {invalid_types}")
+                else:
+                    validate_number(value, nodetype.minnumber, nodetype.maxnumber, self.__class__.__name__, nodetype.node.__name__)
+                    validate_type(value, nodetype.node.__name__)
             if name not in factors:
                 if name in children:
                     successors[name] = value, nodetype
                 if name in parents:
                     predecessors[name] = value, nodetype
-        if len(kwargs):
+        if len(kwargs) and not do_not_create:
             raise KeyError(f"{kwargs.keys()} are not relevant to {self.__class__}")
         self.predecessors = predecessors
         self.successors = successors

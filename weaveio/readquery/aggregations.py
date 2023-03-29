@@ -48,7 +48,7 @@ def min(item, wrt=None, *args, **kwargs):
 
 
 def count(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('count', False, len, item, wrt, returns_dtype='number', args=args, kwargs=kwargs)
+    return _template_aggregator('count', False, len, item, wrt, returns_dtype='integer', args=args, kwargs=kwargs)
 
 
 def exists(item, wrt=None, *args, **kwargs):

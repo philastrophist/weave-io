@@ -84,14 +84,15 @@ class ObjectQuery(GenericObjectQuery):
         """
         For use with ['*']
         """
-        single_objs = self._data.all_single_links_to_hierarchy(self._obj)
-        factors = {f if o.__name__ == self._obj else f"{o.singular_name}.{f}" for o in single_objs for f in o.products_and_factors}
-        try:
-            factors.remove('id')
-            factors = ['id'] + sorted(factors)
-        except KeyError:
-            factors = sorted(factors)
-        return factors
+        # single_objs = self._data.all_single_links_to_hierarchy(self._data.class_hierarchies[self._obj])
+        # factors = {f if o.__name__ == self._obj else f"{o.singular_name}.{f}" for o in single_objs for f in o.products_and_factors}
+        # try:
+        #     factors.remove('id')
+        #     factors = ['id'] + sorted(factors)
+        # except KeyError:
+        #     factors = sorted(factors)
+
+        return self._data.class_hierarchies[self._obj].products_and_factors
 
     def _select_all_attrs(self):
         h = self._data.class_hierarchies[self._data.class_name(self._obj)]
@@ -186,7 +187,7 @@ class ObjectQuery(GenericObjectQuery):
         r._index_node = self._node
         return r
 
-    def _make_table(self, items):
+    def _make_table(self, items, all_from_same=False):
         """
         obj['factor_string', AttributeQuery]
         obj['factora', 'factorb']
@@ -213,7 +214,7 @@ class ObjectQuery(GenericObjectQuery):
                 attrs.append(new)
         force_plurals = [not a._single for a in attrs]
         is_products = [a._is_products[0] for a in attrs]
-        n, collected = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals)
+        n, collected = self._G.add_results_table(self._node, [a._node for a in attrs], force_plurals, treat_equal=all_from_same)
         names = process_names([i if isinstance(i, str) else list(i.keys())[0] if isinstance(i, dict) else None for i in items], attrs)
         t = TableQuery._spawn(self, n, names=names, is_products=is_products, attr_queries=attrs)
         t.one_row = self._G.is_singular_branch_relative_to_splits(n)
@@ -253,7 +254,7 @@ class ObjectQuery(GenericObjectQuery):
         """
         raise NotImplementedError
 
-    def _getitems(self, items, by_getitem):
+    def _getitems(self, items, by_getitem, all_from_same=False):
         # can be called with items signifying columns or where items are indexes, need to distinguish here
         # standardise item list
         if isinstance(items, dict):
@@ -286,7 +287,7 @@ class ObjectQuery(GenericObjectQuery):
         if not all(isinstance(i, (str, float, int, AttributeQuery, TableQuery, AlignedQuery)) for i in values):
             raise TypeError(f"Cannot index by non str/float/int/AttributeQuery values")
         if all(self._data.is_valid_name(i) or isinstance(i, (AttributeQuery, TableQuery, AlignedQuery)) for i in values):
-            return self._make_table(items)
+            return self._make_table(items, all_from_same=all_from_same)
         if any(self._data.is_valid_name(i) for i in values):
             raise SyntaxError(f"You may not mix filtering by id and building a table with attributes")
         # go back and be better
@@ -306,7 +307,7 @@ class ObjectQuery(GenericObjectQuery):
             return self._previous._traverse_by_object_index(self._obj, item)
         elif item == '*':
             all_factors = self._get_all_factors_table()
-            return self._getitems(all_factors, by_getitem)
+            return self._getitems(all_factors, by_getitem, all_from_same=True)
         elif item == '**':
             all_factors = self._data.class_hierarchies[self._obj].products_and_factors
             return self._getitems(all_factors, by_getitem)
@@ -535,7 +536,7 @@ class AttributeQuery(BaseQuery):
             raise SyntaxError(f"You may not perform an operation on {self} and {item} since one is not an ancestor of the other")
         return AttributeQuery._spawn(self, n, index_node=n, single=True, dtype=self.dtype)
 
-    def _perform_arithmetic(self, op_string, op_name, other=None, expected_dtype=None, returns_dtype=None, parameters=None):
+    def _perform_arithmetic(self, op_string, op_name, *others, expected_dtype=None, returns_dtype=None, parameters=None):
         """
         arithmetics
         [+, -, /, *, >, <, ==, !=, <=, >=]
@@ -548,21 +549,22 @@ class AttributeQuery(BaseQuery):
         e.g. sum(ob.l1stackedspectra[ob.l1stackedspectra.camera == 'red'].snr, wrt=ob) > ob.l1stackedspectra.snr is allowed since there is a shared parent,
              we take ob.l1stackedspectra as the hierarchy level in order to continue
         """
-        if isinstance(other, ObjectQuery):
+        if any(isinstance(o, ObjectQuery) for o in others):
             raise TypeError(f"Cannot do arithmetic directly on objects")
         if expected_dtype is not None:
-            op_string = dtype_conversion(self.dtype, expected_dtype, op_string, '{0}', '{1}')
-            # op_string = op_string.replace('{0}', f'to{expected_dtype}({{0}})')
-            # op_string = op_string.replace('{1}', f'to{expected_dtype}({{1}})')  # both arguments
-        if isinstance(other, BaseQuery):
-            op_string = op_string.format(mask_infs('{0}'), mask_infs('{1}'))
-            try:
-                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node, other._node, parameters=parameters)
-            except ParserError:
-                raise SyntaxError(f"You may not perform an operation on {self} and {other} since one is not an ancestor of the other")
-        else:
-            op_string = op_string.format(mask_infs('{0}'))
+            var_templates = [f'{{{i}}}' for i in range(len(others)+1)]
+            op_string = dtype_conversion(self.dtype, expected_dtype, op_string, *var_templates)
+        masks = [mask_infs(f'{{{iother}}}') if isinstance(other, BaseQuery) else "{iother}" for iother, other in enumerate((self, *others))]
+        op_string = op_string.format(*masks)
+        if not any(isinstance(o, BaseQuery) for o in others):
             n, wrt = self._G.add_scalar_operation(self._node, op_string, op_name, parameters=parameters)
+        else:
+            try:
+                n, wrt = self._G.add_combining_operation(op_string, op_name, self._node,
+                                                         *[other._node for other in others if isinstance(other, BaseQuery)],
+                                                         parameters=parameters)
+            except ParserError:
+                raise SyntaxError(f"You may not perform an operation on {self} and others since one is not an ancestor of the other")
         return AttributeQuery._spawn(self, n, index_node=wrt, single=True, dtype=returns_dtype, factor_name=op_name)
 
     def _basic_scalar_function(self, name, expected_dtype=None, returns_dtype=None):
@@ -677,7 +679,7 @@ class AttributeQuery(BaseQuery):
         return self._basic_scalar_function('floor')
 
     def __round__(self, ndigits: int):
-        raise self._perform_arithmetic(f'round({{0}}, {ndigits}', f'round{ndigits}')
+        return self._perform_arithmetic(f'round({{0}}, {ndigits})', f'round{ndigits}')
 
     def __neg__(self):
         return self._perform_arithmetic('-{{0}}', 'neg')

@@ -41,8 +41,10 @@ def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
             end = naive_ordering[-1]
     if ordering is None:
         ordering = [start]
+    else:
+        ordering = list(ordering)
     node = start
-    done = set() if done is None else done  # stores wrt edges and visited nodes
+    done = set() if done is None else set(done)  # stores wrt edges and visited nodes
     while True:
         dependencies = dep_graph.predecessors(node)
         if not all(dep in done for dep in dependencies):
@@ -50,12 +52,20 @@ def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
         options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
         if not options:
             options = [o for o in traversal_graph.successors(node) if o not in done]   # where to go next?
+            option_edges = [graph.edges[(node, o)] for o in options]
+            op_options = []
+            for o, e in zip(options, option_edges):
+                if e.get('type', '') == 'operation' and e.get('single', False):
+                    if all(dep in done for dep in dep_graph.predecessors(o)):
+                        op_options.append(o)
+            # do all operations first since they can't be wrong!
+            options = op_options + [o for o in options if o not in op_options]
         if not options:
             # if you cant go anywhere and you're not done, then this recursive path is bad
             if node != end:
                 raise DeadEndException
             else:
-                return ordering
+                return ordering, done
         elif len(options) == 1:
             # if there is only one option, go there... obviously
             edge = (node, options[0])
@@ -63,7 +73,7 @@ def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
                 # recursive path is bad if you have to go over the same wrt edge more than once
                 raise DeadEndException
             elif graph.edges[edge]['type'] == 'wrt':
-                done.add(edge)
+                done.add(edge)  # only add edges for wrt
                 # and now also reset the branch listed in `ordering[iwrt:inode] so it can be traversed again`
                 # only reset the nodes/edges which have other dep-paths outside the branch
                 most_recent_mention = len(ordering) - ordering[::-1].index(options[0]) - 1
@@ -89,7 +99,7 @@ def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
                     new_ordering.append(option)
                     new_done.add(node)
                     new_done.add(option)
-                    ordering = traverse(graph, option, end, new_done, new_ordering, views)
+                    ordering, new_done = traverse(graph, option, end, tuple(new_done), tuple(new_ordering), views)
                     done.update(new_done)
                     node = ordering[-1]
                     break
@@ -213,7 +223,7 @@ def merge_attribute_forks(graph):
     """
 
 
-def simplify_graph(graph):
+def simplify_graph(graph: HashedDiGraph):
     return graph
 
 
@@ -482,34 +492,46 @@ class QueryGraph:
         statement = Unwind(wrt_node, to_unwind, 'unwound', self, parameters=parameters)
         return add_unwind(self.G, wrt_node, statement, *dependencies)
 
-    def collect_or_not(self, index_node, other_node, force_plural):
+    def collect_or_nots(self, index_node, other_nodes, force_plurals, treat_equal, already_aggregated_to_index):
         """
         Collect `other_node` with respect to the shared common ancestor of `index_node` and `other_node`.
         If other_node is above the index, fold back to cardinal node
         if not, fold back to shared ancestor
         """
-        try:
-            if next(self.backwards_G.successors(other_node)) == index_node:  # if its not already aggregated to the index
-               return other_node
-        except StopIteration:
-            pass
-        shared = self.latest_shared_ancestor(index_node, other_node)
-        if force_plural:
-            return self.add_aggregation(other_node, shared, 'collect')
-        if self.is_singular_branch(shared, other_node):
-            try:
-                if next(self.backwards_G.successors(other_node)) == shared:
-                    return other_node
-            except StopIteration:
-                pass
-            # then fold back singularly (i.e. do nothing in terms of cypher)
-            return self.add_aggregation(other_node, shared, 'aggr')
-        else:
-            return self.add_aggregation(other_node, shared, 'collect')
+        # successors = [next(self.backwards_G.successors(n, None)) for n in other_nodes]
+        # shareds = [self.latest_shared_ancestor(index_node, n) for n in other_nodes]
+        if already_aggregated_to_index:
+            return other_nodes
+        results = []
+        for other_node, force_plural in zip(other_nodes, force_plurals):
+            successor = next(self.backwards_G.successors(other_node), None)
+            if not force_plural and successor == index_node:
+                # if its not already aggregated to the index
+                if treat_equal:
+                    return other_nodes
+                results.append(other_node)
+                continue
+            shared = self.latest_shared_ancestor(index_node, other_node)
+            if force_plural:
+                if treat_equal:
+                    return [self.add_aggregation(o, shared, 'collect') for o in other_nodes]
+                results.append(self.add_aggregation(other_node, shared, 'collect'))
+            else:
+                if successor == shared:
+                    if treat_equal:
+                        return other_nodes
+                    results.append(other_node)
+                else:
+                    how = 'aggr' if self.is_singular_branch(shared, other_node) else 'collect'
+                    if treat_equal:
+                        return [self.add_aggregation(o, shared, how) for o in other_nodes]
+                    results.append(self.add_aggregation(other_node, shared, how))
+        return results
 
-    def add_results_table(self, index_node, column_nodes, force_plurals: List[bool], dropna=None):
+    def add_results_table(self, index_node, column_nodes, force_plurals: List[bool], dropna=None,
+                          treat_equal=False, already_aggregated_to_index=False):
         # fold back column data into the index node
-        column_nodes = [self.collect_or_not(index_node, d, p) for d, p in zip(column_nodes, force_plurals)] # fold back when combining
+        column_nodes = self.collect_or_nots(index_node, column_nodes, force_plurals, treat_equal, already_aggregated_to_index) # fold back when combining
         deps = [self.G.nodes[d]['variables'][0] for d in column_nodes]
         try:
             vs = self.G.nodes[index_node]['variables'][0]
@@ -574,13 +596,15 @@ class QueryGraph:
 
     def traverse_query(self, result_node=None, simplify=True):
         graph = self.restricted(result_node)
-        verify(graph)
+        # verify(graph)
         if simplify:
             graph = simplify_graph(graph)
-        return traverse(graph)
+        return traverse(graph)[0]
 
-    def verify_traversal(self, goal, ordering):
+    def verify_traversal(self, goal, ordering, simplify=True):
         graph = self.restricted(goal)
+        if simplify:
+            graph = simplify_graph(graph)
         return verify_traversal(graph, ordering)
 
     def cypher_lines(self, result, no_cache=False):
