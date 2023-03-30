@@ -697,7 +697,7 @@ class Data:
                 batches = batches[i:i+1]
                 logging.info(f"Writing terminated because `test_one=True`")
                 break
-        if len(batches) and not dryrun:
+        if len(out_batches) and not dryrun:
             df = pd.DataFrame(stats)
             df['timestamp'] = timestamps
             df['elapsed_time'] = elapsed_times
