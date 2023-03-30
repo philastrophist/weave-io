@@ -100,15 +100,15 @@ def switch(item: AttributeQuery, states: Union[Dict[Any, Union[AttributeQuery, A
     dtypes = {result.dtype if isinstance(result, AttributeQuery) else type(result) for result in list(states.values())+[_else]}
     if ObjectQuery in dtypes:
         raise TypeError(f"Switching on objects is not yet supported")
-    if dtypes.issubset({'integer', int, np.int, np.int_}):
+    if dtypes.issubset({'integer', int, np.int, np.int_, None, type(None)}):
         dtype = 'integer'
-    elif dtypes.issubset({'float', float, np.float, np.float_}):
+    elif dtypes.issubset({'float', float, np.float, np.float_, None, type(None)}):
         dtype = 'float'
-    elif dtypes.issubset({'number', float, int, None}):
+    elif dtypes.issubset({'number', float, int, None, type(None)}):
         dtype = 'number'
-    elif dtypes.issubset({'boolean', bool, None}):
+    elif dtypes.issubset({'boolean', bool, None, type(None)}):
         dtype = 'boolean'
-    elif dtypes.issubset({'string', str, None}):
+    elif dtypes.issubset({'string', str, None, type(None)}):
         dtype = 'string'
     else:
         raise TypeError(f"All switch result values, including else, must be of the same type. Types given: {dtypes}")

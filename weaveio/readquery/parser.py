@@ -457,11 +457,12 @@ class QueryGraph:
         dependencies = [] if previous == parent_node else [parent_node]
         return add_aggregation(self.G, previous, wrt_node, statement, dependencies=dependencies)
 
-    def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None, input_dtype=None, distinct=False):
-        if distinct:
-            aggr = f"{op}(distinct {{0}})"
+    def add_aggregation(self, parent_node, wrt_node, op, remove_infs=None, expected_dtype=None, input_dtype=None, distinct=False, nulls=False):
+        dst = 'distinct ' if distinct else ''
+        if nulls:
+            aggr = f"[i in collect({dst}[{{0}}]) | i[0]]"
         else:
-            aggr = f"{op}({{0}})"
+            aggr = f"{op}({dst}{{0}})"
         return self.add_generic_aggregation(parent_node, wrt_node, aggr, op, remove_infs, expected_dtype, input_dtype)
 
     def add_predicate_aggregation(self, parent, wrt_node, op_name):
