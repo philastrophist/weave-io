@@ -240,7 +240,7 @@ def identifier(origin, filepath, fileobj, *args, **kwargs):
 def reader(input, hdu=None, astropy_native=False, memmap=False, character_as_bytes=True):
     original = registry.get_reader('fits', AstropyTable)
     table = original(input, hdu=hdu, astropy_native=astropy_native, memmap=memmap, character_as_bytes=character_as_bytes)
-    for colname, fill_value, nan_mask in zip(table.meta['_masked_columns'], table.meta['_fill_values'], table.meta['_nan_masked']):
+    for colname, fill_value, nan_mask in zip(table.meta['_MASKED'], table.meta['_FILL'], table.meta['_NAN']):
         if nan_mask:
             fill_value = np.nan
             mask = np.isnan(table[colname])
@@ -251,24 +251,24 @@ def reader(input, hdu=None, astropy_native=False, memmap=False, character_as_byt
 
 def writer(input, output, overwrite=False):
     original = registry.get_writer('fits', AstropyTable)
-    input.meta['_masked_columns'] = []
-    input.meta['_fill_values'] = []
-    input.meta['_nan_masked'] = []
+    input.meta['_masked'] = []
+    input.meta['_fill'] = []
+    input.meta['_nan'] = []
     for colname in input.colnames:
         if isinstance(input[colname], MaskedColumn):
-            input.meta['_masked_columns'].append(colname)
+            input.meta['_masked'].append(colname)
             try:
                 if np.isnan(input[colname].fill_value):
-                    input.meta['_nan_masked'].append(True)
-                    input.meta['_fill_values'].append(0.)
+                    input.meta['_nan'].append(True)
+                    input.meta['_fill'].append(0.)
                     continue
             except TypeError:
                 pass
-            input.meta['_fill_values'].append(input[colname].fill_value)
-            input.meta['_nan_masked'].append(False)
+            input.meta['_fill'].append(input[colname].fill_value)
+            input.meta['_nan'].append(False)
     return original(input, output, overwrite)
 
-#
-# registry.register_identifier('fits', Table, identifier, force=True)
-# registry.register_reader('fits', Table, reader, force=True)
-# registry.register_writer('fits', Table, writer, force=True)
+
+registry.register_identifier('fits', Table, identifier, force=True)
+registry.register_reader('fits', Table, reader, force=True)
+registry.register_writer('fits', Table, writer, force=True)

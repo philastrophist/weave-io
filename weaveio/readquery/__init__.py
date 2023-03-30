@@ -1,7 +1,7 @@
 from .objects import Query
 from .functions import *
 from .aggregations import *
-from .results import filtered, masked, apply
+from .results import filtered, masked, apply, Table
 from .uploads import join
 from .helpers import *
 from .split import split

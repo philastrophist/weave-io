@@ -803,7 +803,7 @@ class Hierarchy(Graphable):
                 l = 1
             nodetype = Multiple.from_any(nodetype)
             if not do_not_create:
-                if not isinstance(value, Collection):
+                if not isinstance(value, Collection) and not isinstance(getattr(value, 'node', None), Collection):
                     if not (nodetype.minnumber <= l <= nodetype.maxnumber):
                         raise ValueError(f"{self.__class__.__name__} requires {nodetype.minnumber} <= count({name}) <= {nodetype.maxnumber}. "
                                          f"{l} received.")
@@ -873,4 +873,14 @@ def find_branch(*nodes_or_types):
     This will find the branch that looks like (l1file)<--(:L1Spectrum)<--(:FibreTarget)<--(fibre)
     and return the nodes
     """
-    return match_branch_node(*[i.__name__ if isinstance(i, type) else i for i in nodes_or_types])
+    nodes = match_branch_node(*[i.__name__ if isinstance(i, type) else i for i in nodes_or_types])
+    instances = []
+    for node, node_or_type in zip(nodes, nodes_or_types):
+        if isinstance(node_or_type, GraphableMeta):
+            instance = node_or_type.from_cypher_variable(node)
+        elif isinstance(node_or_type, Hierarchy):
+            instance = node_or_type.__class__.from_cypher_variable(node)
+        else:
+            raise TypeError(f"Unknown type {type(node_or_type)}")
+        instances.append(instance)
+    return instances

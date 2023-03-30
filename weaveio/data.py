@@ -573,6 +573,7 @@ class Data:
             if skip_complete:
                 bs = [b for b in bs if not self.file_batch_is_complete(*b)]
             batches += bs
+        batches.sort(key=lambda b: (self.filetypes.index(b[0]), b[1]))  # make sure files are ingested in order of dependency
         return batches
 
     def write_files(self, *paths: Union[Path, str], raise_on_duplicate_file=False, skip_complete=True,
