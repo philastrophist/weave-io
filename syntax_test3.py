@@ -5,10 +5,10 @@ from weaveio.opr3 import Data
 
 logging.basicConfig(level=logging.INFO)
 
-data = Data(dbname='opr3btestordering')
+data = Data(dbname='bambase')
 with data.write:
-    fs = data.find_files('l2single', 'l2stack')
+    fs = data.find_files('l1single', 'l1stack')
     data.write_files(*fs,
-                     timeout=10*60, debug=True, test_one=False, debug_time=True,
-                     debug_params=False, dryrun=False)
-data.validate()
+                     timeout=10*60, debug=False, test_one=False, debug_time=False,
+                     debug_params=False, dryrun=True)
+# data.validate()
