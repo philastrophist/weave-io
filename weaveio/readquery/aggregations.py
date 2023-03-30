@@ -7,7 +7,7 @@ from .base import BaseQuery
 if TYPE_CHECKING:
     pass
 
-__all__ = ['sum', 'max', 'min', 'mean', 'std', 'count', 'any', 'all', 'exists']
+__all__ = ['sum', 'max', 'min', 'mean', 'std', 'count', 'any', 'all', 'exists', 'array']
 
 python_any = any
 python_all = all
@@ -18,8 +18,7 @@ python_sum = sum
 
 def _template_aggregator(string_op, predicate, python_func: Callable, item: BaseQuery, wrt: BaseQuery = None,
                          remove_infs: bool = True, expected_dtype: str = None, returns_dtype:str = None,
-                         op_name=None,
-                         args=None, kwargs=None):
+                         op_name=None, distinct=False, nulls=False, args=None, kwargs=None):
     from ..data import Data
     from .objects import AttributeQuery
     if isinstance(wrt, Data):
@@ -29,8 +28,10 @@ def _template_aggregator(string_op, predicate, python_func: Callable, item: Base
     if op_name is None:
         op_name = string_op
     try:
-        return item._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs)
+        return item._aggregate(wrt, string_op, op_name, predicate, expected_dtype, returns_dtype, remove_infs, distinct, nulls=nulls)
     except AttributeError:
+        if distinct:
+            item = set(item)
         return python_func(item, *args, **kwargs)
 
 
@@ -47,11 +48,11 @@ def min(item, wrt=None, *args, **kwargs):
 
 
 def count(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('count', False, len, item, wrt, returns_dtype='number', args=args, kwargs=kwargs)
+    return _template_aggregator('count', False, len, item, wrt, returns_dtype='integer', args=args, kwargs=kwargs)
 
 
 def exists(item, wrt=None, *args, **kwargs):
-    return _template_aggregator('count', False, len, item, wrt, returns_dtype='number', args=args, kwargs=kwargs) > 1
+    return _template_aggregator('count', False, len, item, wrt, returns_dtype='number', args=args, kwargs=kwargs) > 0
 
 
 def std(item, wrt=None, *args, **kwargs):
@@ -71,3 +72,6 @@ def all(item, wrt=None, *args, **kwargs):
 def any(item, wrt=None, *args, **kwargs):
     return _template_aggregator('any', True, python_any, item, wrt, args=args, returns_dtype='boolean', expected_dtype='boolean', kwargs=kwargs)
 
+
+def array(item, wrt=None, distinct=False, nulls=True, *args, **kwargs):
+    return _template_aggregator('collect', False, list, item, wrt, distinct=distinct, nulls=nulls, args=args, kwargs=kwargs)

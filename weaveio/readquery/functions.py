@@ -1,5 +1,6 @@
-from typing import Callable, Union, Tuple, Dict, Any
+from typing import Callable, Union, Tuple, Dict, Any, List
 from math import floor, ceil
+import functools
 
 import numpy as np
 
@@ -39,7 +40,7 @@ def sqrt(item, *args, **kwargs):
     return _template_operator('sqrt({0})', 'sqrt', item, np.sqrt, remove_infs=True, out_dtype='float', args=args, kwargs=kwargs)
 
 def ismissing(item):
-    return _template_operator('{0} is null', 'isnull', item, lambda x: x is None, remove_infs=False, out_dtype='boolean')
+    return _template_operator('{0} is null', 'isnull', item, lambda x: x is None, remove_infs=True, out_dtype='boolean')
 isnull = ismissing
 
 def isnan(item):
@@ -52,7 +53,33 @@ def _object_scalar_operator(item: ObjectQuery, op_string: str, op_name: str, ret
 def neo4j_id(item: ObjectQuery):
     return _object_scalar_operator(item, 'id({0})', 'neo4j_id', 'number')
 
-
+def reduce(function, sequence: List, initial=None):
+    if not len(sequence):
+        return initial
+    if initial is None and len(sequence) == 1:
+        return sequence[0]
+    if any(isinstance(s, AttributeQuery) for s in sequence):
+        if initial is None:
+            initial = sequence[0]
+            sequence = sequence[1:]
+        if not isinstance(initial, AttributeQuery):
+            raise TypeError(f"The initial item must be an AttributeQuery")
+        _list = ', '.join([f'{{{i+1}}}' for i in range(len(sequence))])
+        i = initial._G.get_variable_name('i')
+        acc = initial._G.get_variable_name('acc')
+        test_query = function(initial, sequence[0])  # Type: AttributeQuery
+        if len(sequence) == 1:
+            return test_query
+        returns_dtype = test_query.dtype
+        string_op = test_query._G.G.nodes[test_query._node]['variables'][0]
+        string_op = string_op.replace('{0}', f"{acc}").replace('{1}', f"{i}")
+        string_op = string_op.replace(test_query._G.G.nodes[initial._node]['variables'][0], f"{acc}")
+        string_op = string_op.replace(test_query._G.G.nodes[sequence[0]._node]['variables'][0], f"{i}")
+        return initial._perform_arithmetic(f"reduce({acc} = {{0}}, {i} IN [{_list}] | {string_op})", 'reduce',
+                                           *sequence, returns_dtype=returns_dtype)
+    if initial:
+        return functools.reduce(function, sequence, initial)
+    return functools.reduce(function, sequence)
 
 def switch(item: AttributeQuery, states: Union[Dict[Any, Union[AttributeQuery, Any]], Union[Any, AttributeQuery]],
            _else: Union[Any, AttributeQuery] = None):
@@ -73,15 +100,15 @@ def switch(item: AttributeQuery, states: Union[Dict[Any, Union[AttributeQuery, A
     dtypes = {result.dtype if isinstance(result, AttributeQuery) else type(result) for result in list(states.values())+[_else]}
     if ObjectQuery in dtypes:
         raise TypeError(f"Switching on objects is not yet supported")
-    if dtypes.issubset({'integer', int, np.int, np.int_}):
+    if dtypes.issubset({'integer', int, np.int, np.int_, None, type(None)}):
         dtype = 'integer'
-    elif dtypes.issubset({'float', float, np.float, np.float_}):
+    elif dtypes.issubset({'float', float, np.float, np.float_, None, type(None)}):
         dtype = 'float'
-    elif dtypes.issubset({'number', float, int, None}):
+    elif dtypes.issubset({'number', float, int, None, type(None)}):
         dtype = 'number'
-    elif dtypes.issubset({'boolean', bool, None}):
+    elif dtypes.issubset({'boolean', bool, None, type(None)}):
         dtype = 'boolean'
-    elif dtypes.issubset({'string', str, None}):
+    elif dtypes.issubset({'string', str, None, type(None)}):
         dtype = 'string'
     else:
         raise TypeError(f"All switch result values, including else, must be of the same type. Types given: {dtypes}")
@@ -119,3 +146,6 @@ def switch(item: AttributeQuery, states: Union[Dict[Any, Union[AttributeQuery, A
     else:
         n, wrt = item._G.add_combining_operation(statement, 'op-switch', item._node, *nodes, parameters=params)
     return AttributeQuery._spawn(item, n, index_node=wrt, single=True, dtype=dtype, factor_name='switch')
+
+def to_int(x):
+    return _template_operator('tointeger({0})', 'int', x, int, remove_infs=True, out_dtype='float')

@@ -4,7 +4,7 @@ from typing import List, Union, Tuple
 
 import numpy as np
 import py2neo
-from astropy.io import fits
+from astropy.io import fits, registry
 from astropy.table import Table as AstropyTable, Row as AstropyRow, MaskedColumn as AstropyMaskedColumn
 from py2neo.cypher import Cursor
 
@@ -17,16 +17,18 @@ def ragged_array(data):
     >>> ragged_array([[1, 2, 3], [4, 5, 6, 7]])
     np.mask.array([[1, 2, 3, --], [4, 5, 6, 7]], mask=[[False, False, False, True], [False, False, False, False]])
     """
-    shapes = [np.ma.asarray(i).shape for i in data]
+    darrays = [np.ma.asarray(d) for d in data]
+    dtypes = {d.dtype for d in darrays if not np.all(d.mask)}
+    if not dtypes:
+        dtype = np.float_
+    else:
+        dtype = np.stack([np.array([], dtype=d) for d in dtypes]).dtype
+    shapes = [d.shape for d in darrays]
     if len(set(shapes)) == 1:
         return data
     maxshape = np.max(shapes, axis=0)
-    array = np.ma.empty((len(data), *maxshape), dtype=np.asarray(data[0]).dtype)
+    array = np.ma.empty((len(data), *maxshape), dtype=dtype)
     array.mask = True
-    try:
-        array.fill_value = np.nan
-    except TypeError:
-        pass
     slcs = [tuple(slice(0, s) for s in shape_tuple) for shape_tuple in shapes]
     for i, (slc, d) in enumerate(zip(slcs, data)):
         array.__setitem__((i, *slc), d)
@@ -65,7 +67,7 @@ class MaskedColumn(AstropyMaskedColumn):
         Apply a function to each row in the column. Returns nd array if possible otherwise an unstructured array.
         :param func: Callable to apply to each row. Takes an array/scalar depending on the type of the column.
         """
-        return ragged_column([func(d, *args, **kwargs) for d in self.data], func.__name__)
+        return ragged_column([func(d, *args, **kwargs) for d in self.data], self.name)
 
     def masked(self, mask, inplace=False):
         if inplace:
@@ -168,6 +170,14 @@ class FileHandler:
         self.close_all()
 
 
+def recursive_replace_None(l: List) -> List:
+    if not isinstance(l, list):
+        return np.ma.masked if l is None else l
+    for i, item in enumerate(l):
+        l[i] = recursive_replace_None(item)
+    return l
+
+
 class RowParser(FileHandler):
     def parse_product_row(self, row: py2neo.cypher.Record, names: List[Union[str, None]], is_products: List[bool],
                           as_row: bool):
@@ -184,14 +194,14 @@ class RowParser(FileHandler):
                         value = [self.read(*v) for v in value]
                     else:
                         value = self.read(*value)
+            value = recursive_replace_None(value)
             name = cypher_name if name is None or name == 'None' else name
             mask = value is None or np.size(value) == 0
             try:
-                mask |= np.all(~np.isfinite(value))
+                mask = mask | ~np.isfinite(value)
             except TypeError:
                 pass
-            if mask:
-                value = np.ma.masked
+            value = np.ma.where(~mask, np.ma.asarray(value), np.ma.masked)
             columns.append(value)
             colnames.append(name)
         if as_row:
@@ -221,3 +231,44 @@ def filtered(column, filt):
 def masked(column, mask):
     """Masks a masked column based on a boolean array where True means masked"""
     return column.masked(mask)
+
+
+def identifier(origin, filepath, fileobj, *args, **kwargs):
+    return registry._identifiers[('fits', AstropyTable)](origin, filepath, fileobj, *args, **kwargs)
+
+
+def reader(input, hdu=None, astropy_native=False, memmap=False, character_as_bytes=True):
+    original = registry.get_reader('fits', AstropyTable)
+    table = original(input, hdu=hdu, astropy_native=astropy_native, memmap=memmap, character_as_bytes=character_as_bytes)
+    for colname, fill_value, nan_mask in zip(table.meta['_masked_columns'], table.meta['_fill_values'], table.meta['_nan_masked']):
+        if nan_mask:
+            fill_value = np.nan
+            mask = np.isnan(table[colname])
+        else:
+            mask = table[colname] == fill_value
+        table[colname] = MaskedColumn(table[colname], fill_value=fill_value, mask=mask)
+    return table
+
+def writer(input, output, overwrite=False):
+    original = registry.get_writer('fits', AstropyTable)
+    input.meta['_masked_columns'] = []
+    input.meta['_fill_values'] = []
+    input.meta['_nan_masked'] = []
+    for colname in input.colnames:
+        if isinstance(input[colname], MaskedColumn):
+            input.meta['_masked_columns'].append(colname)
+            try:
+                if np.isnan(input[colname].fill_value):
+                    input.meta['_nan_masked'].append(True)
+                    input.meta['_fill_values'].append(0.)
+                    continue
+            except TypeError:
+                pass
+            input.meta['_fill_values'].append(input[colname].fill_value)
+            input.meta['_nan_masked'].append(False)
+    return original(input, output, overwrite)
+
+#
+# registry.register_identifier('fits', Table, identifier, force=True)
+# registry.register_reader('fits', Table, reader, force=True)
+# registry.register_writer('fits', Table, writer, force=True)

@@ -36,8 +36,10 @@ def safe_name(name):
 
 special_dtypes = {
     ('boolean', 'float'): 'tointeger(tofloat({}))',
-    ('float', 'boolean'): 'toboolean(tointeger({}))',
     ('boolean', 'number'): 'tointeger({})',
+    ('float', 'boolean'): 'toboolean(tointeger({}))',
+    ('float', 'number'): '{}',
+    ('integer', 'number'): '{}',
     ('number', 'boolean'): 'toboolean(tointeger({}))',
 }
 

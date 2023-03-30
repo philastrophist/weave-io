@@ -247,8 +247,10 @@ class Return(Statement):
         self.dropna = dropna
 
     def make_cypher(self, ordering: list) -> Optional[str]:
+        names = [self.graph.get_variable_name('r') for _ in self.column_variables]  # to prevent overflow
+        names.append(self.graph.get_variable_name('i'))
         cols = self.column_variables if self.index_variable is None else self.column_variables[:-1]
-        cols = ', '.join(cols)
+        cols = ', '.join([f"{c} as {n}" for c, n in zip(cols, names)])
         if self.dropna is not None:
             return f"WITH * WHERE {self.dropna} is not null RETURN {cols}"
         return f"RETURN {cols}"
