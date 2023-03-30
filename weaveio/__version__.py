@@ -1,2 +1,2 @@
-__version__ = "2023.0.11"
-__changes__ = "stop errors at the end of an empty ingestion"
+__version__ = "2023.0.12"
+__changes__ = "non-optional rootdir specification"
