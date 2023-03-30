@@ -1,2 +1,2 @@
-__version__ = "2023.0.9"
-__changes__ = 'minor parser upgrade; aggregations that can handle distinct nullable lists and dtype changes'
+__version__ = "2023.0.10"
+__changes__ = 'fix to use weavieo Table as default for astropy interface; fix ingesting data error for cyphervariable cardinality check'
