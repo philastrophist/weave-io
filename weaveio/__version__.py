@@ -1,2 +1,2 @@
-__version__ = "2023.0.13"
-__changes__ = "rootdir specification fix"
+__version__ = "2023.0.14"
+__changes__ = "rootdir specification message"
