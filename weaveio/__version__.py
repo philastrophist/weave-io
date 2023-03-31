@@ -1,2 +1,2 @@
-__version__ = "2023.0.16"
-__changes__ = "no cryptographic requirement"
+__version__ = "2023.0.17"
+__changes__ = "query timeout safety"
