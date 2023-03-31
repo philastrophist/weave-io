@@ -253,9 +253,10 @@ class Data:
         self.port = port or os.getenv('WEAVEIO_PORT', 7687)
         self.password = password or os.getenv('WEAVEIO_PASSWORD', 'weavepassword')
         self.user = user or os.getenv('WEAVEIO_USER', 'weaveuser')
-        self.rootdir = Path(rootdir or os.getenv('WEAVEIO_ROOTDIR'))
-        if self.rootdir is None:
+        rootdir = rootdir or os.getenv('WEAVEIO_ROOTDIR')
+        if rootdir is None:
             raise ValueError(f"You must specify rootdir as an environment variable or as an argument to Data")
+        self.rootdir = Path(rootdir)
         self.write_allowed = False
         self.query = Query(self)
         self.rowparser = RowParser(self.rootdir)
