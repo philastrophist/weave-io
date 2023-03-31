@@ -5,7 +5,6 @@ networkx==2.6.3
 numpy==1.18.1
 pandas==1.0.3
 pytest==5.4.1
-cryptography<3.4
 tqdm
 colored
 pkg_info
