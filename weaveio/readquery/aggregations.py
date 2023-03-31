@@ -73,5 +73,5 @@ def any(item, wrt=None, *args, **kwargs):
     return _template_aggregator('any', True, python_any, item, wrt, args=args, returns_dtype='boolean', expected_dtype='boolean', kwargs=kwargs)
 
 
-def array(item, wrt=None, distinct=False, nulls=True, *args, **kwargs):
+def array(item, wrt=None, distinct=False, nulls=False, *args, **kwargs):
     return _template_aggregator('collect', False, list, item, wrt, distinct=distinct, nulls=nulls, args=args, kwargs=kwargs)
