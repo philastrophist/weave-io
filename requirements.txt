@@ -17,3 +17,4 @@ jupyter
 notebook
 ipython
 scipy
+timeout-decorator
