@@ -2,13 +2,13 @@ import warnings
 from collections import defaultdict
 from copy import copy
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 
 import networkx as nx
 import pandas as pd
 from astropy.table import Table
 
-from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
+from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, add_node_reference
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, ApplyToList
 from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 
@@ -17,45 +17,43 @@ class ParserError(Exception):
     pass
 
 
-def sort_generation(generation, wrt_graph: HashedDiGraph):
-    return sorted(generation, key=wrt_graph.out_degree)  # put aggregations first
+def sort_generation(generation, semi_dag_graph: HashedDiGraph, end_node):
+    return sorted(generation, key=lambda n: nx.has_path(semi_dag_graph, n, end_node))  # put aggregations first
 
 
-def filter_deleted_edges(graph, deleted_edges: Dict[int, set]):
-    """
-    Each time a wrt edge is traversed all deleted edges below the node are restored.
-    """
-    deleted = {n for ns in deleted_edges.values() for n in ns}
-    return nx.subgraph_view(graph, filter_edge=lambda *e: e not in deleted)
+def traversal_generator(node, wrt_graph, traversal_graph, remaining_generations, end):
+    yield from wrt_graph.successors(node)  # follow aggregations immediately
+    # otherwise, go the next available generation
+    for generation in remaining_generations:
+        for n in generation:
+            if nx.has_path(traversal_graph, n, end) and n in traversal_graph.successors(node):
+                yield n
 
 
 def traverse(graph: HashedDiGraph):
     no_wrt_graph = subgraph_view(graph, excluded_edge_type='wrt')
+    semi_dag = subgraph_view(no_wrt_graph, excluded_edge_type='dep')
     wrt_graph = subgraph_view(graph, only_edge_type='wrt')
-    generations = [sort_generation(g, wrt_graph) for g in nx.topological_generations(no_wrt_graph)]
+    unsorted_generations = list(nx.topological_generations(no_wrt_graph))
+    start = unsorted_generations[0][0]
+    end = unsorted_generations[-1][-1]
+    generations = [sort_generation(g, semi_dag, end) for g in unsorted_generations]
     node_generations = {node: i for i, generation in enumerate(generations) for node in generation}
-    start = generations[0][0]
-    end = generations[-1][-1]
     ordering = [start]
     node = start
     deleted_edges = defaultdict(set)
     g = 0
     traversal_graph = subgraph_view(graph, excluded_edge_type='dep')
     while node != end:
-        if wrt_graph.out_degree(node):  # is aggregated
-            node = next(wrt_graph.successors(node))  # follow immediately
-        else:  # otherwise, go the next available generation
-            node = next(n for generation in generations[g+1:] for n in generation
-                        if nx.has_path(traversal_graph, n, end) and n in traversal_graph.successors(node))
+        node = next(traversal_generator(node, wrt_graph, traversal_graph, generations[g+1:], end))
         g = node_generations[node]
         ordering.append(node)
-        print(node)
         edge = ordering[-2], ordering[-1]
         if edge in wrt_graph.edges:  # delete this edge but restore any wrt edges below the new node
             recent_wrt = edge[1]
             deleted_edges = defaultdict(set, {k: ns for k, ns in deleted_edges.items() if nx.has_path(no_wrt_graph, k, recent_wrt)})
             deleted_edges[recent_wrt].add(edge)
-            traversal_graph = filter_deleted_edges(subgraph_view(graph, excluded_edge_type='dep'), deleted_edges)
+            traversal_graph = subgraph_view(graph, excluded_edge_type='dep', excluded_edges={n for ns in deleted_edges.values() for n in ns})
     return ordering, None
 
 
@@ -64,14 +62,13 @@ def verify_traversal(graph, traversal_order):
     if any(graph.edges[e]['type'] == 'dep' for e in edges):
         raise ParserError(f"Some dep edges where traversed. This is a bug")
     semi_dag = subgraph_view(graph, excluded_edge_type='dep')
-    if set(semi_dag.edges) != set(edges):
-        raise ParserError(f"Not all edges were traversed. This is a bug")
-    done = set()
-    for n in traversal_order:
-        if n not in done:
-            if not all(dep in done for dep in node_dependencies(graph, n)):
-                raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug\nordering: {traversal_order}")
-            done.add(n)
+    untraversed = set(semi_dag.edges) - set(edges)
+    if untraversed:
+        raise ParserError(f"Not all edges were traversed - {untraversed}. This is a bug\nordering: {traversal_order}")
+    dag = subgraph_view(graph, excluded_edge_type='wrt')
+    for i, n in enumerate(traversal_order):
+        if not all(dep in traversal_order[:i] for dep, _ in dag.in_edges(n)) and dag.in_degree(n):
+            raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug\nordering: {traversal_order}")
 
 
 def verify(graph):
@@ -165,12 +162,6 @@ def verify(graph):
             if ntraversals + naggs + nfilters > 1:
                 raise ParserError(f"Can only have dependencies as input for an operation: {node}")
 
-
-def merge_attribute_forks(graph):
-    """
-    Given a node in the graph find simple (no external deps) successor branches which wrt back to the same node.
-    Merge these parallel branches into one serial branch
-    """
 
 
 def simplify_graph(graph: HashedDiGraph):

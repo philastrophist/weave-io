@@ -194,8 +194,3 @@ def get_above_state_traversal_graph(graph: HashedDiGraph):
         return True
     alloweds = nx.subgraph_view(graph, filter_edge=allowed_traversal)  # type: HashedDiGraph
     return partial_reverse(alloweds, [(a, b) for a, b, data in graph.edges(data=True) if data['type'] != 'wrt'])
-
-
-def node_dependencies(graph, node):
-    dag = subgraph_view(graph, excluded_edge_type='wrt')
-    return {n for n in graph.nodes if nx.has_path(dag, n, node)} - {node}
