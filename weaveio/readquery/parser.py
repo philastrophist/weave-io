@@ -1,114 +1,62 @@
+import warnings
 from collections import defaultdict
 from copy import copy
-from typing import List, Tuple, Dict
 from pathlib import Path
-import warnings
+from typing import List, Tuple, Dict
 
 import networkx as nx
 import pandas as pd
 from astropy.table import Table
-import timeout_decorator
 
-from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, node_dependencies, add_node_reference
-from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, UnionTraversal, ApplyToList
+from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, ApplyToList
+from .utilities import mask_infs, remove_successive_duplicate_lines, dtype_conversion
 
 
 class ParserError(Exception):
     pass
 
 
-class DeadEndException(Exception):
-    pass
+def sort_generation(generation, wrt_graph: HashedDiGraph):
+    return sorted(generation, key=wrt_graph.out_degree)  # put aggregations first
 
 
-@timeout_decorator.timeout(120)
-def traverse(graph, start=None, end=None, done=None, ordering=None, views=None):
+def filter_deleted_edges(graph, deleted_edges: Dict[int, set]):
     """
-    traverse the traversal_graph with backtracking
+    Each time a wrt edge is traversed all deleted edges below the node are restored.
     """
-    if views is None:
-        dag = subgraph_view(graph, excluded_edge_type='wrt')
-        backwards_graph = subgraph_view(graph, only_edge_type='wrt')
-        traversal_graph = subgraph_view(dag, excluded_edge_type='dep')
-        dep_graph = subgraph_view(graph, only_edge_type='dep')
-        views = (dag, backwards_graph, traversal_graph, dep_graph)
-    else:
-        dag, backwards_graph, traversal_graph, dep_graph = views
-    if start is None or end is None:
-        naive_ordering = list(nx.topological_sort(dag))
-        if start is None:
-            start = naive_ordering[0]  # get top node
-        if end is None:
-            end = naive_ordering[-1]
-    if ordering is None:
-        ordering = [start]
-    else:
-        ordering = list(ordering)
+    deleted = {n for ns in deleted_edges.values() for n in ns}
+    return nx.subgraph_view(graph, filter_edge=lambda *e: e not in deleted)
+
+
+def traverse(graph: HashedDiGraph):
+    no_wrt_graph = subgraph_view(graph, excluded_edge_type='wrt')
+    wrt_graph = subgraph_view(graph, only_edge_type='wrt')
+    generations = [sort_generation(g, wrt_graph) for g in nx.topological_generations(no_wrt_graph)]
+    node_generations = {node: i for i, generation in enumerate(generations) for node in generation}
+    start = generations[0][0]
+    end = generations[-1][-1]
+    ordering = [start]
     node = start
-    done = set() if done is None else set(done)  # stores wrt edges and visited nodes
-    while True:
-        dependencies = dep_graph.predecessors(node)
-        if not all(dep in done for dep in dependencies):
-            raise DeadEndException
-        options = [b for b in backwards_graph.successors(node) if (node, b) not in done]  # must do wrt first
-        if not options:
-            options = [o for o in traversal_graph.successors(node) if o not in done]   # where to go next?
-            option_edges = [graph.edges[(node, o)] for o in options]
-            op_options = []
-            for o, e in zip(options, option_edges):
-                if e.get('type', '') == 'operation' and e.get('single', False):
-                    if all(dep in done for dep in dep_graph.predecessors(o)):
-                        op_options.append(o)
-            # do all operations first since they can't be wrong!
-            options = op_options + [o for o in options if o not in op_options]
-        if not options:
-            # if you cant go anywhere and you're not done, then this recursive path is bad
-            if node != end:
-                raise DeadEndException
-            else:
-                return ordering, done
-        elif len(options) == 1:
-            # if there is only one option, go there... obviously
-            edge = (node, options[0])
-            if edge in done:
-                # recursive path is bad if you have to go over the same wrt edge more than once
-                raise DeadEndException
-            elif graph.edges[edge]['type'] == 'wrt':
-                done.add(edge)  # only add edges for wrt
-                # and now also reset the branch listed in `ordering[iwrt:inode] so it can be traversed again`
-                # only reset the nodes/edges which have other dep-paths outside the branch
-                most_recent_mention = len(ordering) - ordering[::-1].index(options[0]) - 1
-                this_branch = ordering[most_recent_mention:]
-                still_todo = set(graph.nodes) - done - set(this_branch)
-                restricted_dag = nx.subgraph_view(dag, lambda n: n != node)
-                # TODO: also include this edge we are on now... might be needed later somehow
-                for n in set(this_branch[:-1]):
-                    if any(nx.has_path(restricted_dag, n, a) for a in still_todo):
-                        done -= {n}
-                        for wrt_edge in backwards_graph.successors(n):
-                            done -= {(n, wrt_edge)}
-            done.add(node)
-            node = options[0]
-            ordering.append(node)
-        else:
-            # open up recursive paths from each available option
-            # this is such a greedy algorithm
-            for option in options:
-                try:
-                    new_done = done.copy()
-                    new_ordering = ordering.copy()
-                    new_ordering.append(option)
-                    new_done.add(node)
-                    new_done.add(option)
-                    ordering, new_done = traverse(graph, option, end, tuple(new_done), tuple(new_ordering), views)
-                    done.update(new_done)
-                    node = ordering[-1]
-                    break
-                except DeadEndException:
-                    pass  # try another option
-            else:
-                raise DeadEndException  # all options exhausted, entire recursive path is bad
+    deleted_edges = defaultdict(set)
+    g = 0
+    traversal_graph = subgraph_view(graph, excluded_edge_type='dep')
+    while node != end:
+        if wrt_graph.out_degree(node):  # is aggregated
+            node = next(wrt_graph.successors(node))  # follow immediately
+        else:  # otherwise, go the next available generation
+            node = next(n for generation in generations[g+1:] for n in generation
+                        if nx.has_path(traversal_graph, n, end) and n in traversal_graph.successors(node))
+        g = node_generations[node]
+        ordering.append(node)
+        print(node)
+        edge = ordering[-2], ordering[-1]
+        if edge in wrt_graph.edges:  # delete this edge but restore any wrt edges below the new node
+            recent_wrt = edge[1]
+            deleted_edges = defaultdict(set, {k: ns for k, ns in deleted_edges.items() if nx.has_path(no_wrt_graph, k, recent_wrt)})
+            deleted_edges[recent_wrt].add(edge)
+            traversal_graph = filter_deleted_edges(subgraph_view(graph, excluded_edge_type='dep'), deleted_edges)
+    return ordering, None
 
 
 def verify_traversal(graph, traversal_order):
@@ -122,7 +70,7 @@ def verify_traversal(graph, traversal_order):
     for n in traversal_order:
         if n not in done:
             if not all(dep in done for dep in node_dependencies(graph, n)):
-                raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug")
+                raise ParserError(f"node {n} does not have all its dependencies satisfied. This is a bug\nordering: {traversal_order}")
             done.add(n)
 
 

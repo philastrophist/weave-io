@@ -59,7 +59,7 @@ def plot_graph(graph, highlight_nodes=None, highlight_edges=None):
 def make_node(graph: HashedDiGraph, parent, type: str, statement: 'Statement', single, **edge_data):
     i = graph.number_of_nodes()
     try:
-        label = str(statement.output_variables[0])
+        label = str(statement.output_variables[0]).split(' ')[0]
     except (IndexError, AttributeError):
         label = 'node'
     node = i
