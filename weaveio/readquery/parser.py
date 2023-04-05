@@ -7,6 +7,7 @@ from typing import List, Tuple
 import networkx as nx
 import pandas as pd
 from astropy.table import Table
+from tqdm import tqdm
 
 from .digraph import HashedDiGraph, plot_graph, add_start, add_traversal, add_filter, add_aggregation, add_operation, add_return, add_unwind, subgraph_view, get_above_state_traversal_graph, add_node_reference
 from .statements import StartingMatch, Traversal, NullStatement, Operation, GetItem, AssignToVariable, DirectFilter, CopyAndFilter, Aggregate, Return, Unwind, GetProduct, ApplyToList
@@ -34,6 +35,7 @@ def traverse(graph: HashedDiGraph):
     no_wrt_graph = subgraph_view(graph, excluded_edge_type='wrt')
     semi_dag = subgraph_view(no_wrt_graph, excluded_edge_type='dep')
     wrt_graph = subgraph_view(graph, only_edge_type='wrt')
+    semi_trav = subgraph_view(graph, excluded_edge_type='dep')
     unsorted_generations = list(nx.topological_generations(no_wrt_graph))
     start = unsorted_generations[0][0]
     end = unsorted_generations[-1][-1]
@@ -44,6 +46,7 @@ def traverse(graph: HashedDiGraph):
     deleted_edges = defaultdict(set)
     g = 0
     traversal_graph = subgraph_view(graph, excluded_edge_type='dep')
+    bar = tqdm(total=len(graph.nodes))
     while node != end:
         node = next(traversal_generator(node, wrt_graph, traversal_graph, generations[g+1:], end))
         g = node_generations[node]
@@ -54,6 +57,8 @@ def traverse(graph: HashedDiGraph):
             deleted_edges = defaultdict(set, {k: ns for k, ns in deleted_edges.items() if nx.has_path(no_wrt_graph, k, recent_wrt)})
             deleted_edges[recent_wrt].add(edge)
             traversal_graph = subgraph_view(graph, excluded_edge_type='dep', excluded_edges={n for ns in deleted_edges.values() for n in ns})
+        bar.n = len(graph.nodes) - nx.shortest_path_length(semi_trav, node, end)
+        bar.refresh()
     return ordering, None
 
 
@@ -165,6 +170,12 @@ def verify(graph):
 
 
 def simplify_graph(graph: HashedDiGraph):
+    no_wrt_graph = subgraph_view(graph, excluded_edge_type='wrt')
+    semi_dag = subgraph_view(no_wrt_graph, excluded_edge_type='dep')
+    wrt_graph = subgraph_view(graph, only_edge_type='wrt')
+    semi_trav = subgraph_view(graph, excluded_edge_type='dep')
+
+        graph
     return graph
 
 
@@ -307,7 +318,7 @@ class QueryGraph:
 
     def export_slideshow(self, dirname, ordering, result_node=None):
         Path(dirname).mkdir(parents=True, exist_ok=True)
-        for i, (a, b) in enumerate(zip(ordering[:-1], ordering[1:])):
+        for i, (a, b) in enumerate(zip(tqdm(ordering[:-1]), ordering[1:])):
             self.export(f'{i}', result_node, dirname, [b], [(a, b)], ftype='png')
 
     def add_start_node(self, node_type, unwound=None):

@@ -45,14 +45,10 @@ def plot_graph(graph, highlight_nodes=None, highlight_edges=None):
         if n in highlight_nodes:
             g.nodes[n]['style'] = 'filled'
     for e in graph.edges():
-        try:
-            label = e['statement'].make_cypher(graph.nodes)
-        except:
-            label = ''
-        g.add_edge(*e, **graph.edges[e], label=label)
+        g.add_edge(*e, style=graph.edges[e].get('style', 'solid'))
         if e in highlight_edges:
             g.edges[e]['arrowsize'] = 2
-    nx.relabel_nodes(g, {n: f"{d['i']}\n{d['label']}" for n, d in graph.nodes(data=True)}, copy=False)
+    nx.relabel_nodes(g, {n: f"{d['i']}\n{d['label'][:20]}" for n, d in graph.nodes(data=True)}, copy=False)
     return graphviz.Source(to_pydot(g).to_string())
 
 
